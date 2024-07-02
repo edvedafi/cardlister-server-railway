@@ -1,0 +1,46 @@
+{
+  "name": "script-frontend",
+  "version": "1.0.0",
+  "description": "Script based Front End for listing cards",
+  "type": "module",
+  "main": "index.js",
+  "repository": "https://github.com/edvedafi/cardlister-server-railway",
+  "author": "Jason Burich",
+  "license": "MIT",
+  "scripts": {
+    "compile": "swiftc src/image-processing/CardCropper.swift; swiftc src/image-processing/CardCropper.rotate.swift",
+    "sync": "tsx src/sync.ts",
+    "generateKey": "tsx src/generateMedusaToken.ts"
+  },
+  "devDependencies": {
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^20.14.9",
+    "tslib": "^2.6.3",
+    "typescript": "^5.5.2"
+  },
+  "dependencies": {
+    "@inquirer/core": "^8.2.4",
+    "@inquirer/prompts": "^5.0.7",
+    "@medusajs/medusa-js": "^6.1.8",
+    "@types/spinnies": "^0.5.3",
+    "ansi-escapes": "^7.0.0",
+    "axios": "^1.7.2",
+    "axios-retry": "^4.4.1",
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "figures": "^6.1.0",
+    "firebase-admin": "^12.2.0",
+    "fs-extra": "^11.2.0",
+    "fuse.js": "^7.0.0",
+    "minimist": "^1.2.8",
+    "prettier": "^3.3.2",
+    "queue": "^7.0.0",
+    "sharp": "^0.33.4",
+    "spinnies": "^0.5.1",
+    "terminal-image": "^2.0.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.16.0",
+    "webdriverio": "^8.39.0",
+    "zx": "^8.1.3"
+  }
+}
