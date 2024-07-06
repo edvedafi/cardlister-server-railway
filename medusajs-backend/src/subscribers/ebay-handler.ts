@@ -12,6 +12,7 @@ import fs from 'fs-extra';
 import eBayApi from 'ebay-api';
 import { isNo, isYes, titleCase } from '../utils/data';
 import { EbayOfferDetailsWithKeys } from 'ebay-api/lib/types';
+import * as process from 'node:process';
 
 export default async function ebayHandler({
   data,
@@ -421,9 +422,8 @@ const displayOrNA = (testValue: string | boolean | unknown, displayValue: any = 
 const refreshFile = '.ebay';
 const getRefreshToken = async () => {
   try {
-    if (fs.existsSync(refreshFile)) {
-      return fs.readJSON(refreshFile);
-    }
+    // TODO PROVIDE AN EBAY LOGIN SCREEN
+    return process.env.EBAY_TOKEN
   } catch (e) {
     console.error('Reading Refresh Token Failed');
     console.error(e);
