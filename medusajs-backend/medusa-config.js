@@ -75,18 +75,24 @@ const plugins = [
 ];
 
 const modules = {
-  /*eventBus: {
-    resolve: "@medusajs/event-bus-redis",
+  eventBus: {
+    resolve: '@medusajs/event-bus-redis',
     options: {
-      redisUrl: REDIS_URL
-    }
+      redisUrl: process.env.EVENTS_REDIS_URL,
+    },
   },
   cacheService: {
-    resolve: "@medusajs/cache-redis",
+    resolve: '@medusajs/cache-redis',
     options: {
-      redisUrl: REDIS_URL
-    }
-  },*/
+      redisUrl: process.env.EVENTS_REDIS_URL,
+    },
+  },
+  inventoryService: {
+    resolve: '@medusajs/inventory',
+  },
+  stockLocationService: {
+    resolve: '@medusajs/stock-location',
+  },
 };
 
 /** @type {import('@medusajs/medusa').ConfigModule["projectConfig"]} */
