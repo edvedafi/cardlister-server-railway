@@ -177,16 +177,20 @@ let browser_: WebdriverIO.Browser;
 export const login = async () => {
   const loginToSite = async () => {
     if (!browser_) {
-      browser_ = await remote({
-        capabilities: {
-          browserName: 'chrome',
-          'goog:chromeOptions': {
-            args: ['headless', 'disable-gpu', '--no-sandbox', '--disable-dev-shm-usage'],
+      try {
+        browser_ = await remote({
+          capabilities: {
+            browserName: 'chrome',
+            'goog:chromeOptions': {
+              args: ['headless', 'disable-gpu', '--no-sandbox', '--disable-dev-shm-usage'],
+            },
           },
-        },
-        baseUrl: 'https://mycardpost.com/',
-        logLevel: 'error',
-      });
+          baseUrl: 'https://mycardpost.com/',
+          logLevel: 'error',
+        });
+      } catch (e) {
+        console.error('Failed to start browser', e);
+        throw e;
     }
     await browser_.url('login');
     await browser_.$('input[type="email"]').setValue(process.env.MCP_EMAIL);
