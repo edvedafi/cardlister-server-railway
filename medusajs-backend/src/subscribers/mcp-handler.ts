@@ -9,6 +9,7 @@ import {
 import { remote } from 'webdriverio';
 import axios from 'axios';
 import * as fs from 'node:fs';
+import * as process from 'node:process';
 
 export default async function mcpHandler({
   data,
@@ -179,10 +180,31 @@ export const login = async () => {
     if (!browser_) {
       try {
         browser_ = await remote({
+          hostname: process.env.BROWSER_DOMAIN_PRIVATE,
+          port: parseInt(process.env.BROWSER_PORT_PRIVATE),
+          key: process.env.BROWSER_TOKEN,
           capabilities: {
             browserName: 'chrome',
             'goog:chromeOptions': {
-              args: ['headless', 'disable-gpu', '--no-sandbox', '--disable-dev-shm-usage'],
+              args: [
+                '--window-size=1920,1080',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-breakpad',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-dev-shm-usage',
+                '--disable-extensions',
+                '--disable-features=TranslateUI,BlinkGenPropertyTrees',
+                '--disable-ipc-flooding-protection',
+                '--disable-renderer-backgrounding',
+                '--enable-features=NetworkService,NetworkServiceInProcess',
+                '--force-color-profile=srgb',
+                '--hide-scrollbars',
+                '--metrics-recording-only',
+                '--mute-audio',
+                '--headless',
+                '--no-sandbox'
+              ],
             },
           },
           baseUrl: 'https://mycardpost.com/',
