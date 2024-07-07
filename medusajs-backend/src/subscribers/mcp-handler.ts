@@ -186,7 +186,7 @@ export const login = async () => {
             },
           },
           baseUrl: 'https://mycardpost.com/',
-          logLevel: 'error',
+          // logLevel: 'error',
         });
       } catch (e) {
         console.error('Failed to start browser', e);
