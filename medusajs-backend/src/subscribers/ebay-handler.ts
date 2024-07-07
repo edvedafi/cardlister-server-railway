@@ -423,6 +423,7 @@ const refreshFile = '.ebay';
 const getRefreshToken = async () => {
   try {
     // TODO PROVIDE AN EBAY LOGIN SCREEN
+    console.log('Ebay Token: ' + process.env.EBAY_TOKEN);
     return process.env.EBAY_TOKEN
   } catch (e) {
     console.error('Reading Refresh Token Failed');
