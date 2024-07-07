@@ -191,6 +191,7 @@ export const login = async () => {
       } catch (e) {
         console.error('Failed to start browser', e);
         throw e;
+      }
     }
     await browser_.url('login');
     await browser_.$('input[type="email"]').setValue(process.env.MCP_EMAIL);
