@@ -1,38 +1,36 @@
 import { ask } from './ask.js';
-import { ensureDir } from 'fs-extra/esm';
+import { ensureDir } from 'fs-extra';
 import unzip from 'decompress';
 import chalk from 'chalk';
 import { useSpinners } from './spinners.js';
 
-const log = (...params) => console.log(chalk.cyan(...params));
-const { showSpinner, finishSpinner, errorSpinner } = useSpinners('trim', chalk.cyan);
+const { showSpinner, log } = useSpinners('trim', chalk.cyan);
 
 export async function getInputs() {
-  showSpinner('inputs', 'Getting Input Information');
+  const {finish} = showSpinner('inputs', 'Getting Input Information');
   if (process.argv.length > 2) {
     // console.log(process.argv[2]);
-    const zipFile = process.argv[2];
+    const zipFile: string = process.argv[2];
     if (zipFile === '-r') {
       return await getInputDirectory();
     } else if (zipFile.endsWith('.zip')) {
-      const dir = `input/${zipFile
-        .split('/')
-        .pop()
-        .split('.')[0]
-        .replace(/[\s()]/g, '_')}/`;
+      const zipDir = zipFile?.split('/')?.pop()?.split('.')[0].replace(/[\s()]/g, '_');
+      const dir = `input/${zipDir}/`;
       await ensureDir(dir);
       await unzip(zipFile, dir);
-      finishSpinner('inputs', `Input Directory: ${dir}`);
+      finish( `Input Directory: ${dir}`);
       return dir;
     } else if (zipFile.indexOf('input') > -1) {
-      finishSpinner('inputs', `Input Directory: ${zipFile}`);
+      finish(`Input Directory: ${zipFile}`);
       return zipFile;
     } else {
-      finishSpinner('inputs', `Input Directory: input/${zipFile}/`);
+      finish( `Input Directory: input/${zipFile}/`);
       return `input/${zipFile}/`;
     }
   } else {
-    return await getInputDirectory();
+    const input_directory = await getInputDirectory();
+    finish (`Input Directory: ${input_directory}`);
+    return input_directory;
   }
 }
 
@@ -60,24 +58,23 @@ export const getInputDirectory = async () => {
   } else {
     input_directory = `input/${input_directory}`;
   }
-  finishSpinner('inputs', `Input Directory: ${input_directory}`);
 
   return input_directory;
 };
 
-export const getFiles = async (inputDirectory) => {
-  showSpinner('inputs', 'Getting Files');
-  let files = [];
+export const getFiles = async (inputDirectory :string):Promise<string[]> => {
+  const {finish, error} = showSpinner('inputs', 'Getting Files');
+  let files: string[] = [];
   try {
     const lsOutput = await $`ls ${inputDirectory}PXL*.jpg`;
     files = lsOutput
       .toString()
       .split('\n')
       .filter((image) => image !== '');
-    finishSpinner('inputs', `Found ${files.length} Files`);
+    finish( `Found ${files.length} Files`);
   } catch (e) {
     files = [];
-    errorSpinner('inputs', `No Files Found`);
+    error(`No Files Found`);
   }
   return files;
 };

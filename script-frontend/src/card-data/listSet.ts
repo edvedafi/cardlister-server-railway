@@ -1,17 +1,19 @@
-import { useSpinners } from './utils/spinners.js';
+import { useSpinners } from '../utils/spinners';
 import chalk from 'chalk';
 import Queue from 'queue';
-import { getCardData, saveBulk, saveListing } from './card-data/cardData.js';
-import imageRecognition from './card-data/imageRecognition.js';
+import { getCardData, saveBulk, saveListing } from './cardData';
 import terminalImage from 'terminal-image';
-import { prepareImageFile } from './image-processing/imageProcessor.js';
-import { processImageFile } from './listing-sites/firebase.js';
-import { getProducts, startSync } from './listing-sites/medusa.js';
-import { ask } from './utils/ask.js';
+import { prepareImageFile } from '../image-processing/imageProcessor.js';
+import { getProducts, startSync } from '../utils/medusa';
+import { ask } from '../utils/ask';
+import type { SetInfo } from '../models/setInfo';
+import type { Product, ProductImage, ProductVariant } from '../models/cards';
+import { processImageFile } from '../listing-sites/firebase';
+import imageRecognition from './imageRecognition';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
-const listings = [];
+const listings: ProductVariant[] = [];
 const queueReadImage = new Queue({
   results: [],
   autostart: true,
@@ -28,7 +30,7 @@ const queueImageFiles = new Queue({
   concurrency: 3,
 });
 
-const preProcessPair = async (front, back, setData) => {
+const preProcessPair = async (front: string, back: string, setData: SetInfo) => {
   const { update, finish, error } = showSpinner(`singles-preprocess-${front}`, `Pre-Processing ${front}/${back}`);
   try {
     update(`Getting image recognition data`);
@@ -42,7 +44,7 @@ const preProcessPair = async (front, back, setData) => {
   }
 };
 
-const processPair = async (front, back, imageDefaults, setData) => {
+const processPair = async (front: string, back: string, imageDefaults: Partial<Product>, setData: SetInfo) => {
   try {
     log(await terminalImage.file(front, { height: 25 }));
     if (back) {
@@ -50,7 +52,7 @@ const processPair = async (front, back, imageDefaults, setData) => {
     }
 
     const { productVariant, quantity } = await getCardData(setData, imageDefaults);
-    const images = [];
+    const images: ProductImage[] = [];
     const frontImage = await prepareImageFile(front, productVariant, setData, 1);
     if (frontImage) {
       images.push({
@@ -77,9 +79,10 @@ const processPair = async (front, back, imageDefaults, setData) => {
   }
 };
 
-const processUploads = async (productVariant, imageInfo, quantity) => {
+const processUploads = async (productVariant: ProductVariant, imageInfo: ProductImage[], quantity: string) => {
   const images = await Promise.all(
     imageInfo.map(async (image, i) => {
+      if (!productVariant.product) throw 'Must set Product on the Variant before processing uploads';
       const uploadedFileName = `${productVariant.product.handle}${i + 1}.jpg`;
       await processImageFile(image.file, uploadedFileName);
       return uploadedFileName;
@@ -89,12 +92,14 @@ const processUploads = async (productVariant, imageInfo, quantity) => {
   return productVariant;
 };
 
-const processBulk = async (setData) => {
-  const { update, finish, error } = showSpinner('bulk', `Processing Bulk Listings`);
+const processBulk = async (setData: SetInfo) => {
+  if (!setData.products) throw 'Must set products on Set Data before processing bulk listings';
+
+  const { finish, error } = showSpinner('bulk', `Processing Bulk Listings`);
   log('Adding Bulk Listings');
   try {
     //TODD needs to handle variations
-    log(listings);
+    // log(listings);
     const listedProducts = listings.map((listing) => listing.id);
     for (let i = 0; i < setData.products.length; i++) {
       const product = setData.products[i];
@@ -115,13 +120,13 @@ const processBulk = async (setData) => {
   }
 };
 
-export async function processSet(setData, files) {
+export async function processSet(setData: SetInfo, files: string[] = []) {
   const {
     update: updateSpinner,
     finish: finishSpinner,
     error: errorSpinner,
   } = showSpinner('list-set', `Processing Images`);
-  let count = files.length / 2;
+  const count = files.length || 0 / 2;
   let current = 0;
   queueReadImage.addEventListener('success', () => {
     current++;
@@ -138,7 +143,7 @@ export async function processSet(setData, files) {
 
     while (i < files.length - 1) {
       const front = files[i++];
-      let back;
+      let back: string;
       if (i < files.length) {
         back = files[i++];
       }
@@ -146,10 +151,10 @@ export async function processSet(setData, files) {
     }
 
     let hasQueueError = false;
-    const watchForError = (name, queue) =>
-      queue.addEventListener('error', (error, job) => {
+    const watchForError = (name: string, queue: Queue) =>
+      queue.addEventListener('error', (e) => {
         hasQueueError = true;
-        log(`${name} Queue error: `, error, job);
+        log(`${name} Queue error: ${e.detail.error}`, e);
         queueReadImage.stop();
         queueGatherData.stop();
         queueImageFiles.stop();

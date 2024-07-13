@@ -1,6 +1,6 @@
 import type { Metadata } from '../models/setInfo';
 import { useSpinners } from '../utils/spinners';
-import { getFirestore } from '../utils/firebase';
+import { getFirestore, getStorage } from '../utils/firebase';
 import { ask } from '../utils/ask';
 
 const { showSpinner } = useSpinners('firebase', '#ffc107');
@@ -27,7 +27,7 @@ export async function getGroupByBin(bin: string) {
 /**
  * Get the next number in the sequence for the given collection type
  *
- * This should be changed back to the commented out version once all of the ids are consumed for performance reasons
+ * This should be changed back to the commented out version once all the ids are consumed for performance reasons
  *
  * @param collectionType {string}  The collection type to get the next number for
  * @returns {Promise<number>} The next number in the sequence
@@ -91,9 +91,6 @@ export async function getGroup(info: Metadata) {
       parallel: info.parallel || null,
       league: info.league || 'Other',
       bin: await getNextCounter('SalesGroups'),
-      bscPrice: info.bscPrice || 0.25,
-      slPrice: info.slPrice || 0.18,
-      price: info.price || 0.99,
       keys: setInfo,
       sportlots: info.sportlots || null,
       bscFilters: info.bscFilters || null,
@@ -123,5 +120,15 @@ export async function getGroup(info: Metadata) {
     _cachedGroups[response.bin] = response;
     finish();
     return response;
+  }
+}
+
+export async function processImageFile(outputFile: string, filename: string) {
+  const { finish, error } = showSpinner(`upload-${filename}`, `Uploading ${filename}`);
+  try {
+    await getStorage().bucket().upload(outputFile, { destination: filename });
+    finish(`Uploaded ${filename} to Firebase`);
+  } catch (e) {
+    error(e);
   }
 }

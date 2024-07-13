@@ -1,32 +1,44 @@
-import type { Category, Metadata } from '../models/setInfo';
+import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import { ask } from '../utils/ask';
-import type { Product } from '../models/cards';
+import type { Prices, Product, ProductVariant } from '../models/cards';
 import type { Card } from '../models/bsc';
 import { isNo, isYes, psaGrades } from '../utils/data';
+import {
+  getInventory,
+  getProductVariant,
+  getRegion,
+  updateInventory,
+  updatePrices,
+  updateProductImages,
+  updateProductVariant,
+} from '../utils/medusa';
+import { useSpinners } from '../utils/spinners';
+import type { InventoryItemDTO, MoneyAmount } from '@medusajs/client-types';
+
+const { log } = useSpinners('card-data', chalk.whiteBright);
 
 export async function buildProductFromBSCCard(card: Card, set: Category): Promise<Product> {
-  let product: Product = {
+  const product: Partial<Product> = {
     type: 'Card',
-    categories: set,
+    categories: [set],
     weight: 1,
     length: 4,
     width: 6,
     height: 1,
     origin_country: 'US',
     material: 'Card Stock',
-
-    // tags: need to get form BSC and asking
-    metadata: {
-      cardNumber: card.cardNo,
-      player: card.players,
-      teams: card.teamName || 'Unknown',
-      sku: `${set.metadata.bin}|${card.cardNo}`,
-      size: 'Standard',
-      thickness: '20pt',
-      bsc: card.id,
-      printRun: card.printRun,
-      autograph: card.autograph,
-    },
+  };
+  // tags: need to get form BSC and asking
+  product.metadata = {
+    cardNumber: card.cardNo,
+    player: card.players,
+    teams: card.teamName || 'Unknown',
+    sku: `${set.metadata.bin}|${card.cardNo}`,
+    size: 'Standard',
+    thickness: '20pt',
+    bsc: card.id,
+    printRun: card.printRun,
+    autograph: card.autograph,
   };
   if (card.sportlots) {
     product.metadata.sportlots = card.sportlots;
@@ -34,7 +46,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   const titles = await getTitles({ ...product, ...set.metadata, ...product.metadata });
   product.title = titles.title;
   product.description = titles.longTitle;
-  product.metadata.cardName = await getCardName(product, set);
+  product.metadata.cardName = await getCardName({ title: titles.title, metadata: product.metadata }, set);
 
   product.size = 'Standard';
   product.material = 'Card Stock';
@@ -45,7 +57,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   product.width = 4;
   product.depth = 1;
 
-  return product;
+  return product as Product;
 }
 
 const add = (info?: string, modifier?: string): string => {
@@ -63,20 +75,20 @@ type Titles = {
   longTitle: string;
   cardName: string;
 };
+
 //try to get to the best 80 character title that we can
-export async function getTitles(card: Metadata) {
+export async function getTitles(card: Metadata): Promise<Titles> {
   const maxTitleLength = 80;
 
   const titles: Partial<Titles> = {};
 
   let insert = add(card.insert, 'Insert');
   let parallel = add(card.parallel, 'Parallel');
-  let features = add(card.features).replace(' | ', '');
-  let printRun = card.printRun ? ` /${card.printRun}` : '';
+  const features = add(card.features).replace(' | ', '');
+  const printRun = card.printRun ? ` /${card.printRun}` : '';
   let setName = card.setName;
-  let teamDisplay = card.teams;
-  // @ts-ignore
-  let graded = isYes(card.graded) ? ` ${card.grader} ${card.grade} ${psaGrades[card.grade]}` : '';
+  const teamDisplay = card.teams;
+  const graded = isYes(card.graded) ? ` ${card.grader} ${card.grade} ${psaGrades[card.grade]}` : '';
 
   titles.longTitle = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player} ${teamDisplay}${features}${printRun}${graded}`;
   let title = titles.longTitle;
@@ -117,17 +129,22 @@ export async function getTitles(card: Metadata) {
   }
   titles.title = title;
 
-  return titles;
+  return titles as Titles;
 }
 
+type CardNameFields = {
+  title: string;
+  metadata: Metadata;
+};
+
 //generate a 60 character card name
-async function getCardName(card: Product, category: Category): Promise<string> {
+async function getCardName(card: CardNameFields, category: Category): Promise<string> {
   if (!card.title) throw 'Must have Title to generate Card Name';
 
   const maxCardNameLength = 60;
   let cardName = card.title.replace(' | ', ' ');
-  let insert = add(category.metadata.insert);
-  let parallel = add(category.metadata.parallel);
+  const insert = add(category.metadata.insert);
+  const parallel = add(category.metadata.parallel);
   if (cardName.length > maxCardNameLength) {
     cardName =
       `${category.metadata.year} ${category.metadata.brand} ${category.metadata.setName}${insert}${parallel} ${card.metadata.player}`.replace(
@@ -157,4 +174,125 @@ async function getCardName(card: Product, category: Category): Promise<string> {
   }
 
   return cardName;
+}
+
+export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
+  if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
+
+  const product = await matchCard(setData, imageDefaults);
+  let productVariantId;
+  if (product.variants.length === 1) {
+    productVariantId = product.variants[0].id;
+  } else {
+    productVariantId = await ask('Which variant is this?', undefined, {
+      selectOptions: product.variants.map((variant) => ({
+        name: `${variant.title}`,
+        value: variant.id,
+      })),
+    });
+  }
+  const productVariant = await getProductVariant(productVariantId);
+
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  productVariant.prices = await getPricing();
+
+  const quantity = await ask('Quantity', 1);
+
+  return { productVariant, quantity };
+}
+
+async function getPricing(): Promise<MoneyAmount[]> {
+  const isCommon = await ask('Use common card pricing', true);
+  if (isCommon) {
+    return await getBasePricing();
+  } else {
+    return [
+      { amount: await ask('ebay price', 99), region_id: await getRegion('ebay') } as MoneyAmount,
+      { amount: await ask('MCP Price', 100), region_id: await getRegion('MCP') } as MoneyAmount,
+      { amount: await ask('BSC Price', 25), region_id: await getRegion('BSC') } as MoneyAmount,
+      { amount: await ask('SportLots Price', 18), region_id: await getRegion('SportLots') } as MoneyAmount,
+    ];
+  }
+}
+
+export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
+  // log(products);
+  let card = setInfo.products?.find(
+    (product) =>
+      product.metadata.cardNumber === `${setInfo.metadata.card_number_prefix}${imageDefaults.cardNumber}` &&
+      product.metadata.player.includes(imageDefaults.player),
+  );
+  if (card) {
+    return card;
+  }
+  card = setInfo.products?.find(
+    (product) => product.metadata.cardNumber === `${setInfo.metadata.card_number_prefix}${imageDefaults.cardNumber}`,
+  );
+  if (card) {
+    log(card.metadata);
+    const isCard = await ask(`Is this the correct card?`, true);
+    if (isCard) {
+      return card;
+    }
+  }
+  card = await ask('Which card is this?', undefined, {
+    selectOptions: setInfo.products?.map((product) => ({
+      name: `${product.metadata.cardNumber} ${product.metadata.player.join(', ')}`,
+      value: product,
+    })),
+  });
+  if (card) {
+    return card;
+  }
+  throw new Error('No card found');
+}
+
+let basePricing: MoneyAmount[];
+
+export async function getBasePricing(): Promise<MoneyAmount[]> {
+  if (!basePricing) {
+    basePricing = [
+      { amount: 99, region_id: await getRegion('ebay') } as MoneyAmount,
+      { amount: 100, region_id: await getRegion('MCP') } as MoneyAmount,
+      { amount: 25, region_id: await getRegion('BSC') } as MoneyAmount,
+      { amount: 18, region_id: await getRegion('SportLots') } as MoneyAmount,
+    ];
+  }
+  return basePricing;
+}
+
+let commonPricing: MoneyAmount[];
+
+export async function getCommonPricing() {
+  if (!commonPricing) {
+    commonPricing = [
+      { amount: 25, region_id: await getRegion('BSC') } as MoneyAmount,
+      { amount: 18, region_id: await getRegion('SportLots') } as MoneyAmount,
+    ];
+  }
+  return commonPricing;
+}
+
+export async function saveListing(productVariant: ProductVariant, images: string[], quantity: string) {
+  if (!productVariant.product) throw 'Must set Product on the Variant before saving listing';
+  const listing = await getInventory(productVariant);
+  await updateProductImages({
+    id: productVariant.product.id,
+    images: images,
+  });
+  await updateProductVariant(productVariant);
+  await updateInventory(listing, quantity);
+  return listing;
+}
+
+export async function saveBulk(
+  product: Product,
+  productVariant: ProductVariant,
+  quantity: number,
+): Promise<InventoryItemDTO> {
+  const listing = await getInventory(productVariant);
+  await updatePrices(product.id, productVariant.id, await getCommonPricing());
+  // await updatePrices(product.id, productVariant.id, await getPricing());
+  await updateInventory(listing, quantity);
+  return listing;
 }

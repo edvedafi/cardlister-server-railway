@@ -1,36 +1,59 @@
-import vision from '@google-cloud/vision';
-import { isTeam, sports } from '../utils/teams.js';
-import { getInserts, getManufactures, getSets, getTitleCase } from '../utils/data.ts';
-import { HfInference } from '@huggingface/inference';
+import vision, {type ImageAnnotatorClient} from '@google-cloud/vision';
+import {isTeam, sports} from '../utils/teams.js';
+import {getInserts, getBrands, getSets, titleCase} from '../utils/data';
 import dotenv from 'dotenv';
-import { useSpinners } from '../utils/spinners.js';
+import {type UpdateSpinner, useSpinners} from '../utils/spinners.js';
+import type {Metadata, SetInfo} from "../models/setInfo";
+import type {CropHints, ImageRecognitionResults} from "../models/cards";
+import { HfInference } from '@huggingface/inference';
+import { protos } from '@google-cloud/vision';
 
-const { showSpinner } = useSpinners('firebase', '#f4d02e');
+// Alias for easier reference
+type IEntityAnnotation = protos.google.cloud.vision.v1.IEntityAnnotation;
+
+const {showSpinner} = useSpinners('firebase', '#f4d02e');
 
 dotenv.config();
 
+const hf = new HfInference(process.env.HF_TOKEN);
+
 const detectionFeatures = [
-  { type: 'LABEL_DETECTION' },
-  { type: 'LOGO_DETECTION' },
-  { type: 'DOCUMENT_TEXT_DETECTION' },
-  { type: 'OBJECT_LOCALIZATION' },
+  {type: 'LABEL_DETECTION'},
+  {type: 'LOGO_DETECTION'},
+  {type: 'DOCUMENT_TEXT_DETECTION'},
+  {type: 'OBJECT_LOCALIZATION'},
 ];
 
-async function getTextFromImage(front, back = undefined, setData = {}) {
-  const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
+type SearchableData = {
+  word: string;
+  words: string[];
+  wordCount: number;
+  confidence: number;
+  isFront: boolean;
+  isNumber: boolean;
+  lowerCase: string;
+  set: boolean;
+  isProperName: boolean;
+};
 
-  let defaults = {
+async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
+  const {update, error, finish} = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
+
+  let defaults: Partial<ImageRecognitionResults> = {
     sport: setData.metadata?.sport,
     setName: setData.metadata?.setName,
-    manufacture: setData.metadata?.manufacture,
+    brand: setData.metadata?.brand,
     year: setData.metadata?.year,
     insert: setData.metadata?.insert,
-    raw: [front, back],
+    raw: [front],
   };
+  if( back ) {
+    defaults.raw?.push(back);
+  }
 
   try {
     update('Loading Google Vision');
-    const client = new vision.ImageAnnotatorClient();
+    const client: ImageAnnotatorClient = new vision.ImageAnnotatorClient();
 
     update(`Running Vision API on ${front}`);
     const [frontResult] = await client.annotateImage({
@@ -50,13 +73,13 @@ async function getTextFromImage(front, back = undefined, setData = {}) {
     update(`Running Vision API on ${back}`);
     const [backResult] = back
       ? await client.annotateImage({
-          image: {
-            source: {
-              filename: back,
-            },
+        image: {
+          source: {
+            filename: back,
           },
-          features: detectionFeatures,
-        })
+        },
+        features: detectionFeatures,
+      })
       : [];
 
     update(`Gathering Crop Hints`);
@@ -89,21 +112,21 @@ async function getTextFromImage(front, back = undefined, setData = {}) {
      *  isNumber: Whether the word is a number
      *  lowerCase: The word in lower case
      */
-    let searchParagraphs = [];
-    const addLabelsToSearch = (labelAnnotations, isFront) => {
+    let searchParagraphs: SearchableData[] = [];
+    const addLabelsToSearch = (labelAnnotations: protos.google.cloud.vision.v1.IEntityAnnotation[] | undefined | null, isFront: boolean) => {
       if (labelAnnotations) {
         searchParagraphs.concat(
-          labelAnnotations.map((label) => {
-            const searchValue = {
-              word: label.description,
-              words: label.description.split(' '),
-              confidence: (isFront ? 102 : 101) + label.score,
-              isFront,
-            };
-            searchValue.wordCount = searchValue.words.length;
-            searchValue.isNumber = !isNaN(searchValue.word);
-            searchValue.lowerCase = searchValue.word.toLowerCase();
-            searchParagraphs.push(searchValue);
+          labelAnnotations.filter(label=>label.description).map((label:protos.google.cloud.vision.v1 .IEntityAnnotation) => {
+              const searchValue: Partial<SearchableData> = {
+                word: label.description || '',
+                words: label.description?.split(' ') || [],
+                confidence: (isFront ? 102 : 101) + (label.score || 0),
+                isFront,
+              };
+              searchValue.wordCount = searchValue.words?.length;
+              searchValue.isNumber = searchValue.word ? !isNaN(Number(searchValue.word)) : false;
+              searchValue.lowerCase = searchValue.word?.toLowerCase();
+              return searchValue as SearchableData;
           }),
         );
       }
@@ -113,20 +136,20 @@ async function getTextFromImage(front, back = undefined, setData = {}) {
     update(`Adding Labels for ${back}`);
     addLabelsToSearch(backResult?.labelAnnotations, false);
 
-    const addLogosToSearch = (logoAnnotations, isFront) => {
+    const addLogosToSearch = (logoAnnotations:protos.google.cloud.vision.v1 .IEntityAnnotation[] | undefined | null, isFront: boolean) => {
       if (logoAnnotations) {
         searchParagraphs.concat(
-          logoAnnotations.map((logo) => {
-            const searchValue = {
-              word: logo.description,
-              words: logo.description.split(' '),
-              confidence: (isFront ? 602 : 601) + logo.score,
+          logoAnnotations.filter(label=>label.description).map((logo:protos.google.cloud.vision.v1 .IEntityAnnotation) => {
+            const searchValue: Partial<SearchableData> = {
+              word: logo.description || '',
+              words: logo.description?.split(' ') || [],
+              confidence: (isFront ? 602 : 601) + (logo.score || 0),
               isFront,
             };
-            searchValue.wordCount = searchValue.words.length;
-            searchValue.isNumber = !isNaN(searchValue.word);
-            searchValue.lowerCase = searchValue.word.toLowerCase();
-            searchParagraphs.push(searchValue);
+            searchValue.wordCount = searchValue.words?.length;
+            searchValue.isNumber = searchValue.word ? !isNaN(Number(searchValue.word)) : false;
+            searchValue.lowerCase = searchValue.word?.toLowerCase();
+            return searchValue as SearchableData;
           }),
         );
       }
@@ -136,53 +159,55 @@ async function getTextFromImage(front, back = undefined, setData = {}) {
     update(`Adding Logos for ${back}`);
     addLogosToSearch(backResult?.logoAnnotations, false);
 
-    const addSearch = async (textResult, isFront) => {
+    const addSearch = async (textResult:protos.google.cloud.vision.v1 .IAnnotateImageResponse, isFront: boolean = true) => {
       if (textResult) {
-        const textBlocks =
-          textResult.fullTextAnnotation?.pages[0]?.blocks?.filter((block) => block.blockType === 'TEXT') || [];
-
-        const blocks = await Promise.all(
-          textBlocks.map(async (block) => {
-            return await Promise.all(
-              block.paragraphs?.map(async (paragraph) => {
-                const searchValue = {
-                  word: paragraph.words.map((word) => word.symbols.map((symbol) => symbol.text).join('')).join(' '),
-                  words: paragraph.words.map((word) => word.symbols.map((symbol) => symbol.text).join('')),
-                  wordCount: paragraph.words.length,
-                  confidence: (isFront ? 302 : 301) + block.confidence,
-                  isFront,
-                };
-                searchValue.isNumber = !isNaN(searchValue.word);
-                searchValue.lowerCase = searchValue.word.toLowerCase();
-                return searchValue;
-              }),
-            );
-          }),
-        );
-        searchParagraphs = searchParagraphs.concat(blocks.reduce((acc, val) => acc.concat(val), []));
+        const textBlocks:protos.google.cloud.vision.v1 .IBlock[] =
+          textResult.fullTextAnnotation?.pages?.[0]?.blocks?.filter((block) => block.blockType === 'TEXT') || [];
+        const blocks: SearchableData[] = [];
+        for (const block of textBlocks) {
+          if (block.paragraphs) {
+            for (const paragraph of block.paragraphs) {
+              const searchValue: Partial<SearchableData> = {
+                word: paragraph.words?.map((word:protos.google.cloud.vision.v1 .IWord) => word.symbols?.map((symbol:protos.google.cloud.vision.v1 .ISymbol) => symbol.text).join('')).join(' '),
+                words: paragraph.words?.map((word:protos.google.cloud.vision.v1 .IWord) => word.symbols?.map((symbol:protos.google.cloud.vision.v1 .ISymbol): string => symbol.text || '').join('') || '') || [],
+                wordCount: paragraph.words?.length || 0,
+                confidence: (isFront ? 302 : 301) + (block.confidence || 0),
+                isFront,
+              };
+              searchValue.isNumber = searchValue.word ? !isNaN(Number(searchValue.word)) : false;
+              searchValue.lowerCase = searchValue.word?.toLowerCase();
+              blocks.push(searchValue as SearchableData);
+            }
+          }
+        }
+        searchParagraphs = searchParagraphs.concat(blocks);
       }
     };
     update('Adding the full text of the card to the searchable data');
-    await Promise.all([addSearch(frontResult, true), addSearch(backResult, false)]);
+    if ( backResult ) {
+      await Promise.all([addSearch(frontResult, true), addSearch(backResult, false)]);
+    } else {
+      await addSearch(frontResult, true);
+    }
 
-    defaults = await extractData(searchParagraphs, defaults, setData.metadata, update);
+    defaults = await extractData(searchParagraphs, defaults, setData.metadata || [], update);
 
-    finish(`image-recognition-${front}`, `Image Recognition ${front} converted to ${JSON.stringify(defaults)}`);
+    finish(`Image Recognition ${front} converted to ${JSON.stringify(defaults)}`);
   } catch (e) {
     error(e);
   }
   return defaults;
 }
 
-export const extractData = async (searchParagraphs, defaults, setData, update) => {
-  let result = { ...defaults };
+export const extractData = async (searchParagraphs: SearchableData[], defaults: Partial<ImageRecognitionResults>, setData: Metadata, update: (msg: string)=>void) => {
+  let result = {...defaults};
   update('Sorting Searchable Data');
   searchParagraphs = searchParagraphs.sort((a, b) => b.confidence - a.confidence);
 
   update('Checking for Panini Match');
   result = {
     ...result,
-    ...paniniMatch(searchParagraphs, setData),
+    ...await paniniMatch(searchParagraphs, setData),
   };
 
   update('Running NLP');
@@ -198,7 +223,7 @@ export const extractData = async (searchParagraphs, defaults, setData, update) =
   result = await runSecondPass(searchParagraphs, result, setData);
 
   update('Third pass, lets get really fuzzy');
-  result = await fuzzyMatch(searchParagraphs, result, setData);
+  result = await fuzzyMatch(searchParagraphs, result);
 
   update('Clean Up data');
   if (result.cardNumber) {
@@ -208,38 +233,46 @@ export const extractData = async (searchParagraphs, defaults, setData, update) =
   return result;
 };
 
-const getCropHints = async (client, image) => {
+const getCropHints = async (client: ImageAnnotatorClient, image: string): Promise<CropHints | undefined> => {
   const [cropHintResults] = await client.cropHints(image);
-  const hint = cropHintResults.cropHintsAnnotation.cropHints[0].boundingPoly.vertices;
-  const left = hint.map((h) => h.x).sort((a, b) => a - b)[0];
-  const top = hint.map((h) => h.y).sort((a, b) => a - b)[0];
-  const right = hint.map((h) => h.x).sort((a, b) => b - a)[0];
-  const bottom = hint.map((h) => h.y).sort((a, b) => b - a)[0];
-  return { left, top, width: right - left, height: bottom - top };
+  const hint = cropHintResults.cropHintsAnnotation?.cropHints?.[0].boundingPoly?.vertices;
+
+  if (hint) {
+    const left: number | null | undefined = hint.map((h) => h.x).sort((a, b) => a || 0 - (b || 0))[0];
+    const top: number | null | undefined = hint.map((h) => h.y).sort((a, b) => a || 0 - (b || 0))[0];
+    const right: number | null | undefined = hint.map((h) => h.x).sort((a, b) => b || 0 - (a || 0))[0];
+    const bottom: number | null | undefined = hint.map((h) => h.y).sort((a, b) => b || 0 - (a || 0))[0];
+    if (left && right && top && bottom) {
+      return {left, top, width: right - left, height: bottom - top};
+    }
+  }
 };
 
-export let callNLP = async (text) => {
+export let callNLP = async (text: string) => {
   return await hf.tokenClassification({
     model: 'dslim/bert-base-NER-uncased',
     inputs: text,
   });
 };
-export const runNLP = async (text, setData, update) => {
+export const runNLP = async (text: SearchableData[], setData: Metadata, update: UpdateSpinner) => {
+  const brands = await getBrands();
+  const inserts = await getInserts();
+  const sets = await getSets();
   if (setData.player) {
     update('Skipping NLP because player is already set');
-    return { player: setData.player };
+    return {player: setData.player};
   } else {
     update('Searching for a player name');
-    const countWords = (word) => {
+    const countWords = (word: string): number => {
       if (word) {
         const search = word.toLowerCase();
-        return text.reduce((count, paragraph) => count + paragraph.lowerCase.includes(search), 0);
+        return text.reduce((count, paragraph) => count + (paragraph.lowerCase?.includes(search) ? 1 : 0), 0);
       } else {
         return 0;
       }
     };
-    const wordCount = (name) => name.split(' ').length;
-    const results = {};
+    const wordCount = (name: string) => name.split(' ').length;
+    const results: Partial<ImageRecognitionResults> = {};
     const textBlock = text.map((block) => block.word).join('. ');
     update('Calling NLP engine');
     const segments = await callNLP(textBlock);
@@ -261,13 +294,13 @@ export const runNLP = async (text, setData, update) => {
               let rawWord = text.find((word) => word?.lowerCase?.match(person?.word?.replace(/#/g, "[A-Za-z.']+")));
               if (rawWord) {
                 const end = person.word.replace(/#/g, '');
-                finalWord = rawWord.word.slice(0, rawWord.lowerCase.indexOf(end) + end.length);
+                finalWord = rawWord && rawWord.word && rawWord.lowerCase ? rawWord.word.slice(0, rawWord.lowerCase.indexOf(end) + end.length): undefined;
               }
             }
           } catch (e) {
             console.error(`Failed to process ${person} for wild card regexes`);
           }
-          return { ...person, word: finalWord || person.word };
+          return {...person, word: finalWord || person.word};
         })
         //remove any words that have a non-alphabetic character, also all spaces, periods and hyphens
         .filter((person) => person.word.match(/^[A-Za-z\s.\-']+$/))
@@ -278,7 +311,7 @@ export const runNLP = async (text, setData, update) => {
         //remove any names that are in the ignore list
         .filter(
           (person) =>
-            !manufactures.includes(person.word) && !inserts.includes(person.word) && !sets.includes(person.word),
+            !brands.includes(person.word) && !inserts.includes(person.word) && !sets.includes(person.word),
         )
         //remove any names that are substrings of other names
         .filter((person) => !persons.find((search) => search.word !== person.word && search.word.includes(person.word)))
@@ -342,10 +375,13 @@ export const runNLP = async (text, setData, update) => {
   }
 };
 
-const runFirstPass = async (searchParagraphs, defaults, setData) => {
-  const results = { ...defaults };
-  searchParagraphs.forEach((block) => {
-    const wordCountBetween = (min, max) => block.wordCount >= min && block.wordCount <= max;
+const runFirstPass = async (searchParagraphs: SearchableData[], defaults: Partial<ImageRecognitionResults>, setData: Metadata) => {
+  const brands = await getBrands();
+  const inserts = await getInserts();
+  const sets = await getSets();
+  const results = {...defaults};
+  searchParagraphs.forEach((block: SearchableData) => {
+    const wordCountBetween = (min: number, max: number): boolean => block.wordCount >= min && block.wordCount <= max;
 
     // console.log('First Pass: ', block)
 
@@ -360,16 +396,16 @@ const runFirstPass = async (searchParagraphs, defaults, setData) => {
       }
 
       //look for Philadelphia copyright info
-      const manufactureMatch = block.lowerCase.replace(/\s|[.]/g, '');
-      if (manufactureMatch.indexOf('pcg') > -1) {
-        results.manufacture = 'Philadelphia Gum';
+      const brandMatch = block.lowerCase?.replace(/\s|[.]/g, '');
+      if (brandMatch && brandMatch.indexOf('pcg') > -1) {
+        results.brand = 'Philadelphia Gum';
         results.setName = 'Philadelphia';
         block.set = true;
       }
 
       //look for Topps copyright info
-      if (manufactureMatch.indexOf('tcg') > -1) {
-        results.manufacture = 'Topps';
+      if (brandMatch && brandMatch.indexOf('tcg') > -1) {
+        results.brand = 'Topps';
         results.setName = 'Topps';
         block.set = true;
       }
@@ -387,12 +423,12 @@ const runFirstPass = async (searchParagraphs, defaults, setData) => {
       }
 
       //block.set default.printRun if block.word matches a regex that is number then / then number
-      if (!results.printRun && block.word.match(/^\d+\/\d+$/)) {
+      if (!results.printRun && block.word?.match(/^\d+\/\d+$/)) {
         results.printRun = block.word.slice(block.word.indexOf('/') + 1);
         block.set = true;
       }
       //block.set default.printRun if block.word matches a regex that is number then of then number
-      if (!results.printRun && block.word.match(/^\d+ of \d+$/)) {
+      if (!results.printRun && block.word?.match(/^\d+ of \d+$/)) {
         results.printRun = block.word.slice(block.word.indexOf('of') + 3);
         block.set = true;
       }
@@ -405,15 +441,15 @@ const runFirstPass = async (searchParagraphs, defaults, setData) => {
         }
       }
 
-      if (!results.setName && wordCountBetween(1, 2) && sets.includes(block.lowerCase)) {
+      if (!results.setName && wordCountBetween(1, 2) && block.lowerCase && sets.includes(block.lowerCase)) {
         results.setName = titleCase(block.word);
         block.set = true;
-      } else if (!results.manufacture && wordCountBetween(1, 2) && manufactures.includes(block.lowerCase)) {
-        results.manufacture = titleCase(block.word);
+      } else if (!results.brand && wordCountBetween(1, 2) && block.lowerCase && brands.includes(block.lowerCase)) {
+        results.brand = titleCase(block.word);
         block.set = true;
       }
 
-      if (!results.insert && wordCountBetween(1, 2) && inserts.includes(block.lowerCase)) {
+      if (!results.insert && wordCountBetween(1, 2) && block.lowerCase && inserts.includes(block.lowerCase)) {
         results.insert = titleCase(block.word);
         block.set = true;
       }
@@ -422,7 +458,7 @@ const runFirstPass = async (searchParagraphs, defaults, setData) => {
         results.features = addFeature(results.features, 'RC');
       }
 
-      let teamTest;
+      let teamTest: {display: string; sport: string} | undefined;
       if (!results.team) {
         block.words.find((word) => {
           teamTest = isTeam(word, setData.sport);
@@ -433,7 +469,7 @@ const runFirstPass = async (searchParagraphs, defaults, setData) => {
         });
 
         if (teamTest) {
-          results.team = teamTest;
+          results.team = teamTest.display;
           block.set = true;
           if (!results.sport) {
             results.sport = teamTest.sport;
@@ -445,17 +481,17 @@ const runFirstPass = async (searchParagraphs, defaults, setData) => {
   return results;
 };
 
-const runSecondPass = async (searchParagraphs, defaults, setData) => {
-  const results = { ...defaults };
+const runSecondPass = async (searchParagraphs: SearchableData[], defaults: Partial<ImageRecognitionResults>, setData: Metadata) => {
+  const results = {...defaults};
   searchParagraphs
     .filter((block) => !block.set)
     .forEach((block) => {
-      const wordCountBetween = (min, max) => block.wordCount >= min && block.wordCount <= max;
+      const wordCountBetween = (min: number, max: number) => block.wordCount >= min && block.wordCount <= max;
 
       // console.log('second pass: ', block)
 
       if (block.isNumber) {
-        if (!results.year && block.word > 1900 && block.word < 2100) {
+        if (!results.year && block.word && parseInt(block.word) > 1900 && parseInt(block.word) < 2100) {
           //convert block.word to a number and add 1
           results.year = `${Number(block.word) + 1}`;
         } else if (!results.cardNumber && !setData.card_number_prefix && !block.isFront) {
@@ -465,7 +501,7 @@ const runSecondPass = async (searchParagraphs, defaults, setData) => {
 
       if (!results.cardNumber) {
         //set cardNumber if the block.word matches a regex that is letters followed by numbers with an optional space between
-        if (block.word.match(/^[a-zA-Z]{1,3}\s?-?\s?\d{1,3}/)) {
+        if (block.word?.match(/^[a-zA-Z]{1,3}\s?-?\s?\d{1,3}/)) {
           results.cardNumber = block.word;
         }
       }
@@ -478,15 +514,15 @@ const runSecondPass = async (searchParagraphs, defaults, setData) => {
 };
 
 const yearRegex = /©\s?\d{4}/;
-export const copyRightYearRegexMatch = (text) => {
+export const copyRightYearRegexMatch = (text: string) => {
   const yearMatch = text.match(yearRegex);
   if (yearMatch) {
     return yearMatch[0].slice(-4);
   }
 };
 
-const fuzzyMatch = async (searchParagraphs, defaults) => {
-  const results = { ...defaults };
+const fuzzyMatch = async (searchParagraphs: SearchableData[], defaults: Partial<ImageRecognitionResults>): Promise<Partial<ImageRecognitionResults>> => {
+  const results = {...defaults};
   searchParagraphs
     .filter((block) => !block.set)
     .forEach((block) => {
@@ -504,7 +540,7 @@ const fuzzyMatch = async (searchParagraphs, defaults) => {
   return results;
 };
 
-const addFeature = (features, feature) => {
+const addFeature = (features: string | undefined, feature: string): string => {
   if (!features) {
     return feature;
   } else if (features.indexOf(feature) > -1) {
@@ -514,15 +550,16 @@ const addFeature = (features, feature) => {
   }
 };
 
-export const paniniMatch = (searchParagraphs, defaults) => {
-  if (defaults.manufacture && defaults.year && defaults.setName && defaults.insert) {
+export const paniniMatch = async (searchParagraphs: SearchableData[], defaults: Partial<ImageRecognitionResults>): Promise<Partial<ImageRecognitionResults>> => {
+  if (defaults.brand && defaults.year && defaults.setName && defaults.insert) {
     return {};
   }
+  const sets = await getSets();
 
-  const results = {};
+  const results: Partial<ImageRecognitionResults> = {};
   const match = searchParagraphs.find((block) => block.lowerCase.match(/^\d\d\d\d panini - /));
   if (match) {
-    results.manufacture = defaults.manufacture || 'Panini';
+    results.brand = defaults.brand || 'Panini';
     results.year = defaults.year || match.words[0];
     results.setName = defaults.setName || titleCase(match.words[3]);
     const updateInsert = !defaults.insert;
@@ -541,9 +578,6 @@ export const paniniMatch = (searchParagraphs, defaults) => {
           results.insert += ` ${nextWord}`;
         } else {
           results.insert = nextWord;
-          // console.log(`setting insert to ${nextWord}`);
-          // console.log(`${results.setName.toLowerCase()} !== ${match.words[i].toLowerCase()}`);
-          // console.log(results.setName.toLowerCase() !== match.words[i].toLowerCase());
         }
       }
       i++;

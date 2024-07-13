@@ -9,7 +9,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
   const batchJobService: BatchJobService = req.scope.resolve('batchJobService');
   const responses: BatchJob[] = [];
 
-  // @ts-ignore
+  // @ts-expect-error body is untyped
   const body: { category: string; only: string[] } = req.body || { category: 'Error: Category is Required', only: [] };
 
   if (!body.only || body.only.includes('sportlots')) {
