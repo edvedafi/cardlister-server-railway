@@ -65,7 +65,7 @@ export const prepareImageFile = async (image, listing, setInfo, imageNumber) => 
       },
       async () => {
         tempImage = `${tempDirectory}/sharp.extract.jpg`;
-        return await sharp(input).extract(cardData.crop).toFile(tempImage);
+        return await sharp(input).extract(listing.crop).toFile(tempImage);
       },
       async () => {
         tempImage = `${tempDirectory}/sharp.trimp.jpg`;

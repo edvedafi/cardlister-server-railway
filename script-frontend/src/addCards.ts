@@ -1,23 +1,20 @@
-import dotenv from 'dotenv';
-import { getSetData, initializeAnswers } from './card-data/cardData.js';
+import { configDotenv } from 'dotenv';
 import 'zx/globals';
-import { getFiles, getInputs } from './utils/inputs.js';
 import initializeFirebase from './utils/firebase.js';
 import { shutdownSportLots } from './listing-sites/sportlots.js';
-import { shutdownBuySportsCards } from './listing-sites/bsc.js';
-import { shutdownFirebase } from './listing-sites/firebase.js';
-import { shutdownMyCardPost } from './listing-sites/mycardpost.js';
 import chalk from 'chalk';
 import { useSpinners } from './utils/spinners.js';
 import { onShutdown } from 'node-graceful-shutdown';
-import { processSet } from './listSet.js';
+import { findSet } from './card-data/setData';
+import { processSet } from './card-data/listSet';
+import { getFiles, getInputs } from './utils/inputs';
 
-dotenv.config();
+configDotenv();
 
 $.verbose = false;
 
 const shutdown = async () => {
-  await Promise.all([shutdownSportLots(), shutdownBuySportsCards(), shutdownFirebase(), shutdownMyCardPost()]);
+  await Promise.all([shutdownSportLots()]);
 };
 
 onShutdown(shutdown);
@@ -32,14 +29,12 @@ try {
 
   // Set up full run information
   update('Gathering Inputs');
-  let input_directory = await getInputs();
-  update('Initializing Answers');
-  const savedAnswers = await initializeAnswers(input_directory);
+  const input_directory = await getInputs();
   update('Gathering Set Data');
-  const setData = await getSetData(true);
+  const setData = await findSet();
 
   //gather the list of files that we will process
-  let files = [];
+  let files: string[] = [];
   if (input_directory !== 'input/bulk/') {
     files = await getFiles(input_directory);
   }

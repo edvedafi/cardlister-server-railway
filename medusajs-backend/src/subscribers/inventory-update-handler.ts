@@ -23,8 +23,8 @@ export default async function inventoryUpdateHandler({
     const regionService: RegionService = container.resolve('regionService');
     const eventBusService: EventBusService = container.resolve('eventBusService');
 
-    // @ts-ignore
-    const [levels, count] = await inventoryService.listInventoryLevels({ id });
+    // @ts-expect-error data is untyped
+    const [levels] = await inventoryService.listInventoryLevels({ id });
     const inventoryItemId = levels[0].inventory_item_id;
     const quantity = await inventoryService.retrieveAvailableQuantity(inventoryItemId, [levels[0].location_id]);
 
@@ -38,21 +38,21 @@ export default async function inventoryUpdateHandler({
     const ebayPrice = pv.prices.find((p) => p.region_id === ebayRegion.id);
     const mcpPrice = pv.prices.find((p) => p.region_id === mcpRegion.id);
 
-    if (ebayPrice) {
-      await eventBusService.emit('ebay-listing-update', {
-        variantId: pv.id,
-        price: ebayPrice.amount,
-        quantity,
-      });
-    }
-
-    if (mcpPrice) {
-      await eventBusService.emit('mcp-listing-update', {
-        variantId: pv.id,
-        price: mcpPrice.amount,
-        quantity,
-      });
-    }
+    // if (ebayPrice) {
+    //   await eventBusService.emit('ebay-listing-update', {
+    //     variantId: pv.id,
+    //     price: ebayPrice.amount,
+    //     quantity,
+    //   });
+    // }
+    //
+    // if (mcpPrice) {
+    //   await eventBusService.emit('mcp-listing-update', {
+    //     variantId: pv.id,
+    //     price: mcpPrice.amount,
+    //     quantity,
+    //   });
+    // }
     console.log('inventoryUpdateHandler::Complete');
   } catch (error) {
     console.error('inventoryUpdateHandler::error: ', error);

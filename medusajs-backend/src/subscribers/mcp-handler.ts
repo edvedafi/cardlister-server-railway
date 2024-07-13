@@ -11,6 +11,7 @@ import axios from 'axios';
 import * as fs from 'node:fs';
 import * as process from 'node:process';
 import JSZip from 'jszip';
+import { getBrowserlessConfig } from '../utils/browserless';
 
 export default async function mcpHandler({
   data,
@@ -193,54 +194,7 @@ export default async function mcpHandler({
 }
 
 export const login = async () => {
-  const config: RemoteOptions = {
-    capabilities: {
-      // @ts-ignore
-      browserName: 'chrome',
-      'goog:chromeOptions': {
-        // @ts-ignore
-        args: [
-          '--window-size=3000,2000',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-breakpad',
-          '--disable-component-extensions-with-background-pages',
-          '--disable-dev-shm-usage',
-          '--disable-extensions',
-          '--disable-features=TranslateUI,BlinkGenPropertyTrees',
-          '--disable-ipc-flooding-protection',
-          '--disable-renderer-backgrounding',
-          '--enable-features=NetworkService,NetworkServiceInProcess',
-          '--force-color-profile=srgb',
-          '--hide-scrollbars',
-          '--metrics-recording-only',
-          '--mute-audio',
-          '--headless',
-          '--no-sandbox',
-        ],
-      },
-    },
-    baseUrl: 'https://www.mycardpost.com/',
-    // logLevel: 'error',
-  };
-  if (process.env.MCP_LOG_LEVEL) {
-    // @ts-ignore
-    config.logLevel = process.env.MCP_LOG_LEVEL;
-  }
-  if (process.env.BROWSER_DOMAIN_PRIVATE) {
-    config.path = '/webdriver';
-    config.hostname = process.env.BROWSER_DOMAIN_PRIVATE;
-    config.key = process.env.BROWSER_TOKEN;
-    config.capabilities['browserless:token'] = process.env.BROWSER_TOKEN;
-    if (process.env.BROWSER_PORT_PRIVATE === '443') {
-      config.protocol = 'https';
-      config.port = 443;
-    } else {
-      config.port = parseInt(process.env.BROWSER_PORT_PRIVATE);
-    }
-  }
-
-  const browser_ = await remote(config);
+  const browser_ = await remote(getBrowserlessConfig('https://www.mycardpost.com', 'MCP_LOG_LEVEL'));
   await browser_.url('login');
   await browser_.$('input[type="email"]').setValue(process.env.MCP_EMAIL);
   await browser_.$('input[type="password"]').setValue(process.env.MCP_PASSWORD);

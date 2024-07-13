@@ -7,7 +7,7 @@ import { getStorage as getFirebaseStorage, type Storage } from 'firebase-admin/s
 let _db: FirebaseFirestore.Firestore;
 let _firebase: App;
 let _storage: Storage | null;
-const { showSpinner, finishSpinner, updateSpinner, errorSpinner, log } = useSpinners('firebase', '#ffc107');
+const { showSpinner } = useSpinners('firebase', '#ffc107');
 export default function initializeFirebase() {
   const { update, finish } = showSpinner('firebase', 'Firebase');
   update('Configuring');
@@ -32,9 +32,9 @@ export default function initializeFirebase() {
 }
 
 export const initializeStorage = (app: App) => {
-  showSpinner('storage', 'Initializing Firebase Storage');
+  const {finish} = showSpinner('storage', 'Initializing Firebase Storage');
   _storage = getFirebaseStorage(app);
-  finishSpinner('storage', 'Using Firebase Storage');
+  finish('Using Firebase Storage');
 };
 
 export function getFirestore() {
@@ -52,9 +52,10 @@ export function getFirebase() {
   return _firebase;
 }
 
-export function getStorage() {
+export function getStorage(): Storage {
   if (!_storage) {
     initializeStorage(getFirebase());
   }
+  if (!_storage) throw "Failed to initialize storage!"
   return _storage;
 }

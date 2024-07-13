@@ -1,14 +1,26 @@
 import { type Category } from './setInfo';
+import type { Card } from './bsc';
 
 export type SLCard = {
   cardNumber: string;
   title: string;
 };
 
+export type Prices = {
+  amount: number;
+  region_id: string;
+};
+
+export type ProductImage = {
+  file: string;
+  url: string;
+};
+
 export type Product = {
   id: string;
+  handle: string;
   type: string;
-  categories: Category;
+  categories: Category[];
   weight: number;
   length: number;
   width: number;
@@ -16,13 +28,14 @@ export type Product = {
   depth?: number;
   origin_country: string;
   material: string;
-  title?: string;
-  description?: string;
-  size?: string;
+  title: string;
+  description: string;
+  size: string;
   thickness?: string;
   lbs?: number;
   oz?: number;
-  images?: string[];
+  images: ProductImage[];
+  variants: ProductVariant[];
   metadata: {
     cardNumber: string;
     player: string[];
@@ -50,3 +63,25 @@ export type ProductVariant = {
     amount: number;
   }[];
 };
+
+export type Inventory = {
+  id: string;
+};
+
+export type CropHints = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+export type ImageRecognitionResults = Card &
+  SLCard & {
+    crop?: CropHints;
+    cropBack?: CropHints;
+    sport?: string;
+    brand?: string;
+    raw?: string[];
+    player?: string;
+    team?: string;
+    cardNumber?: string;
+  };

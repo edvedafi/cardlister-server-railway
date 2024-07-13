@@ -29,11 +29,13 @@ export const titleCase = (str: string): string =>
         .join("'")
     : '';
 
-export const getAvailableQuantity = async (sku: string, inventoryModule: IInventoryService): Promise<number> => {
+export const getAvailableQuantity = async (
+  sku: string,
+  inventoryModule: IInventoryService,
+  stockLocation: string,
+): Promise<number> => {
   const [inventoryItems] = await inventoryModule.listInventoryItems({ sku });
-  const quantityFromService = await inventoryModule.retrieveAvailableQuantity(inventoryItems[0].id, [
-    'sloc_01HWNYZ3G2K7WEKZ3SAB7VJFK0', //TODO This will need to be dynamic
-  ]);
+  const quantityFromService = await inventoryModule.retrieveAvailableQuantity(inventoryItems[0].id, [stockLocation]);
   return isNaN(quantityFromService) ? 0 : quantityFromService;
 };
 

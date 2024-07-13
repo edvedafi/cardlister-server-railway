@@ -125,7 +125,17 @@ const log = (color: ChalkInstance, ...args: any[]) => {
   resumeSpinners();
 };
 
-export const useSpinners = (processName: string, color: ChalkInstance | string = chalk.white) => {
+export type UpdateSpinner = (message: string) => void;
+export type FinishSpinner = (message?: string) => string;
+export type ErrorSpinner = (info: string | Error | unknown, addition?: string) => void;
+export type ShowSpinner = (name: string, message: string) => { update: UpdateSpinner; finish: FinishSpinner; error: ErrorSpinner };
+export type Log = (...args: any[]) => void;
+export type UseSpinners = {
+  showSpinner: ShowSpinner;
+  log: Log;
+};
+
+export const useSpinners = (processName: string, color: ChalkInstance | string = chalk.white): UseSpinners => {
   const key = `${processName}-spinner`;
   let colorFn: ChalkInstance;
   if (typeof color === 'string') {
@@ -150,10 +160,10 @@ export const useSpinners = (processName: string, color: ChalkInstance | string =
         },
       };
     },
-    updateSpinner: (name: string, message: string) => updateSpinner(`${key}-${name}`, colorFn.inverse(`${message}`)),
-    finishSpinner: (name: string, message: string) =>
-      finishSpinner(`${key}-${name}`, message ? colorFn(`${message}`) : ''),
-    errorSpinner: (name: string, message: string) => errorSpinner(`${key}-${name}`, colorFn(`${message}`)),
+    // updateSpinner: (name: string, message: string) => updateSpinner(`${key}-${name}`, colorFn.inverse(`${message}`)),
+    // finishSpinner: (name: string, message: string) =>
+    //   finishSpinner(`${key}-${name}`, message ? colorFn(`${message}`) : ''),
+    // errorSpinner: (name: string, message: string) => errorSpinner(`${key}-${name}`, colorFn(`${message}`)),
     log: (...args: any[]) => log(colorFn, ...args),
   };
 };

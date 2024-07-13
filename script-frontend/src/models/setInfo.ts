@@ -1,3 +1,5 @@
+import type {Product} from "./cards";
+
 export type Metadata = {
   [key: string]: any;
 };
@@ -19,4 +21,5 @@ export type SetInfo = Category & {
   variantType: Category;
   variantName: Category;
   category: Category;
+  products?: Product[];
 };
