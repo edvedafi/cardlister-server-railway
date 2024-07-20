@@ -34,5 +34,16 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     );
   }
 
+  if (!body.only || body.only.includes('ebay')) {
+    responses.push(
+      await batchJobService.create({
+        type: 'ebay-sync',
+        context: { category_id: body.category },
+        dry_run: false,
+        created_by: req.user.id,
+      }),
+    );
+  }
+
   res.json({ status: 'ok', category: body.category, job: responses });
 }

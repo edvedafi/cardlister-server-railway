@@ -42,7 +42,7 @@ const askNew = async (display: string, options: AskSelectOption[]) => {
 
 export async function findSet(): Promise<SetInfo> {
   const { update, finish, error } = showSpinner('findSet', 'Finding Set');
-  let setInfo: Partial<SetInfo> = { handle: '', metadata: {} };
+  const setInfo: Partial<SetInfo> = { handle: '', metadata: {} };
   try {
     update('Sport');
     const root = await getRootCategory();
@@ -189,7 +189,7 @@ export async function findSet(): Promise<SetInfo> {
         setInfo.handle = setInfo.variantName.handle;
       } else {
         update('New Variant Name');
-        let isInsert = setInfo.variantType?.name === 'Insert';
+        const isInsert = setInfo.variantType?.name === 'Insert';
         let isParallel = setInfo.variantType?.name === 'Parallel';
         const bscVariantName: BSCFilterResponse = await getBSCVariantNameFilter(setInfo);
         if (isInsert && !isParallel) {
@@ -220,6 +220,10 @@ export async function findSet(): Promise<SetInfo> {
       }
       if (!setInfo.variantName) throw new Error('Variant Name not found');
       const updates: Metadata = {};
+      const prefix = await ask('Prefix');
+      if (prefix) {
+        updates.card_number_prefix = prefix;
+      }
       if (!setInfo.variantName?.metadata?.sportlots) {
         updates.sportlots = await getSLSet(setInfo as SetInfo);
       }
@@ -263,15 +267,15 @@ export async function buildSet(setInfo: SetInfo) {
     const category: Category = setInfo.variantName || setInfo.variantType;
     const cards = await getBSCCards(category);
     const slCards = await getSLCards(setInfo, category);
+    if (cards.length !== slCards.length) throw `Set counts do not match! BSC: ${cards.length} SL: ${slCards.length}`;
     const products = await buildProducts(category, cards, slCards);
     finish(`Built ${products.length} products for ${category.name}`);
   } catch (e) {
     error(e);
-    throw e;
   }
 }
 
-type CardProduct = {};
+type CardProduct = object;
 
 async function buildProducts(category: Category, bscCards: Card[], slCards: SLCard[]): Promise<CardProduct[]> {
   const { update, finish, error } = showSpinner('buildProducts', 'Building Products');
@@ -284,17 +288,23 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
         name: `${card.cardNumber} - ${card.title}`,
       }),
     );
+    if (slCards.length === 0) {
+      throw 'No Sportlots cards found';
+    } else {
+      log(slCards);
+    }
 
     interface TempCard extends Card {
       sportlots?: string;
     }
+
     const cards: TempCard[] = await Promise.all(
       bscCards.map(async (card): Promise<TempCard> => {
         const slCard = slCards.find((slCard) => slCard.cardNumber === card.cardNo);
         const rtn: TempCard = { ...card };
         if (!slCard) {
           rtn.sportlots = await ask(
-            `Which Sportlots Card maps to ${card.year} ${card.setName} ${card.variantName} #${
+            `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${
               card.cardNo
             } ${card.players.join(' ')}?`,
             card.players[0],

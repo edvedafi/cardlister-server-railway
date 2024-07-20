@@ -18,6 +18,7 @@ import { getBrowserlessConfig } from '../utils/browserless';
 import { StockLocationService } from '@medusajs/stock-location/dist/services';
 import axios, { AxiosInstance } from 'axios';
 import axiosRetry from 'axios-retry';
+import eBayApi from 'ebay-api';
 
 type InjectedDependencies = {
   batchJobService: BatchJobService;
@@ -31,7 +32,9 @@ type InjectedDependencies = {
   regionService: RegionService;
 };
 
-abstract class ListingStrategy<T extends WebdriverIO.Browser | AxiosInstance> extends AbstractBatchJobStrategy {
+abstract class ListingStrategy<
+  T extends WebdriverIO.Browser | AxiosInstance | eBayApi,
+> extends AbstractBatchJobStrategy {
   static identifier = 'listing-strategy';
   static batchType = 'listing-sync';
   static listingSite = 'sync-site';
