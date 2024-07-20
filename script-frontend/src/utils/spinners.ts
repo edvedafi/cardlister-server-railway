@@ -50,7 +50,7 @@ export const updateSpinner = (spinnerName: string, message: string) => {
 export const pauseSpinners = () => {
   const spinners = getSpinners();
   const paused: Spinners = [];
-  // @ts-ignore - Using an internal property, yes I know it's a bad idea, but it must be done
+  // @ts-expect-error - Using an internal property, yes I know it's a bad idea, but it must be done
   Object.keys(spinners.spinners).forEach((spinner) => {
     const s = spinners.pick(spinner);
     if (s.status !== 'fail' && s.status !== 'succeed') {
@@ -111,7 +111,7 @@ export const errorSpinner = (spinnerName: string, message: string) => {
   }
 };
 
-const log = (color: ChalkInstance, ...args: any[]) => {
+const log = (color: ChalkInstance, ...args: unknown[]) => {
   pauseSpinners();
   console.log(
     ...args.map((arg) => {
@@ -128,8 +128,15 @@ const log = (color: ChalkInstance, ...args: any[]) => {
 export type UpdateSpinner = (message: string) => void;
 export type FinishSpinner = (message?: string) => string;
 export type ErrorSpinner = (info: string | Error | unknown, addition?: string) => void;
-export type ShowSpinner = (name: string, message: string) => { update: UpdateSpinner; finish: FinishSpinner; error: ErrorSpinner };
-export type Log = (...args: any[]) => void;
+export type ShowSpinner = (
+  name: string,
+  message: string,
+) => {
+  update: UpdateSpinner;
+  finish: FinishSpinner;
+  error: ErrorSpinner;
+};
+export type Log = (...args: unknown[]) => void;
 export type UseSpinners = {
   showSpinner: ShowSpinner;
   log: Log;
@@ -164,6 +171,6 @@ export const useSpinners = (processName: string, color: ChalkInstance | string =
     // finishSpinner: (name: string, message: string) =>
     //   finishSpinner(`${key}-${name}`, message ? colorFn(`${message}`) : ''),
     // errorSpinner: (name: string, message: string) => errorSpinner(`${key}-${name}`, colorFn(`${message}`)),
-    log: (...args: any[]) => log(colorFn, ...args),
+    log: (...args: unknown[]) => log(colorFn, ...args),
   };
 };

@@ -3,3 +3,5 @@ CardCropper
 CardCropper.rotate
 *firebase-adminsdk-*.json
 .env
+*error.png
+

@@ -7,6 +7,7 @@ import { type Category, type SetInfo } from '../models/setInfo';
 const { showSpinner, log } = useSpinners('sportlots', chalk.blueBright);
 
 let _browser: WebdriverIO.Browser;
+
 async function login() {
   if (!_browser) {
     const { update, error, finish } = showSpinner('login', 'Login');
@@ -92,13 +93,15 @@ export async function getSLCards(
         .$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody')
         .$$('tr:has(td):not(:has(th))');
       for (const row of rows) {
-        const cardNumber = await row.$('td:nth-child(2)').getText();
-        if (!isNaN(parseInt(cardNumber))) {
-          cards.push({
-            cardNumber,
-            title: await row.$('td:nth-child(3)').getText(),
-          });
-        }
+        cards.push({
+          cardNumber: await row.$('td:nth-child(2)').getText(),
+          title: await row.$('td:nth-child(3)').getText(),
+        });
+      }
+      if (cards.length === 0) {
+        await browser.saveScreenshot('sportlots-error.png');
+        await $`open sportlots-error.png`;
+        throw new Error('No cards found on SportLots');
       }
       await browser.$('input[value="Inventory Cards"').click();
     }
@@ -106,7 +109,6 @@ export async function getSLCards(
     return cards;
   } catch (e) {
     error(e);
-    throw e;
   }
 }
 
@@ -154,7 +156,7 @@ export async function getSLSet(setInfo: SetInfo): Promise<SelectOption> {
     const table = await browser.$('th=Set Name');
     await table.waitForDisplayed({ timeout: 5000 });
     const rows = await table.$('../..').$$('tr:has(td):not(:has(th))');
-    for (let row of rows) {
+    for (const row of rows) {
       const columns = await row.$$('td');
       if (columns.length > 1) {
         const fullSetText = await columns[1].getText();

@@ -26,7 +26,8 @@
     "dev": "cross-env npm run build:server && medusa develop",
     "migrate": "cross-env medusa migrations run",
     "release:link": "railway link",
-    "redis": "cross-env redis-stack-server"
+    "redis": "cross-env redis-stack-server",
+    "deploy": "cd .. && railway up"
   },
   "dependencies": {
     "@medusajs/admin": "^7.1.14",
