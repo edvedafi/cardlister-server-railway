@@ -1,5 +1,6 @@
 import { type Category } from './setInfo';
 import type { Card } from './bsc';
+import { Product as MedusaProduct } from '@medusajs/client-types';
 
 export type SLCard = {
   cardNumber: string;
@@ -51,7 +52,7 @@ export type Product = {
     autographed?: boolean;
     features?: string;
   };
-};
+} & MedusaProduct;
 
 export type ProductVariant = {
   id: string;

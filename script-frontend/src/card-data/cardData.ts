@@ -1,6 +1,6 @@
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import { ask } from '../utils/ask';
-import type { Prices, Product, ProductVariant } from '../models/cards';
+import type { Product, ProductVariant } from '../models/cards';
 import type { Card } from '../models/bsc';
 import { isNo, isYes, psaGrades } from '../utils/data';
 import {
@@ -20,7 +20,8 @@ const { log } = useSpinners('card-data', chalk.whiteBright);
 
 export async function buildProductFromBSCCard(card: Card, set: Category): Promise<Product> {
   const product: Partial<Product> = {
-    type: 'Card',
+    // @ts-expect-error nope, types are wrong
+    type: 'card',
     categories: [set],
     weight: 1,
     length: 4,
@@ -34,7 +35,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     cardNumber: card.cardNo,
     player: card.players,
     teams: card.teamName || 'Unknown',
-    sku: `${set.metadata.bin}|${card.cardNo}`,
+    sku: `${set.metadata?.bin}|${card.cardNo}`,
     size: 'Standard',
     thickness: '20pt',
     bsc: card.id,
@@ -141,6 +142,7 @@ type CardNameFields = {
 //generate a 60 character card name
 async function getCardName(card: CardNameFields, category: Category): Promise<string> {
   if (!card.title) throw 'Must have Title to generate Card Name';
+  if (!category.metadata) category.metadata = [];
 
   const maxCardNameLength = 60;
   let cardName = card.title.replace(' | ', ' ');
@@ -181,6 +183,8 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
 
   const product = await matchCard(setData, imageDefaults);
+  if (!product.variants) product.variants = [];
+
   let productVariantId;
   if (product.variants.length === 1) {
     productVariantId = product.variants[0].id;
@@ -194,7 +198,6 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   }
   const productVariant = await getProductVariant(productVariantId);
 
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   productVariant.prices = await getPricing(productVariant.prices);
 
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
@@ -205,7 +208,7 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
 
 async function getPricing(currentPrices: MoneyAmount[] = []): Promise<MoneyAmount[]> {
   if (currentPrices.length > 0 && (await ask('Use Current Pricing', true))) {
-    return []; //currentPrices.map((price) => ({ amount: price.amount, region_id: price.region_id }) as MoneyAmount);
+    return [];
   } else {
     const isCommon = await ask('Use common card pricing', true);
     if (isCommon) {
@@ -244,14 +247,14 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
   // log(products);
   let card = setInfo.products?.find(
     (product) =>
-      product.metadata.cardNumber === `${setInfo.metadata.card_number_prefix}${imageDefaults.cardNumber}` &&
+      product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}` &&
       product.metadata.player.includes(imageDefaults.player),
   );
   if (card) {
     return card;
   }
   card = setInfo.products?.find(
-    (product) => product.metadata.cardNumber === `${setInfo.metadata.card_number_prefix}${imageDefaults.cardNumber}`,
+    (product) => product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}`,
   );
   if (card) {
     log(card.metadata);
@@ -262,7 +265,7 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
   }
   card = await ask('Which card is this?', undefined, {
     selectOptions: setInfo.products?.map((product) => ({
-      name: `${product.metadata.cardNumber} ${product.metadata.player.join(', ')}`,
+      name: `${product.metadata?.cardNumber} ${product.metadata?.player.join(', ')}`,
       value: product,
     })),
   });

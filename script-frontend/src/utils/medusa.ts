@@ -1,7 +1,7 @@
 import Medusa from '@medusajs/medusa-js';
 import dotenv from 'dotenv';
 import type { Metadata } from '../models/setInfo';
-import type { Prices, ProductVariant } from '../models/cards';
+import type { ProductVariant } from '../models/cards';
 import type {
   DecoratedInventoryItemDTO,
   InventoryItemDTO,
@@ -38,7 +38,12 @@ export async function generateKey(username: string, pass: string, key: string) {
   console.log(user.api_token);
 }
 
-export async function createCategory(name: string, parent_category_id: string, handle: string, metadata = {}) {
+export async function createCategory(
+  name: string,
+  parent_category_id: string,
+  handle: string,
+  metadata = {},
+): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.create({
     name: name,
     handle: handle.toLowerCase().replace(/ /g, '-'),
@@ -47,6 +52,7 @@ export async function createCategory(name: string, parent_category_id: string, h
     parent_category_id: parent_category_id,
     metadata,
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
@@ -56,7 +62,7 @@ export async function createCategoryActive(
   parent_category_id: string,
   handle: string,
   metadata = {},
-) {
+): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.create({
     name: name,
     description: description,
@@ -66,25 +72,32 @@ export async function createCategoryActive(
     parent_category_id: parent_category_id,
     metadata,
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
-export async function setCategoryActive(id: string, description: string, metadataUpdates: Metadata) {
+export async function setCategoryActive(
+  id: string,
+  description: string,
+  metadataUpdates: Metadata,
+): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.update(id, {
     description: description,
     is_active: true,
     is_internal: false,
     metadata: metadataUpdates,
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
-export async function updateCategory(id: string, metadataUpdates: Metadata) {
+export async function updateCategory(id: string, metadataUpdates: Metadata): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.update(id, { metadata: metadataUpdates });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category || {};
 }
 
-export async function getRootCategory() {
+export async function getRootCategory(): Promise<string> {
   const { product_categories } = await medusa.admin.productCategories.list({ handle: 'root' });
   return product_categories[0].id;
 }
@@ -99,7 +112,7 @@ export async function getCategories(parent_category_id: string): Promise<Product
   return response.product_categories;
 }
 
-export async function createProduct(product: Product) {
+export async function createProduct(product: Product): Promise<Product> {
   const response = await medusa.admin.products.create({
     title: product.title,
     description: product.description as string,
@@ -122,17 +135,19 @@ export async function createProduct(product: Product) {
       },
     ],
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
-export async function updateProductImages(product: { id: string; images: string[] }) {
+export async function updateProductImages(product: { id: string; images: string[] }): Promise<Product> {
   const response = await medusa.admin.products.update(product.id, {
     images: product.images,
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
-export async function updateProductVariant(productVariant: ProductVariant) {
+export async function updateProductVariant(productVariant: ProductVariant): Promise<Product> {
   if (!productVariant.prices) throw 'No prices to update';
   if (!productVariant.product) throw 'No product to update';
 
@@ -155,10 +170,11 @@ export async function updateProductVariant(productVariant: ProductVariant) {
     response = productVariant;
   }
 
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
-export async function getProductCardNumbers(category: string) {
+export async function getProductCardNumbers(category: string): Promise<string[]> {
   const response = await medusa.admin.products.list({
     category_id: [category],
     fields: 'metadata',
@@ -172,7 +188,7 @@ export async function getProductCardNumbers(category: string) {
 type RegionCache = { [key: string]: string };
 let regionCache: RegionCache;
 
-export async function getRegion(regionName: string) {
+export async function getRegion(regionName: string): Promise<string> {
   if (!regionCache) {
     const response = await medusa.admin.regions.list();
     regionCache = response.regions.reduce((acc: RegionCache, region: { id: string; name: string }) => {
@@ -187,15 +203,11 @@ export async function startSync(categoryId: string) {
   return await medusa.admin.custom.post('/sync', {
     category: categoryId,
   });
-  // const response = medusa.admin.batchJobs.create({
-  //   type: 'publish-products',
-  //   context: { categoryId },
-  //   dry_run: true,
-  // });
 }
 
-export async function getProductVariant(variantId: string) {
+export async function getProductVariant(variantId: string): Promise<PricedVariant> {
   const response = await medusa.admin.variants.retrieve(variantId);
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.variant;
 }
 
