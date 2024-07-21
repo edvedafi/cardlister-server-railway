@@ -7,6 +7,7 @@ import type {
   InventoryItemDTO,
   MoneyAmount,
   PricedProduct,
+  PricedVariant,
   Product,
   ProductCategory,
 } from '@medusajs/client-types';
@@ -136,18 +137,22 @@ export async function updateProductVariant(productVariant: ProductVariant) {
   if (!productVariant.product) throw 'No product to update';
 
   let response;
-  try {
-    response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
-      prices: productVariant.prices.map((price) =>
-        typeof price.amount === 'string' ? { ...price, amount: parseInt(price.amount) } : price,
-      ),
-    });
-  } catch (e) {
-    // @ts-expect-error cannot figure out how to type case this correctly
-    const message = e.response?.data?.message || e.message;
-    throw `Failed to save variant ${productVariant.id} for product ${productVariant.product.id} with prices: 
+  if (productVariant.prices.length > 0) {
+    try {
+      response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
+        prices: productVariant.prices.map((price) =>
+          typeof price.amount === 'string' ? { ...price, amount: parseInt(price.amount) } : price,
+        ),
+      });
+    } catch (e) {
+      // @ts-expect-error cannot figure out how to type case this correctly
+      const message = e.response?.data?.message || e.message;
+      throw `Failed to save variant ${productVariant.id} for product ${productVariant.product.id} with prices: 
       ${JSON.stringify(productVariant.prices, null, 2)}
       Error: ${message}`;
+    }
+  } else {
+    response = productVariant;
   }
 
   return response.product;
@@ -205,7 +210,7 @@ export async function getStockLocationId(): Promise<string> {
   return _stockLocationId;
 }
 
-export async function getInventory(productVariant: ProductVariant): Promise<InventoryItemDTO> {
+export async function getInventory(productVariant: ProductVariant): Promise<DecoratedInventoryItemDTO> {
   const response = await medusa.admin.inventoryItems.list({ sku: productVariant.sku });
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   let inventoryItem: DecoratedInventoryItemDTO = response.inventory_items?.[0];
@@ -228,6 +233,15 @@ export async function getInventory(productVariant: ProductVariant): Promise<Inve
   }
 
   return inventoryItem;
+}
+
+export async function getInventoryQuantity(productVariant: ProductVariant): Promise<number> {
+  const inventoryItem = await getInventory(productVariant);
+  const stockLocationId = await getStockLocationId();
+  const locationLevel = inventoryItem.location_levels?.find(
+    (level: { location_id: string }) => level.location_id === stockLocationId,
+  );
+  return locationLevel?.stocked_quantity || 0;
 }
 
 export async function updateInventory(

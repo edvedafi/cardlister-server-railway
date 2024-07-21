@@ -5,6 +5,7 @@ import type { Card } from '../models/bsc';
 import { isNo, isYes, psaGrades } from '../utils/data';
 import {
   getInventory,
+  getInventoryQuantity,
   getProductVariant,
   getRegion,
   updateInventory,
@@ -194,24 +195,48 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   const productVariant = await getProductVariant(productVariantId);
 
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-  productVariant.prices = await getPricing();
+  productVariant.prices = await getPricing(productVariant.prices);
 
-  const quantity = await ask('Quantity', 1);
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
 
   return { productVariant, quantity };
 }
 
-async function getPricing(): Promise<MoneyAmount[]> {
-  const isCommon = await ask('Use common card pricing', true);
-  if (isCommon) {
-    return await getBasePricing();
+async function getPricing(currentPrices: MoneyAmount[] = []): Promise<MoneyAmount[]> {
+  if (currentPrices.length > 0 && (await ask('Use Current Pricing', true))) {
+    return []; //currentPrices.map((price) => ({ amount: price.amount, region_id: price.region_id }) as MoneyAmount);
   } else {
-    return [
-      { amount: await ask('ebay price', 99), region_id: await getRegion('ebay') } as MoneyAmount,
-      { amount: await ask('MCP Price', 100), region_id: await getRegion('MCP') } as MoneyAmount,
-      { amount: await ask('BSC Price', 25), region_id: await getRegion('BSC') } as MoneyAmount,
-      { amount: await ask('SportLots Price', 18), region_id: await getRegion('SportLots') } as MoneyAmount,
-    ];
+    const isCommon = await ask('Use common card pricing', true);
+    if (isCommon) {
+      return await getBasePricing();
+    } else {
+      const ebayRegion = await getRegion('ebay');
+      const mcpRegion = await getRegion('MCP');
+      const bscRegion = await getRegion('BSC');
+      const sportlotsRegion = await getRegion('SportLots');
+      return [
+        {
+          amount: await ask('ebay price', currentPrices.find((price) => price.region_id === ebayRegion) || 99),
+          region_id: ebayRegion,
+        } as MoneyAmount,
+        {
+          amount: await ask('MCP Price', currentPrices.find((price) => price.region_id === mcpRegion) || 100),
+          region_id: mcpRegion,
+        } as MoneyAmount,
+        {
+          amount: await ask('BSC Price', currentPrices.find((price) => price.region_id === bscRegion) || 25),
+          region_id: bscRegion,
+        } as MoneyAmount,
+        {
+          amount: await ask(
+            'SportLots Price',
+            currentPrices.find((price) => price.region_id === sportlotsRegion) || 18,
+          ),
+          region_id: sportlotsRegion,
+        } as MoneyAmount,
+      ];
+    }
   }
 }
 
