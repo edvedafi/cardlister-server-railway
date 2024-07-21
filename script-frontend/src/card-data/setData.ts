@@ -61,13 +61,13 @@ export async function findSet(): Promise<SetInfo> {
         sportlots: sportlots.key,
       });
     }
-    if (!setInfo.sport.metadata.sportlots) {
+    if (!setInfo.sport.metadata?.sportlots) {
       update('Add SportLots to Sport');
       const slSport = await getSLSport(setInfo.sport.name);
       setInfo.sport = await updateCategory(setInfo.sport.id, { ...setInfo.sport.metadata, sportlots: slSport.key });
     }
     if (!setInfo.sport) throw new Error('Sport not found');
-    if (!setInfo.sport?.metadata.bsc) {
+    if (!setInfo.sport?.metadata?.bsc) {
       update('Add BSC to Sport');
       const bscSport = await getBSCSportFilter(setInfo.sport.name);
       setInfo.sport = await updateCategory(setInfo.sport?.id, { ...setInfo.sport?.metadata, bsc: bscSport?.filter });
@@ -107,7 +107,7 @@ export async function findSet(): Promise<SetInfo> {
       setInfo.brand = await createCategory(slBrand.name, setInfo.year?.id, setInfo.handle, { sportlots: slBrand.key });
     }
 
-    if (!setInfo.brand.metadata.sportlots) {
+    if (!setInfo.brand.metadata?.sportlots) {
       update('Add SportLots to brand');
       const slBrand = await getSLBrand(setInfo.brand.name);
       const updatedBrand: Category = await updateCategory(setInfo.brand.id, {
@@ -129,7 +129,7 @@ export async function findSet(): Promise<SetInfo> {
     }
     while (!setInfo.set) {
       update('New Set');
-      const bscSet: { name: string; filter: any } = await getBSCSetFilter(setInfo);
+      const bscSet: { name: string; filter: unknown } = await getBSCSetFilter(setInfo);
       setInfo.handle = `${setInfo.brand.handle}-${bscSet.name}`;
       setInfo.set = await createCategory(bscSet.name, setInfo.brand.id, setInfo.handle, { bsc: bscSet.filter });
     }
@@ -196,7 +196,7 @@ export async function findSet(): Promise<SetInfo> {
           isParallel = await ask('Is this a parallel of an insert?', false);
         }
         setInfo.handle = `${setInfo.variantType.handle}-${bscVariantName.name}`;
-        setInfo.variantName = await createCategory(bscVariantName.name, setInfo.variantType.id, setInfo.handle, {
+        const metaData: Metadata = {
           bsc: bscVariantName.filter,
           isInsert,
           isParallel,
@@ -216,14 +216,21 @@ export async function findSet(): Promise<SetInfo> {
           setName: setInfo.set.name,
           insert: isInsert ? bscVariantName.name : null,
           parallel: isParallel ? bscVariantName.name : null,
-        });
+        };
+        const prefix = await ask('Prefix');
+        if (prefix) {
+          metaData.card_number_prefix = prefix;
+        }
+
+        setInfo.variantName = await createCategory(
+          bscVariantName.name,
+          setInfo.variantType.id,
+          setInfo.handle,
+          metaData,
+        );
       }
       if (!setInfo.variantName) throw new Error('Variant Name not found');
       const updates: Metadata = {};
-      const prefix = await ask('Prefix');
-      if (prefix) {
-        updates.card_number_prefix = prefix;
-      }
       if (!setInfo.variantName?.metadata?.sportlots) {
         updates.sportlots = await getSLSet(setInfo as SetInfo);
       }
@@ -318,7 +325,8 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
     const queue = new Queue({ concurrency: 1, results: products, autostart: true });
     let hasQueueError: boolean | Error = false;
 
-    queue.addEventListener('error', (event: any): void => {
+    queue.addEventListener('error', (event: unknown): void => {
+      // @ts-expect-error no idea how to type this thing
       hasQueueError = event.error;
       log(`Queue error: `, error);
       queue.stop();

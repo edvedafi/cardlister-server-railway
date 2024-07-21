@@ -12,23 +12,27 @@ async function login() {
   if (!_browser) {
     const { update, error, finish } = showSpinner('login', 'Login');
     update('Opening Browser');
-    _browser = await remote({
-      capabilities: {
-        browserName: 'chrome',
-        'goog:chromeOptions': {
-          args: ['headless', 'disable-gpu'],
+    try {
+      _browser = await remote({
+        capabilities: {
+          browserName: 'chrome',
+          'goog:chromeOptions': {
+            args: ['headless', 'disable-gpu'],
+          },
         },
-      },
-      baseUrl: 'https://www.sportlots.com/',
-      logLevel: 'error',
-    });
+        baseUrl: 'https://www.sportlots.com/',
+        logLevel: 'error',
+      });
 
-    update('Logging in');
-    await _browser.url('cust/custbin/login.tpl?urlval=/index.tpl&qs=');
-    await _browser.$('input[name="email_val"]').setValue(process.env.SPORTLOTS_ID as string);
-    await _browser.$('input[name="psswd"]').setValue(process.env.SPORTLOTS_PASS as string);
-    await _browser.$('input[value="Sign-in"]').click();
-    finish();
+      update('Logging in');
+      await _browser.url('cust/custbin/login.tpl?urlval=/index.tpl&qs=');
+      await _browser.$('input[name="email_val"]').setValue(process.env.SPORTLOTS_ID as string);
+      await _browser.$('input[name="psswd"]').setValue(process.env.SPORTLOTS_PASS as string);
+      await _browser.$('input[value="Sign-in"]').click();
+      finish();
+    } catch (e) {
+      error(e);
+    }
   }
   return _browser;
 }
@@ -73,20 +77,19 @@ export async function getSLCards(
     sport: Category;
   },
   category: Category,
-) {
+): Promise<{ cardNumber: string; title: string }[]> {
+  const cards = [];
   const { finish, error } = showSpinner('getSLCards', 'Get Cards');
   try {
     const browser = await login();
     await loadAddInventoryScreen(
-      setInfo.year.metadata.sportlots,
-      setInfo.brand.metadata.sportlots,
-      setInfo.sport.metadata.sportlots,
-      category.metadata.sportlots,
+      setInfo.year.metadata?.sportlots,
+      setInfo.brand.metadata?.sportlots,
+      setInfo.sport.metadata?.sportlots,
+      category.metadata?.sportlots,
     );
 
-    await selectSet(category.metadata.sportlots);
-
-    const cards = [];
+    await selectSet(category.metadata?.sportlots);
 
     while ((await browser.getUrl()).includes('listcards.tpl')) {
       const rows = await browser
@@ -106,17 +109,21 @@ export async function getSLCards(
       await browser.$('input[value="Inventory Cards"').click();
     }
     finish();
-    return cards;
   } catch (e) {
     error(e);
   }
+  return cards;
 }
 
 type SelectOption = {
   key: string;
   name: string;
 };
-const getOptions = async (defaultName: any, selectName: string, displayName: string): Promise<SelectOption> => {
+const getOptions = async (
+  defaultName: string | undefined,
+  selectName: string,
+  displayName: string,
+): Promise<SelectOption> => {
   const browser = await login();
   await browser.url(`inven/dealbin/newinven.tpl`);
   const options = await browser.$(`select[name="${selectName}"]`).$$('option');
@@ -144,6 +151,10 @@ export async function getSLSet(setInfo: SetInfo): Promise<SelectOption> {
   const { finish, error } = showSpinner('getSLSet', 'Finding Set');
   try {
     const browser = await login();
+
+    if (!setInfo.year.metadata) throw new Error('Set Info (Year) Metadata not found');
+    if (!setInfo.brand.metadata) throw new Error('Set Info (Brand) Metadata not found');
+    if (!setInfo.sport.metadata) throw new Error('Set Info (Sport) Metadata not');
 
     await loadAddInventoryScreen(
       setInfo.year.metadata.sportlots,
