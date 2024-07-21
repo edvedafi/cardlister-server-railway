@@ -148,29 +148,35 @@ export async function findSet(): Promise<SetInfo> {
       if (bscVariantType.name === 'Base') {
         setInfo.handle = `${setInfo.set.handle}-${bscVariantType.name}-base`;
         const description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name}`);
+        const metadata: Metadata = {
+          bsc: bscVariantType.filter,
+          sportlots: await getSLSet(setInfo as SetInfo),
+          bin: (
+            await getGroup({
+              sport: setInfo.sport?.name,
+              manufacture: setInfo.brand.name,
+              year: setInfo.year.name,
+              setName: setInfo.set.name,
+            })
+          ).bin,
+          isInsert: false,
+          isParallel: false,
+          sport: setInfo.sport?.name,
+          brand: setInfo.brand.name,
+          year: setInfo.year.name,
+          setName: setInfo.set.name,
+        };
+
+        const prefix = await ask('Prefix');
+        if (prefix) {
+          metadata.card_number_prefix = prefix;
+        }
         setInfo.variantType = await createCategoryActive(
           bscVariantType.name,
           description,
           setInfo.set.id,
           setInfo.handle,
-          {
-            bsc: bscVariantType.filter,
-            sportlots: await getSLSet(setInfo as SetInfo),
-            bin: (
-              await getGroup({
-                sport: setInfo.sport?.name,
-                manufacture: setInfo.brand.name,
-                year: setInfo.year.name,
-                setName: setInfo.set.name,
-              })
-            ).bin,
-            isInsert: false,
-            isParallel: false,
-            sport: setInfo.sport?.name,
-            brand: setInfo.brand.name,
-            year: setInfo.year.name,
-            setName: setInfo.set.name,
-          },
+          metadata,
         );
       } else {
         setInfo.variantType = await createCategory(bscVariantType.name, setInfo.set.id, setInfo.handle, {

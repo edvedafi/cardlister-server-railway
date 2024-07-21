@@ -1,6 +1,5 @@
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import { ask } from '../utils/ask';
-import type { Product, ProductVariant } from '../models/cards';
 import type { Card } from '../models/bsc';
 import { isNo, isYes, psaGrades } from '../utils/data';
 import {
@@ -14,13 +13,13 @@ import {
   updateProductVariant,
 } from '../utils/medusa';
 import { useSpinners } from '../utils/spinners';
-import type { InventoryItemDTO, MoneyAmount } from '@medusajs/client-types';
+import type { InventoryItemDTO, MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
 
 const { log } = useSpinners('card-data', chalk.whiteBright);
 
 export async function buildProductFromBSCCard(card: Card, set: Category): Promise<Product> {
   const product: Partial<Product> = {
-    // @ts-expect-error nope, types are wrong
+    // @ts-expect-error Lies!
     type: 'card',
     categories: [set],
     weight: 1,
@@ -50,14 +49,14 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   product.description = titles.longTitle;
   product.metadata.cardName = await getCardName({ title: titles.title, metadata: product.metadata }, set);
 
-  product.size = 'Standard';
+  product.metadata.size = 'Standard';
   product.material = 'Card Stock';
-  product.thickness = '20pt';
-  product.lbs = 0;
-  product.oz = 1;
+  product.metadata.thickness = '20pt';
+  product.metadata.lbs = 0;
+  product.metadata.oz = 1;
   product.length = 6;
   product.width = 4;
-  product.depth = 1;
+  product.height = 1;
 
   return product as Product;
 }
@@ -200,44 +199,44 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
 
   productVariant.prices = await getPricing(productVariant.prices);
 
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
 
   return { productVariant, quantity };
 }
 
 async function getPricing(currentPrices: MoneyAmount[] = []): Promise<MoneyAmount[]> {
-  if (currentPrices.length > 0 && (await ask('Use Current Pricing', true))) {
+  if (currentPrices.length > 1 && (await ask('Use Current Pricing', true))) {
     return [];
   } else {
     const isCommon = await ask('Use common card pricing', true);
     if (isCommon) {
       return await getBasePricing();
     } else {
-      const ebayRegion = await getRegion('ebay');
-      const mcpRegion = await getRegion('MCP');
-      const bscRegion = await getRegion('BSC');
-      const sportlotsRegion = await getRegion('SportLots');
+      const getPrice = async (region: string, defaultPrice: number): Promise<MoneyAmount> => {
+        const regionId = await getRegion(region);
+        let price = await ask(
+          `${region} price`,
+          currentPrices.find((price) => price.region_id === regionId) || defaultPrice,
+        );
+        while (price.toString().indexOf('.') > -1) {
+          price = await ask(
+            `${region} price should not have a decimal, did you mean: `,
+            price.toString().replace('.', ''),
+          );
+        }
+        while (parseInt(price) < defaultPrice) {
+          price = await ask(`${region} price should not be less that the minimum, did you mean: `, `${price}00`);
+        }
+        return {
+          amount: price,
+          region_id: regionId,
+        } as MoneyAmount;
+      };
       return [
-        {
-          amount: await ask('ebay price', currentPrices.find((price) => price.region_id === ebayRegion) || 99),
-          region_id: ebayRegion,
-        } as MoneyAmount,
-        {
-          amount: await ask('MCP Price', currentPrices.find((price) => price.region_id === mcpRegion) || 100),
-          region_id: mcpRegion,
-        } as MoneyAmount,
-        {
-          amount: await ask('BSC Price', currentPrices.find((price) => price.region_id === bscRegion) || 25),
-          region_id: bscRegion,
-        } as MoneyAmount,
-        {
-          amount: await ask(
-            'SportLots Price',
-            currentPrices.find((price) => price.region_id === sportlotsRegion) || 18,
-          ),
-          region_id: sportlotsRegion,
-        } as MoneyAmount,
+        await getPrice('ebay', 99),
+        await getPrice('MCP', 100),
+        await getPrice('BSC', 25),
+        await getPrice('SportLots', 18),
       ];
     }
   }
