@@ -47,7 +47,7 @@ function renderItem({ item, isActive }) {
 }
 
 export default createPrompt((config, done) => {
-  const { loop = true, pageSize = 5 } = config;
+  const { loop = true, pageSize = 10 } = config;
   const firstRender = useRef(true);
   const prefix = usePrefix({});
   const [status, setStatus] = useState('pending');
@@ -103,12 +103,12 @@ export default createPrompt((config, done) => {
         } while (items[next] ? !isSelectable(items[next]) : false);
         setActive(next);
       }
-    } else if (isNumberKey(key)) {
-      const position = Number(key.name) - 1;
-      const item = items[position];
-      if (item != null && isSelectable(item)) {
-        setActive(position);
-      }
+      // } else if (isNumberKey(key)) {
+      //   const position = Number(key.name) - 1;
+      //   const item = items[position];
+      //   if (item != null && isSelectable(item)) {
+      //     setActive(position);
+      //   }
     } else {
       //search choices for the closest matches
 

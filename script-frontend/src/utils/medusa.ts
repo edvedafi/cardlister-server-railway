@@ -1,7 +1,6 @@
 import Medusa from '@medusajs/medusa-js';
 import dotenv from 'dotenv';
 import type { Metadata } from '../models/setInfo';
-import type { ProductVariant } from '../models/cards';
 import type {
   DecoratedInventoryItemDTO,
   InventoryItemDTO,
@@ -10,6 +9,7 @@ import type {
   PricedVariant,
   Product,
   ProductCategory,
+  ProductVariant,
 } from '@medusajs/client-types';
 
 dotenv.config();
@@ -155,9 +155,11 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
   if (productVariant.prices.length > 0) {
     try {
       response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
-        prices: productVariant.prices.map((price) =>
-          typeof price.amount === 'string' ? { ...price, amount: parseInt(price.amount) } : price,
-        ),
+        // @ts-expect-error fighting the medusa-js types
+        // prices: productVariant.prices.map((price: MoneyAmount) =>
+        //   typeof price.amount === 'string' ? { ...price, amount: parseInt(price.amount) } : price,
+        // ),
+        prices: productVariant.prices,
       });
     } catch (e) {
       // @ts-expect-error cannot figure out how to type case this correctly
@@ -170,7 +172,10 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
     response = productVariant;
   }
 
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  if (!response.product)
+    throw new Error(`Failed to update product variant ${productVariant.id} for product ${productVariant.product.id}`);
+
+  // @ts-expect-error cannot figure out how to type case this correctly
   return response.product;
 }
 
@@ -223,6 +228,7 @@ export async function getStockLocationId(): Promise<string> {
 }
 
 export async function getInventory(productVariant: ProductVariant): Promise<DecoratedInventoryItemDTO> {
+  if (!productVariant.sku) throw new Error('Product variant does not have a SKU');
   const response = await medusa.admin.inventoryItems.list({ sku: productVariant.sku });
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   let inventoryItem: DecoratedInventoryItemDTO = response.inventory_items?.[0];
@@ -285,6 +291,7 @@ export async function updatePrices(productId: string, variantId: string, prices:
 export async function getProducts(category: string): Promise<Product[]> {
   const response = await medusa.admin.products.list({
     category_id: [category],
+    limit: 1000,
   });
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.products;

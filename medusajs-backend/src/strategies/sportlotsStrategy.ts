@@ -103,12 +103,11 @@ class SportlotsStrategy extends ListingStrategy<WebdriverIO.Browser> {
         }
       }
 
-      await browser.saveScreenshot('sportlots-sync.png');
       await browser.$('input[value="Inventory Cards"').click();
       const banner = await browser.$('h2.message').getText();
       let resultCount = parseInt(banner.replace('  cards added', ''));
       if (resultCount == expectedAdds) {
-        this.log('sportlots::Set Successfully added:' + expectedAdds);
+        this.log('Set Successfully added:' + expectedAdds);
       } else {
         throw new Error(`sportlots::Failed. Uploaded ${resultCount} cards but expected ${expectedAdds} cards.`);
       }

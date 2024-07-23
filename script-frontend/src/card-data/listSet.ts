@@ -7,9 +7,11 @@ import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync } from '../utils/medusa';
 import { ask } from '../utils/ask';
 import type { SetInfo } from '../models/setInfo';
-import type { Product, ProductImage, ProductVariant } from '../models/cards';
+import type { ProductImage } from '../models/cards';
 import { processImageFile } from '../listing-sites/firebase';
 import imageRecognition from './imageRecognition';
+import type { Product, ProductVariant } from '@medusajs/client-types';
+import { buildSet } from './setData';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
@@ -52,6 +54,8 @@ const processPair = async (front: string, back: string, imageDefaults: Partial<P
     }
 
     const { productVariant, quantity } = await getCardData(setData, imageDefaults);
+    if (!productVariant.product) throw new Error('Must set Product on the Variant before processing');
+
     const images: ProductImage[] = [];
     const frontImage = await prepareImageFile(front, productVariant, setData, 1);
     if (frontImage) {
@@ -141,6 +145,11 @@ export async function processSet(setData: SetInfo, files: string[] = []) {
 
     setData.products = await getProducts(setData.category.id);
 
+    if (setData.products.length === 0) {
+      await buildSet(setData);
+      setData.products = await getProducts(setData.category.id);
+    }
+
     while (i < files.length - 1) {
       const front = files[i++];
       let back: string;
@@ -198,8 +207,11 @@ export async function processSet(setData: SetInfo, files: string[] = []) {
     if (hasQueueError) {
       errorSpinner(hasQueueError);
     } else {
-      updateSpinner(`Process Bulk`);
-      await processBulk(setData);
+      const addBulk = await ask('Add Bulk Listings?', false);
+      if (addBulk) {
+        updateSpinner(`Process Bulk`);
+        await processBulk(setData);
+      }
       updateSpinner(`Kickoff Set Processing`);
       await startSync(setData.category.id);
     }
