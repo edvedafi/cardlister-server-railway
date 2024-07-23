@@ -47,6 +47,7 @@ abstract class ListingStrategy<
   private readonly logger: Logger;
   private location: string;
   private region: string;
+  protected requireImages = false;
 
   protected constructor(__container__: InjectedDependencies) {
     let log: Logger | undefined;
@@ -196,7 +197,7 @@ abstract class ListingStrategy<
     return remote(
       getBrowserlessConfig(
         baseURL,
-        `${(<typeof ListingStrategy>this.constructor).listingSite.toUpperCase()}_LOG_LEVEL`,
+        `${(<typeof ListingStrategy>this.constructor).listingSite.toUpperCase()}_LOG_LEVEL`.toLowerCase(),
       ),
     );
   }
@@ -232,9 +233,48 @@ abstract class ListingStrategy<
     }
   }
 
-  abstract removeAllInventory(connection: T, category: ProductCategory): Promise<void>;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async removeAllInventory(browser: T, category: ProductCategory): Promise<void> {
+    this.log('Implement removeAllInventory to do a full sync of all products');
+  }
 
-  abstract syncProducts(connection: T, products: Product[], category: ProductCategory): Promise<number>;
+  async syncProducts(browser: T, products: Product[], category: ProductCategory): Promise<number> {
+    let updated = 0;
+    for (const product of products) {
+      if (!this.requireImages || product.images.length > 0) {
+        for (const variant of product.variants) {
+          try {
+            updated += await this.syncProduct(
+              browser,
+              product,
+              variant,
+              category,
+              await this.getQuantity({ variant }),
+              this.getPrice(variant),
+            );
+          } catch (e) {
+            //TODO Need to log in a way that is actionable
+            this.log(`Error syncing ${variant.sku}`, e);
+          }
+        }
+      }
+    }
+    return updated;
+  }
+
+  async syncProduct(
+    connection: T,
+    product: Product,
+    productVariant: ProductVariant,
+    category: ProductCategory,
+    quantity: number,
+    price: number,
+  ): Promise<number> {
+    this.log(
+      `Implement syncProduct to sync a single product for Connection: ${typeof connection} product: ${product.id} | productVariant: ${productVariant.id} | category: ${category.id} => ${quantity} @ ${price}`,
+    );
+    return 0;
+  }
 
   protected async getQuantity(search: QuantityOptions): Promise<number> {
     const sku = search.sku ? search.sku : search.variant.sku;

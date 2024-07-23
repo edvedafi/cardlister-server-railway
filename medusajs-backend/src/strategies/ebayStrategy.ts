@@ -4,69 +4,22 @@ import eBayApi from 'ebay-api';
 import process from 'node:process';
 import { isNo, isYes, titleCase } from '../utils/data';
 import { EbayOfferDetailsWithKeys, InventoryItem } from 'ebay-api/lib/types';
-import fs from 'fs-extra';
+import { login as ebayLogin } from '../utils/ebayAPI';
 import _ from 'lodash';
 
 class EbayStrategy extends ListingStrategy<eBayApi> {
   static identifier = 'ebay-strategy';
   static batchType = 'ebay-sync';
   static listingSite = 'ebay';
+  requireImages = true;
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async removeAllInventory(api: eBayApi, category: ProductCategory): Promise<void> {
     //TODO Need to Implement
   }
 
-  async getRefreshToken() {
-    // TODO PROVIDE AN EBAY LOGIN SCREEN
-    if (process.env.EBAY_TOKEN) {
-      return JSON.parse(process.env.EBAY_TOKEN);
-    } else {
-      return fs.readJsonSync('.ebay');
-    }
-  }
-
   async login(): Promise<eBayApi> {
-    const eBay = eBayApi.fromEnv();
-
-    eBay.OAuth2.setScope([
-      'https://api.ebay.com/oauth/api_scope',
-      'https://api.ebay.com/oauth/api_scope/sell.inventory',
-      // 'https://api.ebay.com/oauth/api_scope/sell.account',
-      'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.catalog.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.identity.email.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.identity.phone.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.identity.address.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.identity.name.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/commerce.identity.status.readonly',
-      // 'https://api.ebay.com/oauth/api_scope/sell.finances',
-      // 'https://api.ebay.com/oauth/api_scope/sell.item.draft',
-      ////////////'https://api.ebay.com/oauth/api_scope/sell.item',
-      // 'https://api.ebay.com/oauth/api_scope/sell.reputation',
-    ]);
-
-    const token = await this.getRefreshToken();
-    if (!token) {
-      throw new Error('No eBay Token Found');
-    }
-
-    eBay.OAuth2.setCredentials(token);
-
-    return eBay;
-  }
-
-  async syncProducts(eBay: eBayApi, products: Product[], category: ProductCategory): Promise<number> {
-    let count = 0;
-    for (const product of products) {
-      if (product.images.length > 0) {
-        for (const variant of product.variants) {
-          count += await this.syncProduct(eBay, product, variant, category);
-        }
-      }
-    }
-    return count;
+    return ebayLogin();
   }
 
   async syncProduct(
@@ -74,6 +27,8 @@ class EbayStrategy extends ListingStrategy<eBayApi> {
     product: Product,
     variant: ProductVariant,
     category: ProductCategory,
+    quantity: number,
+    price: number,
   ): Promise<number> {
     //only sync products with images
     if (product.images.length === 0) {
@@ -91,8 +46,6 @@ class EbayStrategy extends ListingStrategy<eBayApi> {
     } catch (e) {
       offers = undefined;
     }
-
-    const quantity = await this.getQuantity({ variant });
 
     if (offers && offers.offers && offers.offers.length > 0) {
       const offer = offers.offers[0];
@@ -118,7 +71,7 @@ class EbayStrategy extends ListingStrategy<eBayApi> {
       this.log(`Creating new offer for ${variant.sku}`);
       const ebayInventoryItem: InventoryItem = convertCardToInventory(product, variant, category, quantity);
       await eBay.sell.inventory.createOrReplaceInventoryItem(variant.sku, ebayInventoryItem);
-      const offer = createOfferForCard(product, variant, category, quantity, this.getPrice(variant));
+      const offer = createOfferForCard(product, variant, category, quantity, price);
       let offerId: string;
       try {
         const response = await eBay.sell.inventory.createOffer(offer);

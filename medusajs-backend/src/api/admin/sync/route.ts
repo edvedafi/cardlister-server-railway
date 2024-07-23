@@ -48,6 +48,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
         }),
       );
     }
+
+    if (!body.only || body.only.includes('mcp')) {
+      responses.push(
+        await batchJobService.create({
+          type: 'mcp-sync',
+          context: { category_id: category },
+          dry_run: false,
+          created_by: req.user.id,
+        }),
+      );
+    }
   };
 
   if (Array.isArray(body.category)) {

@@ -1,4 +1,4 @@
-import { Product, ProductCategory } from '@medusajs/medusa';
+import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 import { remote } from 'webdriverio';
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';

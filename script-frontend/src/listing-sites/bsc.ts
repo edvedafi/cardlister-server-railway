@@ -3,12 +3,13 @@ import { remote } from 'webdriverio';
 import axios, { type AxiosInstance } from 'axios';
 import axiosRetry from 'axios-retry';
 import { ask } from '../utils/ask';
-import type { Aggregations, Filter, FilterParams, Filters } from '../models/bsc';
+import type { Aggregations, Card, Filter, FilterParams, Filters } from '../models/bsc';
 import type { Category, SetInfo } from '../models/setInfo';
 
 const { showSpinner, log } = useSpinners('bsc', '#e5e5e5');
 
 let _api: AxiosInstance;
+
 async function login() {
   if (!_api) {
     const browser = await remote({
@@ -72,25 +73,30 @@ async function login() {
   return _api;
 }
 
-export async function getBSCCards(setInfo: Category) {
+export async function getBSCCards(setInfo: Category): Promise<Card[]> {
   const { update, finish } = showSpinner('get-bsc-cards', `Getting BSC Cards for ${setInfo.handle}`);
   const api = await login();
   update('Getting Listings');
 
-  const body = {
-    condition: 'all',
-    myInventory: 'false',
-    page: 0,
-    sellerId: 'cf987f7871',
-    size: 50,
-    sort: 'default',
-    ...setInfo.metadata.bsc,
-  };
-  const response = await api.post(`search/seller/results`, body);
-  const cards = response.data.results;
-  if (cards.length === 0) {
-    log(body);
-    log(response.data);
+  let total = 1;
+  let page = 0;
+  const pageSize = 100;
+  let cards: Card[] = [];
+
+  while (page * pageSize < total) {
+    const body = {
+      condition: 'all',
+      myInventory: 'false',
+      page,
+      sellerId: 'cf987f7871',
+      size: pageSize,
+      sort: 'default',
+      ...setInfo.metadata?.bsc,
+    };
+    const response = await api.post(`search/seller/results`, body);
+    cards = cards.concat(response.data.results);
+    total = response.data.totalResults;
+    page++;
   }
   finish(`Found ${cards.length} cards`);
   return cards;
