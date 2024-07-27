@@ -9,9 +9,10 @@
   "license": "MIT",
   "scripts": {
     "compile": "swiftc src/image-processing/CardCropper.swift; swiftc src/image-processing/CardCropper.rotate.swift",
-    "sync": "tsx src/sync.ts",
+    "cleanUpBatch": "tsx src/cleanUpBatch.ts",
     "generateKey": "tsx src/generateMedusaToken.ts",
-    "start": "tsx src/addCards.ts"
+    "start": "tsx src/addCards.ts",
+    "sync": "tsx src/sync.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.6.0",

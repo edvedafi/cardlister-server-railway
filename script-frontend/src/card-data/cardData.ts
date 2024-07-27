@@ -14,6 +14,7 @@ import {
 } from '../utils/medusa';
 import { useSpinners } from '../utils/spinners';
 import type { InventoryItemDTO, MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
+import { getPricing } from './pricing';
 
 const { log } = useSpinners('card-data', chalk.whiteBright);
 
@@ -38,9 +39,11 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     size: 'Standard',
     thickness: '20pt',
     bsc: card.id,
-    printRun: card.printRun,
+    printRun: card.printRun || set.metadata?.printRun,
     autograph: card.autograph,
+    features: card.features || set.metadata?.features || [],
   };
+
   if (card.sportlots) {
     product.metadata.sportlots = card.sportlots;
   }
@@ -197,49 +200,15 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   }
   const productVariant = await getProductVariant(productVariantId);
 
-  productVariant.prices = await getPricing(productVariant.prices);
+  productVariant.prices = await getPricing(
+    productVariant.prices && productVariant.prices.length > 1 //one is odd but there is always the default 99 cent price
+      ? productVariant.prices
+      : setData.category?.metadata?.prices,
+  );
 
   const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
 
   return { productVariant, quantity };
-}
-
-async function getPricing(currentPrices: MoneyAmount[] = []): Promise<MoneyAmount[]> {
-  if (currentPrices.length > 1 && (await ask('Use Current Pricing', true))) {
-    return [];
-  } else {
-    const isCommon = await ask('Use common card pricing', true);
-    if (isCommon) {
-      return await getBasePricing();
-    } else {
-      const getPrice = async (region: string, defaultPrice: number): Promise<MoneyAmount> => {
-        const regionId = await getRegion(region);
-        let price = await ask(
-          `${region} price`,
-          currentPrices.find((price) => price.region_id === regionId) || defaultPrice,
-        );
-        while (price.toString().indexOf('.') > -1) {
-          price = await ask(
-            `${region} price should not have a decimal, did you mean: `,
-            price.toString().replace('.', ''),
-          );
-        }
-        while (parseInt(price) < defaultPrice) {
-          price = await ask(`${region} price should not be less that the minimum, did you mean: `, `${price}00`);
-        }
-        return {
-          amount: price,
-          region_id: regionId,
-        } as MoneyAmount;
-      };
-      return [
-        await getPrice('ebay', 99),
-        await getPrice('MCP', 100),
-        await getPrice('BSC', 25),
-        await getPrice('SportLots', 18),
-      ];
-    }
-  }
 }
 
 export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {

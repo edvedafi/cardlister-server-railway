@@ -137,6 +137,7 @@ export type ShowSpinner = (
   error: ErrorSpinner;
 };
 export type Log = (...args: unknown[]) => void;
+export type RunInSpinner = <T>(name: string, message: string, any: (args: unknown[]) => T, ...args: unknown[]) => T;
 export type UseSpinners = {
   showSpinner: ShowSpinner;
   log: Log;

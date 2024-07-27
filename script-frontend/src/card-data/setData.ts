@@ -27,22 +27,31 @@ import Queue from 'queue';
 import { type Card } from '../models/bsc';
 import { type SLCard } from '../models/cards';
 import { buildProductFromBSCCard } from './cardData';
+import { all } from 'axios';
+import { getPricing } from './pricing';
 
 const { showSpinner, log } = useSpinners('setData', chalk.whiteBright);
 
-const askNew = async (display: string, options: AskSelectOption[]) => {
-  const selectOptions = options.sort((a, b) => a.name.localeCompare(b.name));
-  selectOptions.push({ value: 'New', name: 'New' });
-  const response = await ask(display, undefined, { selectOptions: selectOptions });
-  if (response === 'New') {
-    return null;
-  }
-  return response;
-};
-
-export async function findSet(): Promise<SetInfo> {
+export async function findSet(allowParent = false): Promise<SetInfo> {
   const { update, finish, error } = showSpinner('findSet', 'Finding Set');
   const setInfo: Partial<SetInfo> = { handle: '', metadata: {} };
+
+  const askNew = async (display: string, options: AskSelectOption[]) => {
+    const selectOptions = options.sort((a, b) => a.name.localeCompare(b.name));
+    selectOptions.push({ value: 'New', name: 'New' });
+    if (allowParent) {
+      selectOptions.push({ value: 'Parent', name: 'Parent' });
+    }
+    const response = await ask(display, undefined, { selectOptions: selectOptions });
+    if (response === 'New') {
+      return null;
+    }
+    if (response === 'Parent') {
+      finish();
+    }
+    return response;
+  };
+
   try {
     update('Sport');
     const root = await getRootCategory();
@@ -76,11 +85,18 @@ export async function findSet(): Promise<SetInfo> {
 
     update('Year');
     const years = await getCategoriesAsOptions(setInfo.sport.id);
+    let year: Category | string | undefined;
     if (years.length > 0) {
-      setInfo.year = await askNew('Year', years);
+      year = await askNew('Year', years);
     }
-    if (setInfo.year) {
-      setInfo.handle = setInfo.year.handle;
+    if (year) {
+      if (year === 'Parent') {
+        setInfo.category = setInfo.sport;
+        return setInfo as SetInfo;
+      } else {
+        setInfo.year = year as Category;
+        setInfo.handle = setInfo.year.handle;
+      }
     }
     while (!setInfo.year) {
       update('New Year');
@@ -94,11 +110,18 @@ export async function findSet(): Promise<SetInfo> {
 
     update('Brand');
     const brandCategories = await getCategoriesAsOptions(setInfo.year.id);
+    let brand: Category | string | undefined;
     if (brandCategories.length > 0) {
-      setInfo.brand = await askNew('brand', brandCategories);
+      brand = await askNew('brand', brandCategories);
     }
-    if (setInfo.brand) {
-      setInfo.handle = setInfo.brand.handle;
+    if (brand) {
+      if (brand === 'Parent') {
+        setInfo.category = setInfo.year;
+        return setInfo as SetInfo;
+      } else {
+        setInfo.brand = brand as Category;
+        setInfo.handle = setInfo.brand.handle;
+      }
     }
     while (!setInfo.brand) {
       update('New brand');
@@ -121,11 +144,18 @@ export async function findSet(): Promise<SetInfo> {
 
     update('Set');
     const setCategories = await getCategoriesAsOptions(setInfo.brand.id);
+    let set: Category | string | undefined;
     if (setCategories.length > 0) {
-      setInfo.set = await askNew('Set', setCategories);
+      set = await askNew('Set', setCategories);
     }
-    if (setInfo.set) {
-      setInfo.handle = setInfo.set.handle;
+    if (set) {
+      if (set === 'Parent') {
+        setInfo.category = setInfo.brand;
+        return setInfo as SetInfo;
+      } else {
+        setInfo.set = set as Category;
+        setInfo.handle = setInfo.set.handle;
+      }
     }
     while (!setInfo.set) {
       update('New Set');
@@ -136,11 +166,18 @@ export async function findSet(): Promise<SetInfo> {
 
     update('Variant Type');
     const variantTypeCategories = await getCategoriesAsOptions(setInfo.set.id);
+    let variantType: Category | string | undefined;
     if (variantTypeCategories.length > 0) {
-      setInfo.variantType = await askNew('Variant Type', variantTypeCategories);
+      variantType = await askNew('Variant Type', variantTypeCategories);
     }
-    if (setInfo.variantType) {
-      setInfo.handle = setInfo.variantType.handle;
+    if (variantType) {
+      if (variantType === 'Parent') {
+        setInfo.category = setInfo.set;
+        return setInfo as SetInfo;
+      } else {
+        setInfo.variantType = variantType as Category;
+        setInfo.handle = setInfo.variantType.handle;
+      }
     } else {
       update('New Variant Type');
       const bscVariantType: BSCFilterResponse = await getBSCVariantTypeFilter(setInfo);
@@ -165,12 +202,9 @@ export async function findSet(): Promise<SetInfo> {
           brand: setInfo.brand.name,
           year: setInfo.year.name,
           setName: setInfo.set.name,
+          ...(await updateSetDefaults()),
         };
 
-        const prefix = await ask('Prefix');
-        if (prefix) {
-          metadata.card_number_prefix = prefix;
-        }
         setInfo.variantType = await createCategoryActive(
           bscVariantType.name,
           description,
@@ -188,16 +222,28 @@ export async function findSet(): Promise<SetInfo> {
     if (setInfo.variantType && !setInfo.variantType?.handle.endsWith('-base')) {
       update('Variant Name');
       const variantNameCategories = await getCategoriesAsOptions(setInfo.variantType?.id);
+      let variantName: Category | string | undefined;
       if (variantNameCategories.length > 0) {
-        setInfo.variantName = await askNew('Variant Name', variantNameCategories);
+        variantName = await askNew('Variant Name', variantNameCategories);
       }
-      if (setInfo.variantName) {
-        setInfo.handle = setInfo.variantName.handle;
+      if (variantName) {
+        if (variantName === 'Parent') {
+          setInfo.category = setInfo.variantType;
+          return setInfo as SetInfo;
+        } else {
+          setInfo.variantName = variantName as Category;
+          setInfo.handle = setInfo.variantName.handle;
+        }
       } else {
         update('New Variant Name');
+        log('wtf');
         const isInsert = setInfo.variantType?.name === 'Insert';
         let isParallel = setInfo.variantType?.name === 'Parallel';
+
+        log('wtf2');
         const bscVariantName: BSCFilterResponse = await getBSCVariantNameFilter(setInfo);
+
+        log('wtf3');
         if (isInsert && !isParallel) {
           isParallel = await ask('Is this a parallel of an insert?', false);
         }
@@ -206,27 +252,25 @@ export async function findSet(): Promise<SetInfo> {
           bsc: bscVariantName.filter,
           isInsert,
           isParallel,
-          bin: (
-            await getGroup({
-              sport: setInfo.sport?.name,
-              manufacture: setInfo.brand.name,
-              year: setInfo.year.name,
-              setName: setInfo.set.name,
-              insert: isInsert ? bscVariantName.name : null,
-              parallel: isParallel ? bscVariantName.name : null,
-            })
-          ).bin,
+          bin: 1,
+          // (
+          //   await getGroup({
+          //     sport: setInfo.sport?.name,
+          //     manufacture: setInfo.brand.name,
+          //     year: setInfo.year.name,
+          //     setName: setInfo.set.name,
+          //     insert: isInsert ? bscVariantName.name : null,
+          //     parallel: isParallel ? bscVariantName.name : null,
+          //   })
+          // ).bin,
           sport: setInfo.sport?.name,
           brand: setInfo.brand.name,
           year: setInfo.year.name,
           setName: setInfo.set.name,
           insert: isInsert ? bscVariantName.name : null,
           parallel: isParallel ? bscVariantName.name : null,
+          ...(await updateSetDefaults()),
         };
-        const prefix = await ask('Prefix');
-        if (prefix) {
-          metaData.card_number_prefix = prefix;
-        }
 
         setInfo.variantName = await createCategory(
           bscVariantName.name,
@@ -263,6 +307,42 @@ export async function findSet(): Promise<SetInfo> {
     error(e);
     throw e;
   }
+}
+
+export async function updateSetDefaults() {
+  const { finish, error } = showSpinner('updateSetDefaults', 'Updating Set Defaults');
+
+  const metadata: Metadata = {};
+
+  try {
+    const update = async (field: string) => {
+      const response = await ask(field, metadata[field]);
+      if (response) {
+        if (response.indexOf('|') > -1) {
+          metadata[field] = response.split('|').map((r: string) => r.trim());
+        } else {
+          metadata[field] = response;
+        }
+      }
+    };
+
+    await update('card_number_prefix');
+    await update('features');
+    await update('printRun');
+
+    const updatePricing = await ask('Use Custom Pricing?', false);
+    if (updatePricing) {
+      const prices = await getPricing(metadata.prices);
+      if (prices && prices.length > 1) {
+        metadata.prices = prices;
+      }
+    }
+
+    finish();
+  } catch (e) {
+    error(e);
+  }
+  return metadata;
 }
 
 export async function getCategoriesAsOptions(parent_category_id: string) {

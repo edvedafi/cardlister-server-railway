@@ -3,8 +3,10 @@ import 'zx/globals';
 import minimist from 'minimist';
 import { shutdownSportLots } from './listing-sites/sportlots';
 import { useSpinners } from './utils/spinners';
-import { buildSet, findSet } from './card-data/setData';
+import { buildSet, findSet, updateSetDefaults } from './card-data/setData';
 import initializeFirebase from './utils/firebase';
+import { startSync, updateCategory } from './utils/medusa';
+import { ask } from './utils/ask';
 
 const args = minimist(process.argv.slice(2));
 
@@ -35,13 +37,20 @@ const shutdown = async () => {
 initializeFirebase();
 
 try {
-  const set = await findSet();
-  // const set = await getCategory('pcat_01HWQACW0A7Q9XBEN1W84TJX3H');
-  log(set);
-  const shouldBuildSet = true; //await ask('Continue?', false);
-  if (shouldBuildSet) {
+  const set = await findSet(true);
+
+  if (await ask('Update Defaults?', false)) {
+    await updateCategory(set.category.id, await updateSetDefaults());
+  }
+
+  if (await ask(`Build Products for ${set.category.name}?`, true)) {
     await buildSet(set);
+  }
+
+  if (await ask(`Sync All listing from ${set.category.name}?`, true)) {
+    await startSync(set.category.id);
   }
 } finally {
   await shutdown();
+  process.exit();
 }
