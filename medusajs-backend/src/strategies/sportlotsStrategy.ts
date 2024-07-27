@@ -66,7 +66,13 @@ class SportlotsStrategy extends ListingStrategy<WebdriverIO.Browser> {
     await browser.$('input[value="Get Cards"').click();
   }
 
-  async syncProducts(browser: WebdriverIO.Browser, products: Product[], category: ProductCategory): Promise<number> {
+  async syncProducts(
+    browser: WebdriverIO.Browser,
+    products: Product[],
+    category: ProductCategory,
+    advanceCount: (count: number) => Promise<number>,
+  ): Promise<number> {
+    let count = 0;
     await this.loadAddInventoryScreen(
       browser,
       category.metadata.year as string,
@@ -101,6 +107,7 @@ class SportlotsStrategy extends ListingStrategy<WebdriverIO.Browser> {
           //TODO Need to handle this in a recoverable way
           this.log(`variant not found ${cardNumber}`);
         }
+        count = await advanceCount(count);
       }
 
       await browser.$('input[value="Inventory Cards"').click();
