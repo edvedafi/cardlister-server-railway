@@ -2,6 +2,7 @@ import Medusa from '@medusajs/medusa-js';
 import dotenv from 'dotenv';
 import type { Metadata } from '../models/setInfo';
 import type {
+  BatchJob,
   DecoratedInventoryItemDTO,
   InventoryItemDTO,
   MoneyAmount,
@@ -11,6 +12,10 @@ import type {
   ProductCategory,
   ProductVariant,
 } from '@medusajs/client-types';
+import { useSpinners } from './spinners';
+import chalk from 'chalk';
+
+const { showSpinner, log } = useSpinners('Medusa', chalk.greenBright);
 
 dotenv.config();
 
@@ -113,7 +118,7 @@ export async function getCategories(parent_category_id: string): Promise<Product
 }
 
 export async function createProduct(product: Product): Promise<Product> {
-  const response = await medusa.admin.products.create({
+  const payload = {
     title: product.title,
     description: product.description as string,
     weight: product.weight as number,
@@ -122,10 +127,10 @@ export async function createProduct(product: Product): Promise<Product> {
     height: product.height as number,
     origin_country: product.origin_country as string,
     material: product.material as string,
-    // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-    metadata: product.metadata,
+    metadata: product.metadata || {},
     categories: [{ id: product.categories?.[0].id || '' }],
-    tags: product.metadata?.features,
+    is_giftcard: false,
+    discountable: true,
     variants: [
       {
         title: 'base',
@@ -134,7 +139,13 @@ export async function createProduct(product: Product): Promise<Product> {
         prices: [{ currency_code: 'usd', amount: 99 }],
       },
     ],
-  });
+  };
+  if (product.metadata?.features) {
+    payload.metadata.features = Array.isArray(product.metadata.features)
+      ? product.metadata.features
+      : [product.metadata.features];
+  }
+  const response = await medusa.admin.products.create(payload);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
@@ -205,9 +216,52 @@ export async function getRegion(regionName: string): Promise<string> {
 }
 
 export async function startSync(categoryId: string) {
-  return await medusa.admin.custom.post('/sync', {
+  const { update, error, finish } = showSpinner('sync-category', `Syncing ${categoryId}`);
+  update('Starting Sync');
+  const response = await medusa.admin.custom.post('/sync', {
     category: categoryId,
   });
+  update('Sync Started');
+  await Promise.all(
+    response.job.map(async (batch: BatchJob) => {
+      let job = batch;
+      const { product_category } = await medusa.admin.productCategories.retrieve(job.context?.category_id);
+      const { update, error, finish } = showSpinner(
+        `Sync-${job.id}`,
+        `${job.type}::${job.id}::${product_category.description}`,
+      );
+      while (!['completed', 'failed'].includes(job.status)) {
+        update(job.status);
+        const res = await medusa.admin.batchJobs.retrieve(job.id);
+        // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+        job = res.batch_job;
+        if (job.status === 'processing') {
+          update(`${job.status} ${job.result?.advancement_count}/${job.result?.count}`);
+        } else {
+          update(job.status);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (job.status === 'completed') {
+        finish(`${job.type}::${job.context?.category_id} Complete`);
+      } else {
+        error(job.status);
+      }
+    }),
+  );
+  finish('Sync Complete');
+}
+
+export async function getAllBatchJobs(): Promise<BatchJob[]> {
+  const response = await medusa.admin.batchJobs.list({ limit: 1000, offset: 0 });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  return response.batch_jobs.filter((job) => !['canceled', 'completed', 'failed'].includes(job.status));
+}
+
+export async function cancelSync(batchId: string) {
+  log(`Cancelling ${batchId}`);
+  const response = await medusa.admin.batchJobs.cancel(batchId);
+  console.log(response.batch_job);
 }
 
 export async function getProductVariant(variantId: string): Promise<PricedVariant> {
