@@ -116,25 +116,37 @@ abstract class ListingStrategy<
   }
 
   async processJob(batchJobId: string): Promise<void> {
-    //TODO This needs to be user specific
-    const locations = await this.stockLocationService.list({ name: 'Edvedafi Card Shop' });
-    if (locations.length === 0) throw 'No StockLocation Found';
-    if (locations.length > 1) throw `Multiple StockLocations Found ${JSON.stringify(locations, null, 2)}`;
-    this.location = locations[0]?.id;
-    if (!this.location) throw `No StockLocation Found. ${JSON.stringify(locations)}`;
+    return await this.atomicPhase_(async (transactionManager) => {
+      let categoryId: string;
+      try {
+        // return await this.atomicPhase_(async (transactionManager) => {
+        // const batchJob = await this.batchJobService_.retrieve(batchJobId);
+        await this.atomicPhase_(async (transactionManager) => {
+          const batchJob = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchJobId);
+          categoryId = <string>batchJob.context.category_id;
+          this.log(`process: ${batchJobId} is set to ${batchJob.status}`);
+          if (batchJob.status === 'confirmed') {
+            this.log('Setting Processing');
+            await this.batchJobService_.withTransaction(transactionManager).setProcessing(batchJobId);
+            this.log('Moving on');
+          }
+        });
 
-    const region = await this.regionService.list({ name: (<typeof ListingStrategy>this.constructor).listingSite });
-    this.region = region[0]?.id;
-    if (!this.region) throw `No Region Found for ${(<typeof ListingStrategy>this.constructor).listingSite}`;
+        //TODO This needs to be user specific
+        const locations = await this.stockLocationService.list({ name: 'Edvedafi Card Shop' });
+        if (locations.length === 0) throw 'No StockLocation Found';
+        if (locations.length > 1) throw `Multiple StockLocations Found ${JSON.stringify(locations, null, 2)}`;
+        this.location = locations[0]?.id;
+        if (!this.location) throw `No StockLocation Found. ${JSON.stringify(locations)}`;
 
-    try {
-      return await this.atomicPhase_(async (transactionManager) => {
+        const region = await this.regionService.list({ name: (<typeof ListingStrategy>this.constructor).listingSite });
+        this.region = region[0]?.id;
+        if (!this.region) throw `No Region Found for ${(<typeof ListingStrategy>this.constructor).listingSite}`;
+
         let category: ProductCategory;
         let productList: Product[];
         try {
-          const batchJob = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchJobId);
-
-          category = await this.categoryService_.retrieve(batchJob.context.category_id as string, {
+          category = await this.categoryService_.retrieve(categoryId, {
             relations: ['products', 'products.variants', 'products.variants.prices', 'products.images'],
           });
           productList = category.products;
@@ -163,7 +175,12 @@ abstract class ListingStrategy<
             activityId,
             `${(<typeof ListingStrategy>this.constructor).batchType}::Adding New inventory`,
           );
-          const added = await this.syncProducts(connection, productList, category);
+          const added = await this.syncProducts(
+            connection,
+            productList,
+            category,
+            this.advanceCount.bind(this, batchJobId),
+          );
 
           this.logger.success(
             activityId,
@@ -184,11 +201,14 @@ abstract class ListingStrategy<
             advancement_count: productList.length,
           },
         });
-      });
-    } catch (e) {
-      this.logger.error(`${(<typeof ListingStrategy>this.constructor).batchType}::processJob::error ${e.message}`, e);
-      throw e;
-    }
+        // await this.batchJobService_.complete(batchJobId);
+        // });
+      } catch (e) {
+        this.logger.error(`${(<typeof ListingStrategy>this.constructor).batchType}::processJob::error ${e.message}`, e);
+        // await this.batchJobService_.setFailed(batchJobId, e.message);
+        throw e;
+      }
+    });
   }
 
   abstract login(): Promise<T>;
@@ -238,8 +258,28 @@ abstract class ListingStrategy<
     this.log('Implement removeAllInventory to do a full sync of all products');
   }
 
-  async syncProducts(browser: T, products: Product[], category: ProductCategory): Promise<number> {
+  private async advanceCount(batchId: string, count: number): Promise<number> {
+    const newCount = count + 1;
+    this.log(`Advancing count to ${newCount}`);
+    await this.atomicPhase_(async (transactionManager) => {
+      await this.batchJobService_.withTransaction(transactionManager).update(batchId, {
+        result: {
+          advancement_count: newCount,
+        },
+      });
+    });
+    this.log('Advancing count complete');
+    return newCount;
+  }
+
+  async syncProducts(
+    browser: T,
+    products: Product[],
+    category: ProductCategory,
+    advanceCount: (count: number) => Promise<number>,
+  ): Promise<number> {
     let updated = 0;
+    let count = 0;
     for (const product of products) {
       if (!this.requireImages || product.images.length > 0) {
         for (const variant of product.variants) {
@@ -252,6 +292,7 @@ abstract class ListingStrategy<
               await this.getQuantity({ variant }),
               this.getPrice(variant),
             );
+            count = await advanceCount(count);
           } catch (e) {
             //TODO Need to log in a way that is actionable
             this.log(`Error syncing ${variant.sku}`, e);

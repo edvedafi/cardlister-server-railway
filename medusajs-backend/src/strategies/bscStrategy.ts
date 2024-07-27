@@ -1,4 +1,4 @@
-import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
+import { Product, ProductCategory } from '@medusajs/medusa';
 import { remote } from 'webdriverio';
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
@@ -82,7 +82,12 @@ class BscStrategy extends ListingStrategy<AxiosInstance> {
     }
   }
 
-  async syncProducts(api: AxiosInstance, products: Product[], category: ProductCategory): Promise<number> {
+  async syncProducts(
+    api: AxiosInstance,
+    products: Product[],
+    category: ProductCategory,
+    advanceCount: (count: number) => Promise<number>,
+  ): Promise<number> {
     const updates = [];
     const response = await api.post('seller/bulk-upload/results', {
       condition: 'near_mint',
@@ -91,6 +96,7 @@ class BscStrategy extends ListingStrategy<AxiosInstance> {
       ...(category.metadata.bsc as object),
     });
     const listings = response.data.results;
+    let count = 0;
 
     for (const listing of listings) {
       const product = products.find((product) => `${product.metadata.cardNumber}` === `${listing.card.cardNo}`);
@@ -121,6 +127,7 @@ class BscStrategy extends ListingStrategy<AxiosInstance> {
       } else {
         this.log('product not found for: ', listing.card.cardNo); //TODO need to log this somewhere actionable
       }
+      count = await advanceCount(count);
     }
 
     if (updates.length > 0) {
