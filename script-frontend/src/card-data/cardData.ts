@@ -200,6 +200,53 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   }
   const productVariant = await getProductVariant(productVariantId);
 
+  //TODO This doesn't handle multiple variants
+  log(product.metadata);
+  if (await ask('Update Card Details?', false)) {
+    if (!product.metadata) product.metadata = {};
+
+    const printRun = await ask('Print Run', product.metadata?.printRun);
+    if (printRun) {
+      product.metadata.printRun = printRun;
+    }
+    product.metadata.autograph = await ask('Autograph', product.metadata?.autograph);
+    product.metadata.thickness = await ask('Thickness', product.metadata?.thickness);
+
+    let features: string[] = product.metadata.features as string[];
+
+    if (!features || (features.length === 1 && isNo(features[0])) || features[0] === '') {
+      features = [];
+    }
+
+    const parallel: string = setData.metadata?.parallel;
+    if (parallel && !isNo(parallel)) {
+      features.push('Parallel/Variety');
+
+      if (parallel.toLowerCase().indexOf('refractor') > -1) {
+        features.push('Refractor');
+      }
+    }
+
+    if (setData.metadata?.insert && !isNo(setData.metadata?.insert)) {
+      features.push('Insert');
+    }
+
+    if (product.metadata.printRun && product.metadata.printRun > 0) {
+      features.push('Serial Numbered');
+    }
+
+    if (features.includes('RC')) {
+      features.push('Rookie');
+    }
+
+    const featureResult = await ask('Features', product.metadata?.features?.join(' | '));
+    if (featureResult && featureResult.length > 0) {
+      product.metadata.features = featureResult.split('|').map((feature: string) => feature.trim());
+    } else {
+      product.metadata.features = ['Base Set'];
+    }
+  }
+
   productVariant.prices = await getPricing(
     productVariant.prices && productVariant.prices.length > 1 //one is odd but there is always the default 99 cent price
       ? productVariant.prices

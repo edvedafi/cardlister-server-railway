@@ -1,13 +1,12 @@
-import type { Product } from './cards';
-import type { ProductCategory } from '@medusajs/client-types';
+import type { Product, ProductCategory } from '@medusajs/client-types';
 
 export type Metadata = {
-  [key: string]: any;
+  [key: string]: unknown;
 };
 
 export type Category = ProductCategory;
 
-export type SetInfo = Category & {
+export type SetInfo = ProductCategory & {
   year: Category;
   brand: Category;
   sport: Category;
