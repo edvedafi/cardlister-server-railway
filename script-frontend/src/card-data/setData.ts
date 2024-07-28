@@ -236,14 +236,10 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
         }
       } else {
         update('New Variant Name');
-        log('wtf');
         const isInsert = setInfo.variantType?.name === 'Insert';
         let isParallel = setInfo.variantType?.name === 'Parallel';
 
-        log('wtf2');
         const bscVariantName: BSCFilterResponse = await getBSCVariantNameFilter(setInfo);
-
-        log('wtf3');
         if (isInsert && !isParallel) {
           isParallel = await ask('Is this a parallel of an insert?', false);
         }
@@ -252,17 +248,16 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
           bsc: bscVariantName.filter,
           isInsert,
           isParallel,
-          bin: 1,
-          // (
-          //   await getGroup({
-          //     sport: setInfo.sport?.name,
-          //     manufacture: setInfo.brand.name,
-          //     year: setInfo.year.name,
-          //     setName: setInfo.set.name,
-          //     insert: isInsert ? bscVariantName.name : null,
-          //     parallel: isParallel ? bscVariantName.name : null,
-          //   })
-          // ).bin,
+          bin: (
+            await getGroup({
+              sport: setInfo.sport?.name,
+              manufacture: setInfo.brand.name,
+              year: setInfo.year.name,
+              setName: setInfo.set.name,
+              insert: isInsert ? bscVariantName.name : null,
+              parallel: isParallel ? bscVariantName.name : null,
+            })
+          ).bin,
           sport: setInfo.sport?.name,
           brand: setInfo.brand.name,
           year: setInfo.year.name,

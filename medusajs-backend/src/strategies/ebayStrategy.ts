@@ -216,7 +216,7 @@ function convertCardToInventory(
     'Professional Grader': displayOrNA(card.metadata.grader),
     'Certification Number': displayOrNA(card.metadata.certNumber),
     'Autograph Authentication Number': displayOrNA(card.metadata.certNumber),
-    Features: getFeatures(card, category),
+    Features: displayOrNA(card.metadata.features),
     'Parallel/Variety': [
       category.metadata.parallel ||
         (category.metadata.insert && !isNo(category.metadata.insert) ? 'Base Insert' : 'Base Set'),
@@ -391,39 +391,6 @@ export const displayYear = (year: string): string => (year.indexOf('-') > -1 ? y
 export const getThickness = (thickness: string): string[] => [
   thickness.toLowerCase().indexOf('pt') < 0 ? `${thickness} Pt.` : thickness,
 ];
-
-export const getFeatures = (card: Product, category: ProductCategory) => {
-  let features: string[] = (card.metadata.features as string[]) || [];
-  if (!features || (features.length === 1 && isNo(features[0])) || features[0] === '') {
-    features = [];
-  }
-
-  const parallel: string = category.metadata.parallel as string;
-  if (parallel && !isNo(parallel)) {
-    features.push('Parallel/Variety');
-    if (parallel.toLowerCase().indexOf('refractor') > -1) {
-      features.push('Refractor');
-    }
-  }
-
-  if (category.metadata.insert && !isNo(category.metadata.insert)) {
-    features.push('Insert');
-  }
-
-  if (card.metadata.printRun && (card.metadata.printRun as number) > 0) {
-    features.push('Serial Numbered');
-  }
-
-  if (features.includes('RC')) {
-    features.push('Rookie');
-  }
-
-  if (features.length === 0) {
-    features.push('Base Set');
-  }
-
-  return features;
-};
 
 const gradeIds = {
   10: 275020,

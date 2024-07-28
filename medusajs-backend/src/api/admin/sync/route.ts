@@ -18,29 +18,80 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
   const productCategoryService: ProductCategoryService = req.scope.resolve('productCategoryService');
   const responses: BatchJob[] = [];
 
-  logger.log(`Processing Sync Request: ${JSON.stringify(req.body)}`);
+  const categories: Set<string> = new Set<string>();
+
+  logger.log(`SYNC-ROUTE:: Processing Sync Request: ${JSON.stringify(req.body)}`);
   // @ts-expect-error body is untyped
-  const body: { category: string | string[]; only: string[] } = req.body || {
-    category: 'Error: Category is Required',
+  const body: {
+    sku: string | string[];
+    bin: string | string[];
+    category: string | string[];
+    only: string[];
+  } = req.body || {
+    category: 'Error: Category or bin or sku is Required',
+    bin: 'Error: Category or bin or sku is Required',
+    sku: 'Error: Category or bin or sku is Required',
     only: [],
   };
 
   const processCategory = async (categoryId: string) => {
-    logger.log(`Processing Category: ${categoryId}`);
+    logger.log(`SYNC-ROUTE:: Processing Category: ${categoryId}`);
     const category = await productCategoryService.retrieve(categoryId);
-    logger.log(`Fround Category: ${category.description} => ${category.category_children?.length}`);
+    logger.log(`SYNC-ROUTE:: Fround Category: ${category.description} => ${category.category_children?.length}`);
     if (category.category_children && category.category_children.length > 0) {
       for (const child of category.category_children) {
         await processCategory(child.id);
       }
     } else {
-      await startBatchProcess(categoryId);
+      categories.add(categoryId);
     }
   };
 
-  const startBatchProcess = async (category: string) => {
+  if (Array.isArray(body.category)) {
+    for (const category of body.category) {
+      await processCategory(category);
+    }
+  } else if (typeof body.category === 'string') {
+    await processCategory(body.category);
+  }
+
+  //TODO Currently brute force is ok, need to move this to the service so it can be queried instead
+  const [allCategories] = await productCategoryService.listAndCount({});
+  type CategoryMap = { [key: string]: string };
+  const categoryMap: CategoryMap = allCategories.reduce<CategoryMap>((acc: CategoryMap, c): CategoryMap => {
+    if (c.metadata.bin) {
+      acc[c.metadata.bin.toString()] = c.id;
+    }
+    return acc;
+  }, {});
+  const processBin = async (binId: string) => {
+    logger.log(`SYNC-ROUTE:: Processing Bin: ${binId}`);
+    if (categoryMap[binId]) {
+      await processCategory(categoryMap[binId]);
+    } else {
+      logger.error(`SYNC-ROUTE:: Bin Not Found: ${binId}`);
+    }
+  };
+
+  if (Array.isArray(body.bin)) {
+    for (const bin of body.bin) {
+      await processBin(bin);
+    }
+  } else if (typeof body.bin === 'string') {
+    await processBin(body.bin);
+  }
+
+  if (Array.isArray(body.sku)) {
+    for (const sku of body.sku) {
+      await processBin(sku.replace('[', '').replace(']', '').split('|')[0].trim());
+    }
+  } else if (typeof body.bin === 'string') {
+    await processBin(body.sku.replace('[', '').replace(']', '').split('|')[0].trim());
+  }
+
+  for (const category of categories) {
     if (!body.only || body.only.includes('sportlots')) {
-      logger.log('Starting Sportlots Sync');
+      logger.log('SYNC-ROUTE:: Starting Sportlots Sync');
       responses.push(
         await batchJobService.create({
           type: 'sportlots-sync',
@@ -52,7 +103,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     }
 
     if (!body.only || body.only.includes('bsc')) {
-      logger.log('Starting BSC Sync');
+      logger.log('SYNC-ROUTE:: Starting BSC Sync');
       responses.push(
         await batchJobService.create({
           type: 'bsc-sync',
@@ -64,7 +115,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     }
 
     if (!body.only || body.only.includes('ebay')) {
-      logger.log('Starting Ebay Sync');
+      logger.log('SYNC-ROUTE:: Starting Ebay Sync');
       responses.push(
         await batchJobService.create({
           type: 'ebay-sync',
@@ -86,15 +137,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
         }),
       );
     }
-  };
-
-  if (Array.isArray(body.category)) {
-    for (const category of body.category) {
-      await processCategory(category);
-    }
-  } else {
-    await processCategory(body.category);
   }
 
-  res.json({ status: 'ok', category: body.category, job: responses });
+  res.json({ status: 'ok', ...body, categories: categories.values(), job: responses });
 }
