@@ -30,7 +30,7 @@ export function getBrowserlessConfig(baseUrl: string, logKey: string) {
   };
   if (process.env[logKey]) {
     // @ts-expect-error Not really sure how to type this correctly
-    config.logLevel = process.env[logKey] as string;
+    config.logLevel = (process.env[logKey] as string).toLowerCase();
   }
   console.log('process.env.BROWSER_DOMAIN_PRIVATE', process.env.BROWSER_DOMAIN_PRIVATE);
   if (process.env.BROWSER_DOMAIN_PRIVATE) {

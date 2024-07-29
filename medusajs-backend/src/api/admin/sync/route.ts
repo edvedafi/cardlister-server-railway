@@ -20,7 +20,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
 
   const categories: Set<string> = new Set<string>();
 
-  logger.log(`SYNC-ROUTE:: Processing Sync Request: ${JSON.stringify(req.body)}`);
+  logger.info(`SYNC-ROUTE - Processing Sync Request: `);
   // @ts-expect-error body is untyped
   const body: {
     sku: string | string[];
@@ -35,9 +35,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
   };
 
   const processCategory = async (categoryId: string) => {
-    logger.log(`SYNC-ROUTE:: Processing Category: ${categoryId}`);
+    logger.info(`SYNC-ROUTE - Processing Category: ${categoryId}`);
     const category = await productCategoryService.retrieve(categoryId);
-    logger.log(`SYNC-ROUTE:: Fround Category: ${category.description} => ${category.category_children?.length}`);
+    logger.info(`SYNC-ROUTE - Fround Category: ${category.description} => ${category.category_children?.length}`);
     if (category.category_children && category.category_children.length > 0) {
       for (const child of category.category_children) {
         await processCategory(child.id);
@@ -65,11 +65,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     return acc;
   }, {});
   const processBin = async (binId: string) => {
-    logger.log(`SYNC-ROUTE:: Processing Bin: ${binId}`);
+    logger.info(`SYNC-ROUTE - Processing Bin: ${binId}`);
     if (categoryMap[binId]) {
       await processCategory(categoryMap[binId]);
     } else {
-      logger.error(`SYNC-ROUTE:: Bin Not Found: ${binId}`);
+      logger.error(`SYNC-ROUTE - Bin Not Found: ${binId}`);
     }
   };
 
@@ -91,7 +91,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
 
   for (const category of categories) {
     if (!body.only || body.only.includes('sportlots')) {
-      logger.log('SYNC-ROUTE:: Starting Sportlots Sync');
+      logger.info('SYNC-ROUTE - Starting Sportlots Sync');
       responses.push(
         await batchJobService.create({
           type: 'sportlots-sync',
@@ -103,7 +103,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     }
 
     if (!body.only || body.only.includes('bsc')) {
-      logger.log('SYNC-ROUTE:: Starting BSC Sync');
+      logger.info('SYNC-ROUTE - Starting BSC Sync');
       responses.push(
         await batchJobService.create({
           type: 'bsc-sync',
@@ -115,7 +115,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     }
 
     if (!body.only || body.only.includes('ebay')) {
-      logger.log('SYNC-ROUTE:: Starting Ebay Sync');
+      logger.info('SYNC-ROUTE - Starting Ebay Sync');
       responses.push(
         await batchJobService.create({
           type: 'ebay-sync',
@@ -127,7 +127,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     }
 
     if (!body.only || body.only.includes('mcp')) {
-      logger.log('Starting MCP Sync');
+      logger.info('Starting MCP Sync');
       responses.push(
         await batchJobService.create({
           type: 'mcp-sync',

@@ -215,12 +215,16 @@ export async function getRegion(regionName: string): Promise<string> {
   return regionCache[regionName];
 }
 
-export async function startSync(categoryId: string) {
-  const { update, error, finish } = showSpinner('sync-category', `Syncing ${categoryId}`);
+export async function startSync(categoryId: string, only: string[] = []) {
+  const { update, finish } = showSpinner('sync-category', `Syncing ${categoryId}`);
   update('Starting Sync');
-  const response = await medusa.admin.custom.post('/sync', {
+  const context: { category: string; only?: string[] } = {
     category: categoryId,
-  });
+  };
+  if (only && only.length > 0) {
+    context.only = only;
+  }
+  const response = await medusa.admin.custom.post('/sync', context);
   update('Sync Started');
   await Promise.all(
     response.job.map(async (batch: BatchJob) => {
