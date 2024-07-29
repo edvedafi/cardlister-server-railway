@@ -129,6 +129,9 @@ abstract class ListingStrategy<
             this.log('Setting Processing');
             await this.batchJobService_.withTransaction(transactionManager).setProcessing(batchJobId);
             this.log('Moving on');
+          } else if (['completed', 'failed'].includes(batchJob.status)) {
+            this.log(`Skipping processing ${batchJobId} as it is already ${batchJob.status}`);
+            return;
           }
         });
 
@@ -267,6 +270,10 @@ abstract class ListingStrategy<
           advancement_count: newCount,
         },
       });
+      const job = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchId);
+      if (job.status === 'canceled') {
+        throw new Error(`Job ${batchId} was canceled`);
+      }
     });
     this.log('Advancing count complete');
     return newCount;

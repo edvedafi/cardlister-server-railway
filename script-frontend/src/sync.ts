@@ -7,6 +7,7 @@ import { buildSet, findSet, updateSetDefaults } from './card-data/setData';
 import initializeFirebase from './utils/firebase';
 import { startSync, updateCategory } from './utils/medusa';
 import { ask } from './utils/ask';
+import { checkbox } from '@inquirer/prompts';
 
 const args = minimist(process.argv.slice(2));
 
@@ -49,6 +50,19 @@ try {
 
   if (await ask(`Sync All listing from ${set.category.name}?`, true)) {
     await startSync(set.category.id);
+  } else {
+    const answers = await checkbox({
+      message: 'Select Platforms to Sync',
+      choices: [
+        { name: 'SportLots', value: 'sportlots', checked: true },
+        { name: 'BuySportsCards', value: 'bsc', checked: true },
+        { name: 'ebay', value: 'ebay', checked: true },
+        { name: 'MyCardPost', value: 'mcp', checked: true },
+      ],
+    });
+    if (answers && answers.length > 0) {
+      await startSync(set.category.id, answers);
+    }
   }
 } finally {
   await shutdown();
