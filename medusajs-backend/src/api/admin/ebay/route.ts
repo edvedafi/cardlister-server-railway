@@ -1,4 +1,5 @@
 import { BatchJob, BatchJobService, Logger, MedusaRequest, MedusaResponse } from '@medusajs/medusa';
+import EbayService from '../../../services/ebay';
 
 export async function GET(req: MedusaRequest, res: MedusaResponse): Promise<void> {
   res.json({ status: 'ok' });
@@ -13,6 +14,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     const logger: Logger = req.scope.resolve('logger');
     logger.info(`EBAY::POST::Raw: ${req.body}`);
     logger.info(`EBAY::POST::JSON: ${JSON.stringify(req.body)}`);
+
+    const ebayService: EbayService = req.scope.resolve('ebayService');
+    await ebayService.getSales();
   } catch (e) {
     console.error(`EBAY::POST::Raw: ${req.body}`);
   }

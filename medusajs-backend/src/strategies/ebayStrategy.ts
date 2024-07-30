@@ -216,7 +216,7 @@ function convertCardToInventory(
     'Professional Grader': displayOrNA(card.metadata.grader),
     'Certification Number': displayOrNA(card.metadata.certNumber),
     'Autograph Authentication Number': displayOrNA(card.metadata.certNumber),
-    Features: displayOrNA(card.metadata.features),
+    Features: displayOrNA(variant.metadata.features),
     'Parallel/Variety': [
       category.metadata.parallel ||
         (category.metadata.insert && !isNo(category.metadata.insert) ? 'Base Insert' : 'Base Set'),

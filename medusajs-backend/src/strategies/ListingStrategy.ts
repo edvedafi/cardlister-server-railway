@@ -70,7 +70,8 @@ abstract class ListingStrategy<
   protected log(message: string, error?: Error) {
     const logger = this.logger || console;
     if (error) {
-      logger.error(`${(<typeof ListingStrategy>this.constructor).identifier}::${message}`, error);
+      console.error(`${(<typeof ListingStrategy>this.constructor).identifier}::${message}::${error.message}`, error);
+      logger.error(`${(<typeof ListingStrategy>this.constructor).identifier}::${message}::${error.message}`, error);
     } else {
       logger.info(`${(<typeof ListingStrategy>this.constructor).identifier}::${message}`);
     }
