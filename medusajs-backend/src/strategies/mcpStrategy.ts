@@ -47,6 +47,7 @@ class McpStrategy extends ListingStrategy<WebdriverIO.Browser> {
     await mcp.url('edvedafi?tab=shop');
     const search = await mcp.$('input[type="text"][placeholder="Search Cards"]');
     await search.clearValue();
+    await search.setValue(`[${productVariant.sku}]`);
     await mcp.pause(1000);
 
     const countFiled = await mcp.$('h2.card-count');
@@ -71,11 +72,11 @@ class McpStrategy extends ListingStrategy<WebdriverIO.Browser> {
       );
     };
 
-    await search.setValue(`[${productVariant.sku}]`);
-
     const deleteCard = async () => {
       await mcp.$('=Delete').click();
-      await mcp.$('=Yes').click();
+      const confirm = await mcp.$('#delete-btn');
+      await confirm.waitForClickable({ timeout: 10000 });
+      await confirm.click();
       siteCount--;
       await searchToBe(siteCount);
     };
