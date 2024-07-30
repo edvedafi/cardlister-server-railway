@@ -163,6 +163,8 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
   if (!productVariant.product) throw 'No product to update';
 
   let response;
+  log('saving: ');
+  log(productVariant.metadata);
   if (productVariant.prices.length > 0) {
     try {
       response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
@@ -171,6 +173,8 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
         //   typeof price.amount === 'string' ? { ...price, amount: parseInt(price.amount) } : price,
         // ),
         prices: productVariant.prices,
+        // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+        metadata: productVariant.metadata,
       });
     } catch (e) {
       // @ts-expect-error cannot figure out how to type case this correctly
@@ -179,6 +183,10 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
       ${JSON.stringify(productVariant.prices, null, 2)}
       Error: ${message}`;
     }
+  } else if (productVariant.metadata) {
+    response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
+      metadata: productVariant.metadata,
+    });
   } else {
     response = productVariant;
   }

@@ -64,8 +64,8 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   return product as Product;
 }
 
-const add = (info?: string, modifier?: string): string => {
-  if (info === undefined || info === null || info === '' || isNo(info)) {
+const add = (info?: unknown, modifier?: string): string => {
+  if (info === undefined || info === null || info === '' || isNo(<string>info)) {
     return '';
   } else if (modifier) {
     return ` ${info} ${modifier}`;
@@ -92,11 +92,11 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   const printRun = card.printRun ? ` /${card.printRun}` : '';
   let setName = card.setName;
   const teamDisplay = card.teams;
-  const graded = isYes(card.graded) ? ` ${card.grader} ${card.grade} ${psaGrades[card.grade]}` : '';
+  const graded = isYes(<string>card.graded) ? ` ${card.grader} ${card.grade} ${psaGrades[<number>card.grade]}` : '';
 
   titles.longTitle = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player} ${teamDisplay}${features}${printRun}${graded}`;
   let title = titles.longTitle;
-  if (title.length > maxTitleLength && ['Panini', 'Leaf'].includes(card.brand)) {
+  if (title.length > maxTitleLength && ['Panini', 'Leaf'].includes(<string>card.brand)) {
     setName = card.setName;
     title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player} ${teamDisplay}${features}${printRun}${graded}`;
   }
@@ -200,50 +200,83 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   }
   const productVariant = await getProductVariant(productVariantId);
 
-  //TODO This doesn't handle multiple variants
-  log(product.metadata);
-  if (await ask('Update Card Details?', false)) {
+  const updatePVMetadata = (key: string) => {
     if (!product.metadata) product.metadata = {};
-
-    const printRun = await ask('Print Run', product.metadata?.printRun);
-    if (printRun) {
-      product.metadata.printRun = printRun;
+    if (!productVariant.metadata) productVariant.metadata = {};
+    if (!productVariant.metadata[key] && product.metadata[key]) {
+      productVariant.metadata[key] = product.metadata[key];
     }
-    product.metadata.autograph = await ask('Autograph', product.metadata?.autograph);
-    product.metadata.thickness = await ask('Thickness', product.metadata?.thickness);
-
-    let features: string[] = product.metadata.features as string[];
-
-    if (!features || (features.length === 1 && isNo(features[0])) || features[0] === '') {
-      features = [];
-    }
-
-    const parallel: string = setData.metadata?.parallel;
-    if (parallel && !isNo(parallel)) {
-      features.push('Parallel/Variety');
-
-      if (parallel.toLowerCase().indexOf('refractor') > -1) {
-        features.push('Refractor');
+    if (imageDefaults[key]) {
+      if (!productVariant.metadata[key]) {
+        if (Array.isArray(imageDefaults[key])) {
+          productVariant.metadata[key] = imageDefaults[key];
+        } else {
+          productVariant.metadata[key] = (<object>imageDefaults[key]).toString().split('|');
+        }
+      } else if (Array.isArray(productVariant.metadata[key])) {
+        if (Array.isArray(imageDefaults[key])) {
+          productVariant.metadata[key] = productVariant.metadata[key].concat(imageDefaults[key]);
+        } else {
+          productVariant.metadata[key] = productVariant.metadata[key].concat(
+            (<object>imageDefaults[key]).toString().split('|'),
+          );
+        }
       }
     }
+  };
+  updatePVMetadata('printRun');
+  updatePVMetadata('autograph');
+  updatePVMetadata('thickness');
+  updatePVMetadata('features');
+  if (!productVariant.metadata) productVariant.metadata = {};
+  if (!productVariant.metadata.features) productVariant.metadata.features = [];
+  if (
+    setData.metadata?.parallel &&
+    !isNo(setData.metadata?.parallel) &&
+    !productVariant.metadata.features.includes('Parallel/Variety')
+  ) {
+    productVariant.metadata.features.push('Parallel/Variety');
 
-    if (setData.metadata?.insert && !isNo(setData.metadata?.insert)) {
-      features.push('Insert');
+    if (
+      setData.metadata?.parallel.toLowerCase().indexOf('refractor') > -1 &&
+      !productVariant.metadata.features.includes('Refractor')
+    ) {
+      productVariant.metadata.features.push('Refractor');
     }
+  }
 
-    if (product.metadata.printRun && product.metadata.printRun > 0) {
-      features.push('Serial Numbered');
+  if (setData.metadata?.insert && !isNo(setData.metadata?.insert)) {
+    productVariant.metadata.features.push('Insert');
+  }
+
+  if (productVariant.metadata.printRun && productVariant.metadata.printRun > 0) {
+    productVariant.metadata.features.push('Serial Numbered');
+  }
+
+  if (productVariant.metadata.features.includes('RC') && !productVariant.metadata.features.includes('Rookie')) {
+    productVariant.metadata.features.push('Rookie');
+  }
+
+  if (productVariant.metadata.features.length === 0) {
+    productVariant.metadata.features.push('Base Set');
+  }
+
+  log(productVariant.metadata);
+  if (await ask('Update Card Details?', false)) {
+    if (!productVariant.metadata) productVariant.metadata = {};
+
+    const printRun = await ask('Print Run', productVariant.metadata.printRun);
+    if (printRun) {
+      productVariant.metadata.printRun = printRun;
     }
+    productVariant.metadata.autograph = await ask('Autograph', productVariant.metadata.autograph);
+    productVariant.metadata.thickness = await ask('Thickness', productVariant.metadata.thickness);
 
-    if (features.includes('RC')) {
-      features.push('Rookie');
-    }
-
-    const featureResult = await ask('Features', product.metadata?.features?.join(' | '));
+    const featureResult = await ask('Features', productVariant.metadata.features.join(' | '));
     if (featureResult && featureResult.length > 0) {
-      product.metadata.features = featureResult.split('|').map((feature: string) => feature.trim());
+      productVariant.metadata.features = featureResult.split('|').map((feature: string) => feature.trim());
     } else {
-      product.metadata.features = ['Base Set'];
+      productVariant.metadata.features = ['Base Set'];
     }
   }
 
@@ -255,6 +288,7 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
 
   const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
 
+  log(productVariant.metadata);
   return { productVariant, quantity };
 }
 
