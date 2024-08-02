@@ -18,7 +18,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
     const ebayService: EbayService = req.scope.resolve('ebayService');
     await ebayService.getSales();
   } catch (e) {
-    console.error(`EBAY::POST::Raw: ${req.body}`);
+    console.error(`EBAY::POST::Raw: ${req.body}`, e);
   }
 
   res.json({ status: 'ok' });

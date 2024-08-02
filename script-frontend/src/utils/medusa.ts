@@ -6,6 +6,7 @@ import type {
   DecoratedInventoryItemDTO,
   InventoryItemDTO,
   MoneyAmount,
+  Order,
   PricedProduct,
   PricedVariant,
   Product,
@@ -113,6 +114,12 @@ export async function getCategories(parent_category_id: string): Promise<Product
     include_descendants_tree: false,
     // fields: 'name',
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  return response.product_categories;
+}
+
+export async function getCategory(id: string): Promise<ProductCategory[]> {
+  const response = await medusa.admin.productCategories.retrieve(id);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_categories;
 }
@@ -276,10 +283,38 @@ export async function cancelSync(batchId: string) {
   console.log(response.batch_job);
 }
 
+export async function getProduct(id: string): Promise<Product> {
+  const response = await medusa.admin.products.retrieve(id);
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  return response.product;
+}
+
 export async function getProductVariant(variantId: string): Promise<PricedVariant> {
   const response = await medusa.admin.variants.retrieve(variantId);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.variant;
+}
+
+const variantCache: { [key: string]: PricedVariant } = {};
+
+export async function getProductVariantBySKU(sku: string): Promise<PricedVariant> {
+  if (Object.keys(variantCache).length === 0) {
+    let offset = 0;
+    const limit = 10000;
+    let response;
+
+    while (!response || response.variants.length === limit) {
+      response = await medusa.admin.variants.list({ offset, limit });
+      // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+      response.variants.forEach((variant: PricedVariant) => {
+        if (variant.sku) {
+          variantCache[variant.sku] = variant;
+        }
+      });
+      offset += limit;
+    }
+  }
+  return variantCache[sku];
 }
 
 //TODO This does not support multiple users
@@ -361,4 +396,16 @@ export async function getProducts(category: string): Promise<Product[]> {
   });
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.products;
+}
+
+export async function getOrders(): Promise<Order[]> {
+  const response = await medusa.admin.orders.list({ status: ['pending'], limit: 100, offset: 0 });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  return response.orders;
+}
+
+export async function completeOrder(order: Order): Promise<Order[]> {
+  const response = await medusa.admin.orders.complete(order.id);
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  return response.orders;
 }

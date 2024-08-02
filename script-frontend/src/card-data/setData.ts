@@ -27,7 +27,6 @@ import Queue from 'queue';
 import { type Card } from '../models/bsc';
 import { type SLCard } from '../models/cards';
 import { buildProductFromBSCCard } from './cardData';
-import { all } from 'axios';
 import { getPricing } from './pricing';
 
 const { showSpinner, log } = useSpinners('setData', chalk.whiteBright);
