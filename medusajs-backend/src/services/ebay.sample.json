@@ -1,0 +1,159 @@
+{
+  "orderId": "24-11879-86474",
+  "legacyOrderId": "24-11879-86474",
+  "creationDate": "2024-07-29T22:15:30.000Z",
+  "lastModifiedDate": "2024-07-29T22:17:52.000Z",
+  "orderFulfillmentStatus": "NOT_STARTED",
+  "orderPaymentStatus": "PAID",
+  "sellerId": "edvedafi",
+  "buyer": {
+    "username": "5fyve5",
+    "taxAddress": {
+      "city": "Manassas",
+      "stateOrProvince": "VA",
+      "postalCode": "20112-3604",
+      "countryCode": "US"
+    },
+    "buyerRegistrationAddress": {
+      "fullName": "Eric Leger",
+      "contactAddress": {
+        "addressLine1": "766 Hickam Dr",
+        "city": "Melbourne",
+        "stateOrProvince": "FL",
+        "postalCode": "32901",
+        "countryCode": "US"
+      },
+      "primaryPhone": {
+        "phoneNumber": "3213130385"
+      },
+      "email": "00e16674c148ddb82670@members.ebay.com"
+    }
+  },
+  "pricingSummary": {
+    "priceSubtotal": {
+      "value": "4.0",
+      "currency": "USD"
+    },
+    "deliveryCost": {
+      "value": "0.69",
+      "currency": "USD"
+    },
+    "total": {
+      "value": "4.69",
+      "currency": "USD"
+    }
+  },
+  "cancelStatus": {
+    "cancelState": "NONE_REQUESTED",
+    "cancelRequests": []
+  },
+  "paymentSummary": {
+    "totalDueSeller": {
+      "value": "3.84",
+      "currency": "USD"
+    },
+    "refunds": [],
+    "payments": [
+      {
+        "paymentMethod": "EBAY",
+        "paymentReferenceId": "420005_S",
+        "paymentDate": "2024-07-29T22:15:42.388Z",
+        "amount": {
+          "value": "3.84",
+          "currency": "USD"
+        },
+        "paymentStatus": "PAID"
+      }
+    ]
+  },
+  "fulfillmentStartInstructions": [
+    {
+      "fulfillmentInstructionsType": "SHIP_TO",
+      "minEstimatedDeliveryDate": "2024-08-02T07:00:00.000Z",
+      "maxEstimatedDeliveryDate": "2024-08-07T07:00:00.000Z",
+      "ebaySupportedFulfillment": false,
+      "shippingStep": {
+        "shipTo": {
+          "fullName": "Eric Leger",
+          "contactAddress": {
+            "addressLine1": "7239 Ridgeway Dr",
+            "city": "Manassas",
+            "stateOrProvince": "VA",
+            "postalCode": "20112-3604",
+            "countryCode": "US"
+          },
+          "primaryPhone": {
+            "phoneNumber": "3213130385"
+          },
+          "email": "00e16674c148ddb82670@members.ebay.com"
+        },
+        "shippingCarrierCode": "eBay Send",
+        "shippingServiceCode": "US_eBayStandardEnvelope"
+      }
+    }
+  ],
+  "fulfillmentHrefs": [],
+  "lineItems": [
+    {
+      "lineItemId": "10065078768624",
+      "legacyItemId": "256415940334",
+      "sku": "419|T89C-20",
+      "title": "2024 Topps 1989 Topps Silver Pack #T89C-20 Ceddanne Rafaela Red Sox Mojo",
+      "lineItemCost": {
+        "value": "4.0",
+        "currency": "USD"
+      },
+      "quantity": 1,
+      "soldFormat": "FIXED_PRICE",
+      "listingMarketplaceId": "EBAY_US",
+      "purchaseMarketplaceId": "EBAY_US",
+      "lineItemFulfillmentStatus": "NOT_STARTED",
+      "total": {
+        "value": "4.69",
+        "currency": "USD"
+      },
+      "deliveryCost": {
+        "shippingCost": {
+          "value": "0.69",
+          "currency": "USD"
+        }
+      },
+      "appliedPromotions": [],
+      "taxes": [],
+      "ebayCollectAndRemitTaxes": [
+        {
+          "taxType": "STATE_SALES_TAX",
+          "amount": {
+            "value": "0.24",
+            "currency": "USD"
+          },
+          "collectionMethod": "NET"
+        }
+      ],
+      "properties": {
+        "buyerProtection": true
+      },
+      "lineItemFulfillmentInstructions": {
+        "minEstimatedDeliveryDate": "2024-08-02T07:00:00.000Z",
+        "maxEstimatedDeliveryDate": "2024-08-07T07:00:00.000Z",
+        "shipByDate": "2024-07-31T04:59:59.000Z",
+        "guaranteedDelivery": false
+      },
+      "itemLocation": {
+        "location": "Green Bay, Wisconsin",
+        "countryCode": "US",
+        "postalCode": "54311"
+      }
+    }
+  ],
+  "ebayCollectAndRemitTax": true,
+  "salesRecordReference": "5900",
+  "totalFeeBasisAmount": {
+    "value": "4.93",
+    "currency": "USD"
+  },
+  "totalMarketplaceFee": {
+    "value": "0.85",
+    "currency": "USD"
+  }
+}

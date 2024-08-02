@@ -1,5 +1,11 @@
-import { getCategories, getRootCategory } from './medusa';
-import type { ProductCategory } from '@medusajs/client-types';
+import { getCategories, getProduct, getProductVariant, getProductVariantBySKU, getRootCategory } from './medusa';
+import type { Order, ProductCategory } from '@medusajs/client-types';
+import { useSpinners } from './spinners';
+import { getSingleListingInfo } from '../old-scripts/firebase';
+import type { ChalkInstance } from 'chalk';
+
+const color = chalk.greenBright;
+const { showSpinner, log } = useSpinners('data-utils', color);
 
 export const isYes = (str: boolean | string | undefined) =>
   (typeof str === 'boolean' && str) ||
@@ -122,4 +128,218 @@ async function cacheCategoryInfo() {
       }
     }
   }
+}
+
+type DisplayableRow = {
+  sport: string;
+  year: string;
+  setName: string;
+  parallel: string;
+  insert: string;
+  cardNumber: string;
+  quantity: number | string;
+  title: string;
+  platform: string;
+};
+type DisplayRows = {
+  [key: string]: DisplayableRow[];
+};
+
+export type OldSale = DisplayableRow & { sku: string; platform: string };
+
+export async function buildTableData(orders: Order[], oldSales: OldSale[]): Promise<DisplayableRow[]> {
+  const { finish, error } = showSpinner('buildTableData', 'Building table data');
+  const finalDisplay: DisplayableRow[] = [];
+
+  try {
+    const divider: DisplayableRow = {
+      sport: '--------',
+      year: '----',
+      setName: '---',
+      parallel: '--------',
+      insert: '------',
+      cardNumber: '-----',
+      quantity: '-----',
+      title: '-----',
+      platform: '--------',
+    };
+    const displayable: DisplayRows = (
+      await Promise.all(
+        orders
+          .flatMap((order: Order) => order.items?.map((item) => ({ ...item, order })))
+          .filter((item) => item)
+          .map(async (item): Promise<DisplayableRow> => {
+            if (item) {
+              let variant = item.variant;
+              if (item.variant_id && !variant) {
+                variant = await getProductVariant(item.variant_id);
+              }
+              if (!variant && item.metadata?.sku) {
+                variant = await getProductVariantBySKU(item.metadata?.sku);
+              }
+              if (variant) {
+                let product;
+                try {
+                  product =
+                    variant.product &&
+                    variant.product.metadata &&
+                    variant.product.categories &&
+                    variant.product.categories.length > 0
+                      ? variant.product
+                      : await getProduct(variant.product_id);
+                } catch (e) {
+                  log('Error getting product', item.title, item.variant_id);
+                }
+                if (product && product.metadata) {
+                  const category = product.categories?.[0];
+                  if (category && category.metadata) {
+                    return {
+                      sport: category.metadata.sport,
+                      year: category.metadata.year,
+                      setName: category.metadata.setName,
+                      parallel: category.metadata.parallel,
+                      insert: category.metadata.insert,
+                      cardNumber: product.metadata.cardNumber,
+                      quantity: item.quantity,
+                      title: product.title,
+                      platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                    };
+                  } else {
+                    return {
+                      sport: '?',
+                      year: '?',
+                      setName: '?',
+                      parallel: '?',
+                      insert: '?',
+                      cardNumber: '?',
+                      quantity: item.quantity,
+                      title: item.title,
+                      platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                    };
+                  }
+                } else {
+                  return {
+                    sport: '?',
+                    year: '?',
+                    setName: '?',
+                    parallel: '?',
+                    insert: '?',
+                    cardNumber: '?',
+                    quantity: item.quantity,
+                    title: item.title,
+                    platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                  };
+                }
+              } else {
+                const fuzzy = oldSales.find((sale) => sale.sku === item.metadata?.sku);
+                if (!fuzzy) throw new Error(`Could not find old style match for ${item.title} in oldSales print out`);
+                return {
+                  sport: fuzzy.sport,
+                  year: fuzzy.year,
+                  setName: fuzzy.setName,
+                  parallel: fuzzy.parallel,
+                  insert: fuzzy.insert,
+                  cardNumber: fuzzy.cardNumber,
+                  quantity: item.quantity,
+                  title: item.title,
+                  platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                };
+              }
+            } else {
+              throw new Error('Item not found');
+            }
+          }),
+      )
+    )
+      .filter((item) => item)
+      .reduce((items: DisplayableRow[], item: DisplayableRow): DisplayableRow[] => {
+        const existing = items.find((i) => i.title === item.title);
+        if (!existing) {
+          items.push(item);
+        } else {
+          existing.quantity = <number>existing.quantity + <number>item.quantity;
+        }
+        return items;
+      }, [])
+      .reduce((items: DisplayRows, item: DisplayableRow): DisplayRows => {
+        const key = `${item.sport}|${item.year}|${item.setName}|${item.parallel}|${item.insert}`;
+        if (!items[key]) {
+          items[key] = [item];
+        } else {
+          items[key].push(item);
+        }
+        return items;
+      }, {});
+
+    Object.values(displayable).forEach((cards) =>
+      cards.forEach((card) => {
+        Object.keys(divider).forEach((key) => {
+          // @ts-expect-error - I know this is a bad idea, but it must be done
+          divider[key] = '-'.repeat(Math.max(parseInt(card[key]?.length || 0), parseInt(divider[key]?.length || 0)));
+        });
+      }),
+    );
+
+    let color = chalk.magentaBright;
+    const orderColors: { [key: string]: ChalkInstance } = {};
+    const orderColor = (orderId: string) => {
+      if (!orderColors[orderId]) {
+        orderColors[orderId] = [
+          chalk.red,
+          // chalk.green,
+          chalk.yellow,
+          chalk.blue,
+          // chalk.magenta,
+          chalk.cyan,
+          chalk.white,
+          chalk.redBright,
+          // chalk.greenBright,
+          chalk.yellowBright,
+          chalk.blueBright,
+          // chalk.magentaBright,
+          chalk.cyanBright,
+          chalk.whiteBright,
+          chalk.bgRed,
+          chalk.bgGreen,
+          chalk.bgYellow,
+          chalk.bgBlue,
+          chalk.bgMagenta,
+          chalk.bgCyan,
+          chalk.bgWhite,
+          chalk.bgBlackBright,
+          chalk.bgRedBright,
+          chalk.bgGreenBright,
+          chalk.bgYellowBright,
+          chalk.bgBlueBright,
+          chalk.bgMagentaBright,
+          chalk.bgCyanBright,
+          chalk.bgWhiteBright,
+        ][Object.keys(orderColors).length];
+      }
+      return orderColors[orderId];
+    };
+
+    Object.keys(displayable)
+      .sort()
+      .forEach((key, i) => {
+        if (i > 0) {
+          finalDisplay.push(divider);
+          color = color === chalk.magentaBright ? chalk.greenBright : chalk.magentaBright;
+        }
+
+        const cards = displayable[key];
+        cards.forEach((card) => {
+          Object.keys(card).forEach(
+            (cardKey) =>
+              // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
+              (card[cardKey] = key === 'platform' ? orderColor(card.platform)(card.platform) : color(card[cardKey])),
+          );
+          finalDisplay.push(card);
+        });
+      });
+  } catch (e) {
+    error(e);
+  }
+  finish();
+  return finalDisplay;
 }
