@@ -11,6 +11,7 @@ import type {
   PricedVariant,
   Product,
   ProductCategory,
+  ProductOption,
   ProductVariant,
 } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
@@ -118,7 +119,7 @@ export async function getCategories(parent_category_id: string): Promise<Product
   return response.product_categories;
 }
 
-export async function getCategory(id: string): Promise<ProductCategory[]> {
+export async function getCategory(id: string): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.retrieve(id);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_categories;
@@ -161,6 +162,16 @@ export async function updateProductImages(product: { id: string; images: string[
   const response = await medusa.admin.products.update(product.id, {
     images: product.images,
   });
+  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  return response.product;
+}
+
+export async function addOptions(product: Product): Promise<Product> {
+  const { finish } = showSpinner(product.id, 'Adding options to ' + product.title);
+  const response = await medusa.admin.products.addOption(product.id, {
+    title: 'Type',
+  });
+  finish();
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
@@ -240,14 +251,38 @@ export async function startSync(categoryId: string, only: string[] = []) {
     context.only = only;
   }
   const response = await medusa.admin.custom.post('/sync', context);
+
   update('Sync Started');
+  await waitForBatches(response.job);
+  finish('Sync Complete');
+}
+
+export async function getSales(only: string[] = []) {
+  const { update, finish } = showSpinner('sync-sales', `Getting Sales`);
+  update('Starting Sync');
+  const context: { only?: string[] } = {};
+  if (only && only.length > 0) {
+    context.only = only;
+  }
+  const response = await medusa.admin.custom.post('/sales', context);
+
+  update('Sales Fetch Started');
+  await waitForBatches(response.result);
+  finish('Sales Fetch Complete');
+}
+
+async function waitForBatches(batches: BatchJob[]) {
   await Promise.all(
-    response.job.map(async (batch: BatchJob) => {
+    batches.map(async (batch: BatchJob) => {
       let job = batch;
-      const { product_category } = await medusa.admin.productCategories.retrieve(job.context?.category_id);
+      // console.log('setting up watchier for ');
+      // console.log(job);
+      const { product_category } = job.context?.category_id
+        ? await medusa.admin.productCategories.retrieve(job.context?.category_id)
+        : { product_category: undefined };
       const { update, error, finish } = showSpinner(
-        `Sync-${job.id}`,
-        `${job.type}::${job.id}::${product_category.description}`,
+        `batch-${job.id}`,
+        `${job.type}::${job.id}::${product_category ? product_category.description : JSON.stringify(job.context)}`,
       );
       while (!['completed', 'failed'].includes(job.status)) {
         update(job.status);
@@ -268,7 +303,6 @@ export async function startSync(categoryId: string, only: string[] = []) {
       }
     }),
   );
-  finish('Sync Complete');
 }
 
 export async function getAllBatchJobs(): Promise<BatchJob[]> {

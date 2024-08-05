@@ -4,9 +4,9 @@ import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { getBrowserlessConfig } from '../utils/browserless';
 import { BscCard } from '../models/bsc-card';
-import ListingStrategy from './ListingStrategy';
+import AbstractListingStrategy from './AbstractListingStrategy';
 
-class BscStrategy extends ListingStrategy<AxiosInstance> {
+class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
   static identifier = 'bsc-strategy';
   static batchType = 'bsc-sync';
   static listingSite = 'BSC';
@@ -143,4 +143,4 @@ class BscStrategy extends ListingStrategy<AxiosInstance> {
   }
 }
 
-export default BscStrategy;
+export default BscListingStrategy;

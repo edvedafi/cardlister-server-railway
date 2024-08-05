@@ -22,7 +22,7 @@ class SyncService extends TransactionBaseService {
     this.logger = logger;
   }
 
-  public async sync(request: SyncRequest): Promise<{ categories: IterableIterator<string>; responses: BatchJob[] }> {
+  public async sync(request: SyncRequest): Promise<{ categories: string[]; responses: BatchJob[] }> {
     // noinspection JSVoidFunctionReturnValueUsed
     const activityId = this.logger.activity(`Running Sync on ${JSON.stringify(request)}`);
     const update = (message: string) => this.logger.progress(activityId, `SYNC - ${message}`);
@@ -134,9 +134,22 @@ class SyncService extends TransactionBaseService {
           }),
         );
       }
+
+      if (!request.only || request.only.includes('test')) {
+        update('Starting TEST Sync');
+        responses.push(
+          await this.batchJobService.create({
+            type: 'test-sync',
+            context: { category_id: category },
+            dry_run: false,
+            created_by: request.user,
+          }),
+        );
+      }
     }
-    this.logger.success(activityId, `Sync Started for ${JSON.stringify(categories.values())} categories`);
-    return { categories: categories.values(), responses };
+    const displayableCategories = Array.from(categories);
+    this.logger.success(activityId, `Sync Started for ${JSON.stringify(displayableCategories)} categories`);
+    return { categories: displayableCategories, responses };
   }
 }
 

@@ -202,7 +202,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                       cardNumber: product.metadata.cardNumber,
                       quantity: item.quantity,
                       title: product.title,
-                      platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                      platform: item.order.metadata?.platform || '???',
                     };
                   } else {
                     return {
@@ -214,7 +214,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                       cardNumber: '?',
                       quantity: item.quantity,
                       title: item.title,
-                      platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                      platform: item.order.metadata?.platform || '???',
                     };
                   }
                 } else {
@@ -227,7 +227,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                     cardNumber: '?',
                     quantity: item.quantity,
                     title: item.title,
-                    platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                    platform: item.order.metadata?.platform || '???',
                   };
                 }
               } else {
@@ -242,7 +242,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                   cardNumber: fuzzy.cardNumber,
                   quantity: item.quantity,
                   title: item.title,
-                  platform: `${item.order.region?.name || 'ebay'} - ${item.order.customer?.first_name}`,
+                  platform: item.order.metadata?.platform || '???',
                 };
               }
             } else {

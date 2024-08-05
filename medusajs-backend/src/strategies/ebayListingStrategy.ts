@@ -1,5 +1,5 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
-import ListingStrategy from './ListingStrategy';
+import AbstractListingStrategy from './AbstractListingStrategy';
 import eBayApi from 'ebay-api';
 import process from 'node:process';
 import { isNo, isYes, titleCase } from '../utils/data';
@@ -7,7 +7,7 @@ import { EbayOfferDetailsWithKeys, InventoryItem } from 'ebay-api/lib/types';
 import { login as ebayLogin } from '../utils/ebayAPI';
 import _ from 'lodash';
 
-class EbayStrategy extends ListingStrategy<eBayApi> {
+class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   static identifier = 'ebay-strategy';
   static batchType = 'ebay-sync';
   static listingSite = 'ebay';
@@ -444,4 +444,4 @@ const graderIds = {
   ARK: 2750122,
 };
 
-export default EbayStrategy;
+export default EbayListingStrategy;

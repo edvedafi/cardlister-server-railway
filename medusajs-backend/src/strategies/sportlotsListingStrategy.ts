@@ -1,8 +1,8 @@
 import { Product, ProductCategory } from '@medusajs/medusa';
 import process from 'node:process';
-import ListingStrategy from './ListingStrategy';
+import AbstractListingStrategy from './AbstractListingStrategy';
 
-class SportlotsStrategy extends ListingStrategy<WebdriverIO.Browser> {
+class SportlotsListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
   static identifier = 'sportlots-strategy';
   static batchType = 'sportlots-sync';
   static listingSite = 'SportLots';
@@ -137,4 +137,4 @@ class SportlotsStrategy extends ListingStrategy<WebdriverIO.Browser> {
   }
 }
 
-export default SportlotsStrategy;
+export default SportlotsListingStrategy;
