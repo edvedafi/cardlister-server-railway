@@ -4,7 +4,14 @@ import { shutdownSportLots } from './listing-sites/sportlots';
 import { shutdownSportLots as oldShutdownSportLots } from './old-scripts/sportlots';
 import { useSpinners } from './utils/spinners';
 import initializeFirebase from './utils/firebase';
-import { completeOrder, getOrders, getProduct, getProductVariant, getProductVariantBySKU } from './utils/medusa';
+import {
+  completeOrder,
+  getOrders,
+  getProduct,
+  getProductVariant,
+  getProductVariantBySKU,
+  getSales,
+} from './utils/medusa';
 import type { Order } from '@medusajs/client-types';
 // @ts-expect-error - no types
 import chalkTable from 'chalk-table';
@@ -44,6 +51,9 @@ initializeFirebase();
 const { update, error, finish } = showSpinner('top-level', 'Running sales processing');
 
 try {
+  update('Get Orders from Platforms');
+  await getSales();
+
   update('Gather Orders');
   const orders: Order[] = await getOrders();
   if (orders.length > 0) {

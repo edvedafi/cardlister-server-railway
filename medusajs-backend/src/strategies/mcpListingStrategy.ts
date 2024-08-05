@@ -1,10 +1,10 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 import process from 'node:process';
-import ListingStrategy from './ListingStrategy';
+import AbstractListingStrategy from './AbstractListingStrategy';
 import axios from 'axios';
 import JSZip from 'jszip';
 
-class McpStrategy extends ListingStrategy<WebdriverIO.Browser> {
+class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
   static identifier = 'mcp-strategy';
   static batchType = 'mcp-sync';
   static listingSite = 'MCP';
@@ -197,4 +197,4 @@ class McpStrategy extends ListingStrategy<WebdriverIO.Browser> {
   }
 }
 
-export default McpStrategy;
+export default McpListingStrategy;
