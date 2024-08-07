@@ -148,7 +148,7 @@ type DisplayRows = {
 export type OldSale = DisplayableRow & { sku: string; platform: string };
 
 export async function buildTableData(orders: Order[], oldSales: OldSale[]): Promise<DisplayableRow[]> {
-  const { finish, error } = showSpinner('buildTableData', 'Building table data');
+  const { finish, error, update } = showSpinner('buildTableData', 'Building table data');
   const finalDisplay: DisplayableRow[] = [];
 
   try {
@@ -163,6 +163,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
       title: '-----',
       platform: '--------',
     };
+    update('Building Display Rows');
     const displayable: DisplayRows = (
       await Promise.all(
         orders
@@ -173,9 +174,6 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
               let variant = item.variant;
               if (item.variant_id && !variant) {
                 variant = await getProductVariant(item.variant_id);
-              }
-              if (!variant && item.metadata?.sku) {
-                variant = await getProductVariantBySKU(item.metadata?.sku);
               }
               if (variant) {
                 let product;
@@ -271,6 +269,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
         return items;
       }, {});
 
+    update('Adding Dividers');
     Object.values(displayable).forEach((cards) =>
       cards.forEach((card) => {
         Object.keys(divider).forEach((key) => {
@@ -319,6 +318,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
       return orderColors[orderId];
     };
 
+    update('Setting colors');
     Object.keys(displayable)
       .sort()
       .forEach((key, i) => {

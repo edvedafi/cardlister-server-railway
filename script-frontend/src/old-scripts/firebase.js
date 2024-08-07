@@ -179,13 +179,22 @@ export async function matchOldStyle(db, card) {
     update(`lower case set name`);
     const searchSet =
       updatedCard.year === '2021' && updatedCard.setName.indexOf('Absolute') > -1 ? 'Absolute' : updatedCard.setName;
-    match = possibleCards.find(
-      (c) =>
-        updatedCard.cardNumber?.toString().replace(/\D*/, '') === c.cardNumber?.toString().replace(/\D*/, '') &&
-        c.Title.toLowerCase().indexOf(searchSet.toLowerCase()) > -1 &&
-        (!updatedCard.insert || c.Title.toLowerCase().indexOf(updatedCard.insert.toLowerCase()) > -1) &&
-        (!updatedCard.parallel || c.Title.toLowerCase().indexOf(updatedCard.parallel.toLowerCase()) > -1),
-    );
+    match = possibleCards.find((c) => {
+      try {
+        return (
+          updatedCard.cardNumber?.toString().replace(/\D*/, '') === c.cardNumber?.toString().replace(/\D*/, '') &&
+          c.Title.toLowerCase().indexOf(searchSet.toLowerCase()) > -1 &&
+          (!updatedCard.insert || c.Title.toLowerCase().indexOf(updatedCard.insert.toLowerCase()) > -1) &&
+          (!updatedCard.parallel || c.Title.toLowerCase().indexOf(updatedCard.parallel.toLowerCase()) > -1)
+        );
+      } catch (e) {
+        console.error(e);
+        console.error(`CardNumber: ${updatedCard.cardNumber} === ${c.cardNumber}`);
+        console.error(`Title: ${c.Title} contains? ${searchSet}`);
+        console.error(`Insert: ${updatedCard.insert} contains? ${c.insert}`);
+        console.error(`Parallel: ${updatedCard.parallel} contains? ${c.parallel}`);
+      }
+    });
     if (match) {
       finish(`Found lower case set name listing in firebase for ${card.title}`);
       return mergeFirebaseResult(updatedCard, match);

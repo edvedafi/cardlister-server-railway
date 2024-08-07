@@ -385,7 +385,8 @@ export const removeFromEbayItemNumber = async (itemNumber, quantity, title) => {
   const ebay = await loginEbayAPI();
   try {
     update('Getting Item Details');
-    const item = await ebay.trading.GetItem({ ItemID: itemNumber });
+    let item;
+    item = await ebay.trading.GetItem({ ItemID: itemNumber });
     log(
       `${parseInt(item.Item.Quantity)} - ${parseInt(quantity)} = ${parseInt(item.Item.Quantity) - parseInt(quantity)}`,
     );
@@ -424,8 +425,13 @@ export const removeFromEbayItemNumber = async (itemNumber, quantity, title) => {
       }
     }
   } catch (e) {
-    error(e, e.meta?.Errors?.ErrorCode || e.message);
-    result.error = e.meta.Errors.ErrorCode;
+    if (e.meta?.Errors?.ErrorCode === 17) {
+      update(`Item ${itemNumber} was already ended`);
+      result.removed = true;
+    } else {
+      log(e.meta?.Errors?.ErrorCode || e.message, e);
+      result.error = e.meta.Errors.ErrorCode;
+    }
   }
   return result;
 };
