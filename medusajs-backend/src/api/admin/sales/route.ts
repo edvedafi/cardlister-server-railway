@@ -12,14 +12,26 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
 
   const body: { only?: string[] } = req.body;
 
-  responses.push(
-    await batchJobService.create({
-      type: 'ebay-sales-sync',
-      dry_run: false,
-      created_by: req.user.id,
-      context: {},
-    }),
-  );
+  if (!body.only || body.only.includes('ebay')) {
+    responses.push(
+      await batchJobService.create({
+        type: 'ebay-sales-sync',
+        dry_run: false,
+        created_by: req.user.id,
+        context: {},
+      }),
+    );
+  }
+  if (!body.only || body.only.includes('bsc')) {
+    responses.push(
+      await batchJobService.create({
+        type: 'bsc-sales-sync',
+        dry_run: false,
+        created_by: req.user.id,
+        context: {},
+      }),
+    );
+  }
 
   res.json({ status: 'ok', request: body, result: responses });
 }

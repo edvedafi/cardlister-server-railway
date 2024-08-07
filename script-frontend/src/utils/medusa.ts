@@ -16,6 +16,7 @@ import type {
 } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
 import chalk from 'chalk';
+import { ask } from './ask';
 
 const { showSpinner, log } = useSpinners('Medusa', chalk.greenBright);
 
@@ -433,8 +434,18 @@ export async function getProducts(category: string): Promise<Product[]> {
 }
 
 export async function getOrders(): Promise<Order[]> {
-  const response = await medusa.admin.orders.list({ status: ['pending'], limit: 100, offset: 0 });
+  const response = await medusa.admin.orders.list(
+    {
+      status: ['pending'],
+      limit: 100,
+      offset: 0,
+      expand: 'items,items.variant',
+    },
+    { maxRetries: 3 },
+  );
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+  log(response.orders);
+  await ask('Continue?');
   return response.orders;
 }
 

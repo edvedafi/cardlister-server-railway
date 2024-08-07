@@ -201,14 +201,18 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
             }
 
             if (draftOrder) {
-              await this.cartService.setPaymentSessions(draftOrder.cart_id);
-              const cart = await this.cartService.authorizePayment(draftOrder.cart_id, {});
-              const order = await this.orderService.createFromCart(cart.id);
-              await this.draftOrderService.registerCartCompletion(draftOrder.id, order.id);
-              return {
-                ...order,
-                items,
-              };
+              if (draftOrder.order_id) {
+                return await this.orderService.retrieve(draftOrder.order_id);
+              } else {
+                await this.cartService.setPaymentSessions(draftOrder.cart_id);
+                const cart = await this.cartService.authorizePayment(draftOrder.cart_id, {});
+                const order = await this.orderService.createFromCart(cart.id);
+                await this.draftOrderService.registerCartCompletion(draftOrder.id, order.id);
+                return {
+                  ...order,
+                  items,
+                };
+              }
             }
           }, 'READ UNCOMMITTED'),
         ),
@@ -232,17 +236,19 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
         const location = await this.getLocationId();
         const reservations = [];
         for (const item of listedItems) {
-          reservations.push({
-            line_item_id: item.id,
-            inventory_item_id: (
-              await this.inventoryService.listInventoryItems({
-                sku: item.metadata.sku,
-                location_id: location,
-              })
-            )[0][0].id,
-            quantity: item.quantity,
-            location_id: location,
-          });
+          if (item.variant_id) {
+            reservations.push({
+              line_item_id: item.id,
+              inventory_item_id: (
+                await this.inventoryService.listInventoryItems({
+                  sku: item.metadata.sku,
+                  location_id: location,
+                })
+              )[0][0].id,
+              quantity: item.quantity,
+              location_id: location,
+            });
+          }
         }
         this.log(`Items: ${JSON.stringify(reservations, null, 2)}`);
         await this.inventoryService.createReservationItems(reservations);

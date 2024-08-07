@@ -52,7 +52,7 @@ const { update, error, finish } = showSpinner('top-level', 'Running sales proces
 
 try {
   update('Get Orders from Platforms');
-  await getSales();
+  // await getSales();
 
   update('Gather Orders');
   const orders: Order[] = await getOrders();
@@ -63,22 +63,26 @@ try {
     const oldSales: OldSale[] = [];
     for (const order of orders) {
       if (!order.items) throw new Error('Order has no items');
+      log('Items', order);
       for (const item of order.items) {
         let variant = item.variant;
         if (item.variant_id && !variant) {
           variant = await getProductVariant(item.variant_id);
         }
-        if (!variant && item.metadata?.sku) {
-          variant = await getProductVariantBySKU(item.metadata?.sku);
-        }
+        // if (!variant && item.metadata?.sku) {
+        //   variant = await getProductVariantBySKU(item.metadata?.sku);
+        // }
         if (variant) {
+          log(`Found variant for ${item.title}`);
           item.variant = variant;
         } else {
+          log(`Could not find variant for ${JSON.stringify(item)}`);
           const cardFromTitle = convertTitleToCard(item.title);
           const fuzzy = await getSingleListingInfo(cardFromTitle);
           if (fuzzy) {
             fuzzy.quantity = item.quantity;
             fuzzy.sku = item.metadata?.sku;
+            fuzzy.platform = order.metadata?.platform;
             oldSales.push(fuzzy);
           } else {
             throw new Error(`Could not find old style match for ${item.title}`);
@@ -87,7 +91,9 @@ try {
       }
     }
 
+    // const oldSales = fs.readJSONSync('oldSales.json');
     const groupedCards = await createGroups({}, oldSales);
+    fs.writeJSONSync('oldSales.json', oldSales);
 
     update('Remove listings from sites');
     await removeFromEbay(oldSales);
