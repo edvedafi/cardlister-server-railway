@@ -52,7 +52,7 @@ const { update, error, finish } = showSpinner('top-level', 'Running sales proces
 
 try {
   update('Get Orders from Platforms');
-  // await getSales();
+  await getSales();
 
   update('Gather Orders');
   const orders: Order[] = await getOrders();

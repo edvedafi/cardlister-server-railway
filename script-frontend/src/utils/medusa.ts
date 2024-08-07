@@ -444,8 +444,6 @@ export async function getOrders(): Promise<Order[]> {
     { maxRetries: 3 },
   );
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-  log(response.orders);
-  await ask('Continue?');
   return response.orders;
 }
 

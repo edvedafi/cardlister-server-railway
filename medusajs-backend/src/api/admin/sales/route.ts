@@ -32,6 +32,16 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
       }),
     );
   }
+  if (!body.only || body.only.includes('sportlots')) {
+    responses.push(
+      await batchJobService.create({
+        type: 'sportlots-sales-sync',
+        dry_run: false,
+        created_by: req.user.id,
+        context: {},
+      }),
+    );
+  }
 
   res.json({ status: 'ok', request: body, result: responses });
 }

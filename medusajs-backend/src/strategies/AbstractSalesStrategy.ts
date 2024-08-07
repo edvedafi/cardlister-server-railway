@@ -40,13 +40,16 @@ export type SystemOrder = {
   id: string;
   customer: {
     email: string;
+    name?: string;
     username: string;
   };
+  packingSlip?: string;
   lineItems: {
     title: string;
     unit_price: number;
     quantity: number;
     sku: string;
+    cardNumber?: string;
   }[];
 };
 
@@ -60,7 +63,6 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
   private readonly orderService: OrderService;
   private readonly syncService: SyncService;
   private readonly inventoryService: InventoryService;
-  private readonly inventoryItemService: InventoryItemService;
   private readonly lineItemService: LineItemService;
   // private readonly reservationItemService: ReservationItemService;
 
@@ -127,10 +129,11 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
           lineItems: order.lineItems.filter((li) => li.sku),
         }))
         .filter((order) => order.lineItems.length > 0);
+      this.log(`Converting ${systemOrders.length} Orders`);
 
       const orders = await Promise.all(
         systemOrders.map((systemOrder) =>
-          this.atomicPhase_(async (manager) => {
+          this.atomicPhase_(async () => {
             const items: Item[] = [];
             const hasDraft = (await this.draftOrderService.list({})).find(
               (draft) => draft.idempotency_key === systemOrder.id,
