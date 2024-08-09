@@ -48,7 +48,7 @@ export type SystemOrder = {
   packingSlip?: string;
   lineItems: {
     title: string;
-    unit_price: number;
+    unit_price?: number;
     quantity: number;
     sku: string;
     cardNumber?: string;
@@ -158,7 +158,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                   items.push({
                     title: lineItem.title,
                     quantity: lineItem.quantity,
-                    unit_price: lineItem.unit_price,
+                    unit_price: lineItem.unit_price || 99,
                     metadata: {
                       sku: lineItem.sku,
                     },
@@ -168,7 +168,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                   items.push({
                     variant_id: variant.id,
                     quantity: lineItem.quantity,
-                    unit_price: lineItem.unit_price,
+                    unit_price: lineItem.unit_price || this.getPrice(variant),
                     metadata: {
                       sku: lineItem.sku,
                     },
@@ -179,7 +179,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                 items.push({
                   title: lineItem.title,
                   quantity: lineItem.quantity,
-                  unit_price: lineItem.unit_price,
+                  unit_price: lineItem.unit_price || 99,
                   metadata: {
                     sku: lineItem.sku,
                   },
@@ -240,7 +240,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                   throw e;
                 }
                 try {
-                  order = await this.orderService.capturePayment(cart.id);
+                  order = await this.orderService.capturePayment(order.id);
                 } catch (e) {
                   this.log(`Error capturing payment for draft ${draftOrder.id}`, e);
                   throw e;
