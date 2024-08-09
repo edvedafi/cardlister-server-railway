@@ -107,6 +107,7 @@ const processBulk = async (setData: SetInfo) => {
     const listedProducts = listings.map((listing) => listing.id);
     for (let i = 0; i < setData.products.length; i++) {
       const product = setData.products[i];
+      if (!product.variants) throw new Error('Product has no variants');
       for (let j = 0; j < product.variants.length; j++) {
         const variant = product.variants[j];
         if (!listedProducts.includes(variant.id)) {
