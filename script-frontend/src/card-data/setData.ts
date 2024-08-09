@@ -28,6 +28,7 @@ import { type Card } from '../models/bsc';
 import { type SLCard } from '../models/cards';
 import { buildProductFromBSCCard } from './cardData';
 import { getPricing } from './pricing';
+import type { MoneyAmount } from '@medusajs/client-types';
 
 const { showSpinner, log } = useSpinners('setData', chalk.whiteBright);
 
@@ -324,12 +325,10 @@ export async function updateSetDefaults() {
     await update('features');
     await update('printRun');
 
-    const updatePricing = await ask('Use Custom Pricing?', false);
-    if (updatePricing) {
-      const prices = await getPricing(metadata.prices);
-      if (prices && prices.length > 1) {
-        metadata.prices = prices;
-      }
+    const current: MoneyAmount[] = <MoneyAmount[]>metadata.prices;
+    const prices: MoneyAmount[] = await getPricing(current);
+    if (prices && prices.length > 1) {
+      metadata.prices = prices;
     }
 
     finish();

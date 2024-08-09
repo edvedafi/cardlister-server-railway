@@ -280,15 +280,20 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
     }
   }
 
-  productVariant.prices = await getPricing(
+  const prices = await getPricing(
     productVariant.prices && productVariant.prices.length > 1 //one is odd but there is always the default 99 cent price
       ? productVariant.prices
       : setData.category?.metadata?.prices,
   );
+  prices.forEach((price) => {
+    if (!productVariant.prices) productVariant.prices = [];
+    if (productVariant.prices.find((p) => p.region_id === price.region_id && p.amount !== price.amount)) {
+      productVariant.prices.push(price);
+    }
+  });
 
   const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
 
-  log(productVariant.metadata);
   return { productVariant, quantity };
 }
 
