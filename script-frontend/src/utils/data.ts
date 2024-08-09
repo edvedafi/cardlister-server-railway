@@ -332,7 +332,8 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
           Object.keys(card).forEach(
             (cardKey) =>
               // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
-              (card[cardKey] = key === 'platform' ? orderColor(card.platform)(card.platform) : color(card[cardKey])),
+              (card[cardKey] =
+                cardKey === 'platform' ? orderColor(card.platform)(card.platform) : color(card[cardKey])),
           );
           finalDisplay.push(card);
         });

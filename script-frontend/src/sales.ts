@@ -22,6 +22,7 @@ import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/
 import { removeFromEbay } from './old-scripts/ebay';
 import { removeFromMyCardPost, shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
+import open from 'open';
 
 $.verbose = false;
 
@@ -96,17 +97,38 @@ try {
     fs.writeJSONSync('oldSales.json', oldSales);
 
     update('Remove listings from sites');
-    await removeFromEbay(oldSales);
-    await removeFromSportLots(groupedCards);
-    await removeFromBuySportsCards(groupedCards);
-    await removeFromMyCardPost(oldSales);
+    if (oldSales && oldSales.length > 0) {
+      await removeFromEbay(oldSales);
+      await removeFromMyCardPost(oldSales);
+      if (groupedCards && Object.keys(groupedCards).length > 0) {
+        await removeFromSportLots(groupedCards);
+        await removeFromBuySportsCards(groupedCards);
+      }
+    }
 
     update('Fulfill orders');
     for (const order of orders) {
       await completeOrder(order);
     }
 
-    update('Display Pull Table');
+    update('Build display pull table');
+    const output = await buildTableData(orders, oldSales);
+
+    update('Open external sites');
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots: ') > -1)) {
+      await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
+    }
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC: ') > -1)) {
+      await open('https://www.buysportscards.com/sellers/orders');
+    }
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP: ') > -1)) {
+      await open('https://www.mycardpost.com/edvedafi/orders');
+    }
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay: ') > -1)) {
+      await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
+    }
+
+    finish(`Processed ${orders.length} orders`);
     console.log(
       chalkTable(
         {
@@ -119,17 +141,18 @@ try {
             { field: 'platform', name: 'Sold On' },
           ],
         },
-        await buildTableData(orders, oldSales),
+        output,
       ),
     );
-    update('Open external sites');
-    finish(`Processed ${orders.length} orders`);
   } else {
     finish('No orders to process');
   }
 } catch (e) {
   error(e);
 } finally {
+  if (fs.existsSync('oldSales.json')) {
+    fs.removeSync('oldSales.json');
+  }
   await shutdown();
   process.exit();
 }

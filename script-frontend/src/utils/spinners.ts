@@ -156,11 +156,12 @@ export const useSpinners = (processName: string, color: ChalkInstance | string =
       showSpinner(`${key}-${name}`, colorFn.inverse(`${message}`));
       return {
         update: (addition: string) => updateSpinner(`${key}-${name}`, colorFn.inverse(`${message} (${addition})`)),
-        finish: (message?: string) => finishSpinner(`${key}-${name}`, message ? colorFn(`${message}`) : ''),
+        finish: (addition?: string) =>
+          finishSpinner(`${key}-${name}`, addition ? colorFn(`${message} :: ${addition}`) : ''),
         error: (info: string | Error | unknown, addition: string = message) => {
           if (info instanceof Error) {
-            errorSpinner(`${key}-${name}`, colorFn(`${addition} (${info.message})`));
             log(colorFn, info);
+            errorSpinner(`${key}-${name}`, colorFn(`${addition} (${info.message})`));
             throw info;
           } else {
             errorSpinner(`${key}-${name}`, colorFn(`${info} ${addition}`));
@@ -168,10 +169,6 @@ export const useSpinners = (processName: string, color: ChalkInstance | string =
         },
       };
     },
-    // updateSpinner: (name: string, message: string) => updateSpinner(`${key}-${name}`, colorFn.inverse(`${message}`)),
-    // finishSpinner: (name: string, message: string) =>
-    //   finishSpinner(`${key}-${name}`, message ? colorFn(`${message}`) : ''),
-    // errorSpinner: (name: string, message: string) => errorSpinner(`${key}-${name}`, colorFn(`${message}`)),
     log: (...args: unknown[]) => log(colorFn, ...args),
   };
 };

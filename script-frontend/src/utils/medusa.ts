@@ -182,8 +182,6 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
   if (!productVariant.product) throw 'No product to update';
 
   let response;
-  log('saving: ');
-  log(productVariant.metadata);
   if (productVariant.prices.length > 0) {
     try {
       response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
@@ -243,41 +241,21 @@ export async function getRegion(regionName: string): Promise<string> {
 }
 
 export async function startSync(categoryId: string, only: string[] = []) {
-  const { update, finish } = showSpinner('sync-category', `Syncing ${categoryId}`);
-  update('Starting Sync');
-  const context: { category: string; only?: string[] } = {
-    category: categoryId,
-  };
-  if (only && only.length > 0) {
-    context.only = only;
-  }
-  const response = await medusa.admin.custom.post('/sync', context);
-
-  update('Sync Started');
-  await waitForBatches(response.job);
-  finish('Sync Complete');
+  return runBatches('sync', only, { category: categoryId });
 }
 
 export async function getSales(only: string[] = []) {
-  const { update, finish } = showSpinner('sync-sales', `Getting Sales`);
-  update('Starting Sync');
-  const context: { only?: string[] } = {};
-  if (only && only.length > 0) {
-    context.only = only;
-  }
-  const response = await medusa.admin.custom.post('/sales', context);
-
-  update('Sales Fetch Started');
-  await waitForBatches(response.result);
-  finish('Sales Fetch Complete');
+  return runBatches('sales', only);
 }
 
-async function waitForBatches(batches: BatchJob[]) {
+async function runBatches(type: string, only: string[] = [], context: { [key: string]: unknown } = {}): Promise<void> {
+  if (only.length > 0) {
+    context.only = only;
+  }
+  const response = await medusa.admin.custom.post(type, context);
   await Promise.all(
-    batches.map(async (batch: BatchJob) => {
+    response.result.map(async (batch: BatchJob) => {
       let job = batch;
-      // console.log('setting up watchier for ');
-      // console.log(job);
       const { product_category } = job.context?.category_id
         ? await medusa.admin.productCategories.retrieve(job.context?.category_id)
         : { product_category: undefined };
@@ -298,7 +276,7 @@ async function waitForBatches(batches: BatchJob[]) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       if (job.status === 'completed') {
-        finish(`${job.type}::${job.context?.category_id} Complete`);
+        finish(`${job.type}::${job.id} Complete`);
       } else {
         error(job.status);
       }
@@ -448,6 +426,12 @@ export async function getOrders(): Promise<Order[]> {
 }
 
 export async function completeOrder(order: Order): Promise<Order[]> {
+  // if (order.items && order.items?.length > 0) {
+  //   await medusa.admin.orders.createFulfillment(order.id, {
+  //     location_id: await getStockLocationId(),
+  //     items: order.items.map((li) => ({ item_id: li.id, quantity: li.quantity })),
+  //   });
+  // }
   const response = await medusa.admin.orders.complete(order.id);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.orders;

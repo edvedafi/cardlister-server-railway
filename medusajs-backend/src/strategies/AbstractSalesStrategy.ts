@@ -3,12 +3,14 @@ import { AxiosInstance } from 'axios';
 import eBayApi from 'ebay-api';
 import AbstractSiteStrategy from './AbstractSiteStrategy';
 import {
+  Cart,
   CartService,
   CustomerService,
   DraftOrder,
   DraftOrderService,
   LineItem,
   LineItemService,
+  Order,
   OrderService,
 } from '@medusajs/medusa';
 import SyncService from '../services/sync';
@@ -131,49 +133,28 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
         .filter((order) => order.lineItems.length > 0);
       this.log(`Converting ${systemOrders.length} Orders`);
 
-      const orders = await Promise.all(
-        systemOrders.map((systemOrder) =>
-          this.atomicPhase_(async () => {
-            const items: Item[] = [];
-            const hasDraft = (await this.draftOrderService.list({})).find(
-              (draft) => draft.idempotency_key === systemOrder.id,
-            );
+      const orders: Order[] = [];
+      for (const systemOrder of systemOrders) {
+        await this.atomicPhase_(async () => {
+          const items: Item[] = [];
+          const hasDraft = (await this.draftOrderService.list({})).find(
+            (draft) => draft.idempotency_key === systemOrder.id,
+          );
 
-            let draftOrder: DraftOrder;
-            if (hasDraft) {
-              this.log(`Draft order ${hasDraft.idempotency_key} already exists in ${hasDraft.id}`);
-              if (hasDraft.status === 'open') {
-                draftOrder = hasDraft;
-              }
-            } else {
-              this.progress('Converting Orders');
-              for (const lineItem of systemOrder.lineItems) {
-                try {
-                  this.log(`Looking for variant for ${lineItem.sku}`);
-                  const variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {});
-                  if (!variant) {
-                    this.log(`Could not find variant for ${lineItem.sku}`);
-                    items.push({
-                      title: lineItem.title,
-                      quantity: lineItem.quantity,
-                      unit_price: lineItem.unit_price,
-                      metadata: {
-                        sku: lineItem.sku,
-                      },
-                    });
-                  } else {
-                    this.log(`Found variant ${variant.id} for ${lineItem.sku}`);
-                    items.push({
-                      variant_id: variant.id,
-                      quantity: lineItem.quantity,
-                      unit_price: lineItem.unit_price,
-                      metadata: {
-                        sku: lineItem.sku,
-                      },
-                    });
-                  }
-                } catch (e) {
-                  this.log(`Error looking for variant for ${lineItem.sku}`, e);
+          let draftOrder: DraftOrder;
+          if (hasDraft) {
+            this.log(`Draft order ${hasDraft.idempotency_key} already exists in ${hasDraft.id}`);
+            if (hasDraft.status === 'open') {
+              draftOrder = hasDraft;
+            }
+          } else {
+            this.progress('Converting Orders');
+            for (const lineItem of systemOrder.lineItems) {
+              try {
+                this.log(`Looking for variant for ${lineItem.sku}`);
+                const variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {});
+                if (!variant) {
+                  this.log(`Could not find variant for ${lineItem.sku}`);
                   items.push({
                     title: lineItem.title,
                     quantity: lineItem.quantity,
@@ -182,44 +163,108 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                       sku: lineItem.sku,
                     },
                   });
+                } else {
+                  this.log(`Found variant ${variant.id} for ${lineItem.sku}`);
+                  items.push({
+                    variant_id: variant.id,
+                    quantity: lineItem.quantity,
+                    unit_price: lineItem.unit_price,
+                    metadata: {
+                      sku: lineItem.sku,
+                    },
+                  });
                 }
-              }
-
-              this.progress('Creating Draft');
-              const customers = await this.customerService.list({ email: systemOrder.customer.email });
-              const createOrderRequest = {
-                customer_id: customers[0]?.id,
-                email: systemOrder.customer.email,
-                region_id: await this.getRegionId(),
-                shipping_methods: [],
-                items: items,
-                no_notification_order: true,
-                idempotency_key: systemOrder.id,
-                metadata: {
-                  username: systemOrder.customer.username,
-                  platform: `${(<typeof SaleStrategy>this.constructor).listingSite} - ${systemOrder.customer.username}`,
-                },
-              };
-              draftOrder = await this.draftOrderService.create(createOrderRequest);
-            }
-
-            if (draftOrder) {
-              if (draftOrder.order_id) {
-                return await this.orderService.retrieve(draftOrder.order_id);
-              } else {
-                await this.cartService.setPaymentSessions(draftOrder.cart_id);
-                const cart = await this.cartService.authorizePayment(draftOrder.cart_id, {});
-                const order = await this.orderService.createFromCart(cart.id);
-                await this.draftOrderService.registerCartCompletion(draftOrder.id, order.id);
-                return {
-                  ...order,
-                  items,
-                };
+              } catch (e) {
+                this.log(`Error looking for variant for ${lineItem.sku}`, e);
+                items.push({
+                  title: lineItem.title,
+                  quantity: lineItem.quantity,
+                  unit_price: lineItem.unit_price,
+                  metadata: {
+                    sku: lineItem.sku,
+                  },
+                });
               }
             }
-          }, 'READ UNCOMMITTED'),
-        ),
-      );
+
+            this.progress('Creating Draft');
+            const customers = await this.customerService.list({ email: systemOrder.customer.email });
+            const createOrderRequest = {
+              customer_id: customers[0]?.id,
+              email: systemOrder.customer.email,
+              region_id: await this.getRegionId(),
+              shipping_methods: [],
+              items: items,
+              no_notification_order: true,
+              idempotency_key: systemOrder.id,
+              metadata: {
+                username: systemOrder.customer.username,
+                platform: `${(<typeof SaleStrategy>this.constructor).listingSite} - ${systemOrder.customer.username}`,
+              },
+            };
+            draftOrder = await this.draftOrderService.create(createOrderRequest);
+          }
+
+          if (draftOrder) {
+            if (draftOrder.order_id) {
+              return await this.orderService.retrieve(draftOrder.order_id);
+            } else {
+              let cart: Cart;
+              let order: Order;
+              try {
+                cart = await this.cartService.retrieve(draftOrder.cart_id);
+                if (!cart?.payment_authorized_at) {
+                  try {
+                    await this.cartService.setPaymentSessions(draftOrder.cart_id);
+                  } catch (e) {
+                    this.log(`Error setting payment sessions for draft ${draftOrder.id}`, e);
+                    throw e;
+                  }
+                  try {
+                    cart = await this.cartService.authorizePayment(draftOrder.cart_id, {});
+                  } catch (e) {
+                    this.log(`Error authorizing payment for draft ${draftOrder.id}`, e);
+                    throw e;
+                  }
+                }
+                try {
+                  order = await this.orderService.createFromCart(cart.id);
+                } catch (e) {
+                  this.log(`Error creating order from cart ${cart.id}`, e);
+                  throw e;
+                }
+                try {
+                  await this.draftOrderService.registerCartCompletion(draftOrder.id, order.id);
+                } catch (e) {
+                  this.log(`Error registering cart completion for draft ${draftOrder.id}`, e);
+                  throw e;
+                }
+                try {
+                  order = await this.orderService.capturePayment(cart.id);
+                } catch (e) {
+                  this.log(`Error capturing payment for draft ${draftOrder.id}`, e);
+                  throw e;
+                }
+                orders.push(order);
+              } catch (e) {
+                this.log(`Draft Order: ${JSON.stringify(draftOrder, null, 2)}`);
+                if (cart) {
+                  this.log(`Cart: ${JSON.stringify(cart, null, 2)}`);
+                } else {
+                  this.log('No Cart');
+                }
+                if (order) {
+                  this.log(`Order: ${JSON.stringify(order, null, 2)}`);
+                } else {
+                  this.log('No Order');
+                }
+                //TODO Need to handle in a trackable way
+                this.log(`Error creating order from draft ${draftOrder.id}`, e);
+              }
+            }
+          }
+        }, 'READ UNCOMMITTED');
+      }
 
       this.progress('Syncing Categories');
       const listedItems = (
@@ -259,7 +304,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
         await this.syncService.sync({
           sku: skus,
           user: batchJob.created_by,
-          only: ['test'],
+          // only: ['test'],
         });
       }
 

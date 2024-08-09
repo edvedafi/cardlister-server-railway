@@ -22,7 +22,7 @@ class SyncService extends TransactionBaseService {
     this.logger = logger;
   }
 
-  public async sync(request: SyncRequest): Promise<{ categories: string[]; responses: BatchJob[] }> {
+  public async sync(request: SyncRequest): Promise<BatchJob[]> {
     // noinspection JSVoidFunctionReturnValueUsed
     const activityId = this.logger.activity(`Running Sync on ${JSON.stringify(request)}`);
     const update = (message: string) => this.logger.progress(activityId, `SYNC - ${message}`);
@@ -149,7 +149,7 @@ class SyncService extends TransactionBaseService {
     }
     const displayableCategories = Array.from(categories);
     this.logger.success(activityId, `Sync Started for ${JSON.stringify(displayableCategories)} categories`);
-    return { categories: displayableCategories, responses };
+    return responses;
   }
 }
 
