@@ -199,18 +199,6 @@ abstract class AbstractListingStrategy<
     );
     return isNaN(quantityFromService) ? 0 : quantityFromService;
   }
-
-  protected getPrice(variant: ProductVariant): number {
-    let price = variant.prices?.find((p) => p.region_id === this.region)?.amount;
-    if (!price) {
-      this.log(`Price not found for variant ${variant.id} in region ${this.region}`); //TODO Need to handle this in a recoverable way
-      price = variant.prices?.find((p) => !p.region_id)?.amount;
-    }
-
-    if (!price) throw new Error(`Unable to find price of variant ${JSON.stringify(variant, null, 2)}`);
-
-    return price / 100;
-  }
 }
 
 export type QuantityOptions = { sku: string; variant?: never } | { sku?: never; variant: ProductVariant };
