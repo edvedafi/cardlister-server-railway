@@ -1,7 +1,6 @@
-import { getCategories, getProduct, getProductVariant, getProductVariantBySKU, getRootCategory } from './medusa';
+import { getCategories, getProduct, getProductVariant, getRootCategory } from './medusa';
 import type { Order, ProductCategory } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
-import { getSingleListingInfo } from '../old-scripts/firebase';
 import type { ChalkInstance } from 'chalk';
 
 const color = chalk.greenBright;
@@ -333,6 +332,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
             (cardKey) =>
               // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
               (card[cardKey] =
+                // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
                 cardKey === 'platform' ? orderColor(card.platform)(card.platform) : color(card[cardKey])),
           );
           finalDisplay.push(card);
