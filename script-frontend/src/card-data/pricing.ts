@@ -21,7 +21,7 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
     await logPrice('BSC');
     await logPrice('SportLots');
     if (await ask('Use Current Pricing', true)) {
-      return [];
+      return currentPrices;
     }
   } else {
     if (await ask('Use common card pricing', true)) {

@@ -64,20 +64,14 @@ try {
     const oldSales: OldSale[] = [];
     for (const order of orders) {
       if (!order.items) throw new Error('Order has no items');
-      log('Items', order);
       for (const item of order.items) {
         let variant = item.variant;
         if (item.variant_id && !variant) {
           variant = await getProductVariant(item.variant_id);
         }
-        // if (!variant && item.metadata?.sku) {
-        //   variant = await getProductVariantBySKU(item.metadata?.sku);
-        // }
         if (variant) {
-          log(`Found variant for ${item.title}`);
           item.variant = variant;
         } else {
-          log(`Could not find variant for ${JSON.stringify(item)}`);
           const cardFromTitle = convertTitleToCard(item.title);
           const fuzzy = await getSingleListingInfo(cardFromTitle);
           if (fuzzy) {
