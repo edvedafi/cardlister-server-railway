@@ -90,15 +90,16 @@ const askInternal = async (
         answer = await input({ message: displayText, default: defaultAnswer });
       }
     }
-  }
 
-  if (maxLength && answer.length > maxLength) {
-    if (cancellable) {
-      answer = ask(questionText, answer, { maxLength });
-    } else {
-      answer = await ask(questionText, answer, { maxLength });
+    if (maxLength && typeof answer === 'string' && answer.length > maxLength) {
+      if (cancellable) {
+        answer = askInternal(questionText, answer, { maxLength });
+      } else {
+        answer = await askInternal(questionText, answer, { maxLength });
+      }
     }
   }
+
 
   resumeSpinners();
   return answer;
