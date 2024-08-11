@@ -125,6 +125,14 @@ export async function getTitles(card: Metadata): Promise<Titles> {
     if (title.length > maxTitleLength) {
         title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${printRun}${graded}`;
     }
+    if (title.length > maxTitleLength && card.insert) {
+        insert = add((<string>card.insert).replace(' Refractor', ''));
+        title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${printRun}${graded}`;
+    }
+    if (title.length > maxTitleLength && card.insert) {
+        insert = add((<string>card.insert).replace('Rookie', 'RC'));
+        title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${printRun}${graded}`;
+    }
 
     title = title.replace(/ {2}/g, ' ');
 
