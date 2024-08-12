@@ -1,7 +1,6 @@
 import type { MoneyAmount } from '@medusajs/client-types';
 import { ask } from '../utils/ask';
 import { getRegion } from '../utils/medusa';
-import { getBasePricing } from './cardData';
 import { useSpinners } from '../utils/spinners';
 
 const { log } = useSpinners('Pricing', '#85BB65');
@@ -13,6 +12,7 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
   };
   if (currentPrices && currentPrices.length > 1) {
     log('Current Pricing:');
+    log(JSON.stringify(currentPrices, null, 2));
     const logPrice = async (region: string) => {
       log(`  ${region}: ${await currentPrice(region)}`);
     };
@@ -26,6 +26,8 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
   } else {
     if (await ask('Use common card pricing', true)) {
       return await getBasePricing();
+    } else {
+      currentPrices = await getBasePricing();
     }
   }
   const getPrice = async (region: string, defaultPrice: number): Promise<MoneyAmount> => {
@@ -47,4 +49,30 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
     await getPrice('BSC', 25),
     await getPrice('SportLots', 18),
   ];
+}
+
+let basePricing: MoneyAmount[];
+
+export async function getBasePricing(): Promise<MoneyAmount[]> {
+  if (!basePricing) {
+    basePricing = [
+      {amount: 99, region_id: await getRegion('ebay')} as MoneyAmount,
+      {amount: 100, region_id: await getRegion('MCP')} as MoneyAmount,
+      {amount: 25, region_id: await getRegion('BSC')} as MoneyAmount,
+      {amount: 18, region_id: await getRegion('SportLots')} as MoneyAmount,
+    ];
+  }
+  return basePricing;
+}
+
+let commonPricing: MoneyAmount[];
+
+export async function getCommonPricing() {
+  if (!commonPricing) {
+    commonPricing = [
+      {amount: 25, region_id: await getRegion('BSC')} as MoneyAmount,
+      {amount: 18, region_id: await getRegion('SportLots')} as MoneyAmount,
+    ];
+  }
+  return commonPricing;
 }

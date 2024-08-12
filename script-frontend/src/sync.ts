@@ -41,7 +41,7 @@ try {
   const set = await findSet(true);
 
   if (await ask('Update Defaults?', false)) {
-    await updateCategory(set.category.id, await updateSetDefaults());
+    await updateCategory(set.category.id, await updateSetDefaults(set.category.metadata || undefined));
   }
 
   if (await ask(`Build Products for ${set.category.name}?`, true)) {

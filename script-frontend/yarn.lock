@@ -1503,7 +1503,7 @@
 
 "@types/minimist@^1.2.5":
   version "1.2.5"
-  resolved "https://registry.npmjs.org/@types/minimist/-/minimist-1.2.5.tgz"
+  resolved "https://registry.yarnpkg.com/@types/minimist/-/minimist-1.2.5.tgz#ec10755e871497bcd83efe927e43ec46e8c0747e"
   integrity sha512-hov8bUuiLiyFPGyFPE1lwWhmzYbirOXQNNo40+y3zow8aFVTeyn3VWL0VFFfdNddA8S4Vf0Tc062rzyNr7Paag==
 
 "@types/mute-stream@^0.0.4":

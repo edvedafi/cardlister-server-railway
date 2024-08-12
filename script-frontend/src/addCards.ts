@@ -8,6 +8,7 @@ import { onShutdown } from 'node-graceful-shutdown';
 import { findSet } from './card-data/setData';
 import { processSet } from './card-data/listSet';
 import { getFiles, getInputs } from './utils/inputs';
+import minimist from "minimist";
 
 configDotenv();
 
@@ -29,7 +30,9 @@ try {
 
   // Set up full run information
   update('Gathering Inputs');
-  const input_directory = await getInputs();
+  const args = minimist(process.argv.slice(2));
+  const input_directory = await getInputs(args);
+
   update('Gathering Set Data');
   const setData = await findSet();
 
