@@ -12,7 +12,6 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
   };
   if (currentPrices && currentPrices.length > 1) {
     log('Current Pricing:');
-    log(JSON.stringify(currentPrices, null, 2));
     const logPrice = async (region: string) => {
       log(`  ${region}: ${await currentPrice(region)}`);
     };

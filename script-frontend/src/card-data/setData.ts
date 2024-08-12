@@ -307,7 +307,6 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
 export async function updateSetDefaults(metadata: Metadata = {}) {
   const { finish, error } = showSpinner('updateSetDefaults', 'Updating Set Defaults');
 
-  log(`Metadata ${JSON.stringify(metadata)}`);
   try {
     const update = async (field: string) => {
       const response = await ask(field, metadata[field]);
