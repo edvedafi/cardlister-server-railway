@@ -6,15 +6,14 @@ import {
     getInventory,
     getInventoryQuantity,
     getProductVariant,
-    getRegion,
     updateInventory,
     updatePrices,
     updateProductImages,
     updateProductVariant,
 } from '../utils/medusa';
 import {useSpinners} from '../utils/spinners';
-import type {InventoryItemDTO, MoneyAmount, Product, ProductVariant} from '@medusajs/client-types';
-import {getPricing} from './pricing';
+import type {InventoryItemDTO, Product, ProductVariant} from '@medusajs/client-types';
+import {getCommonPricing, getPricing} from './pricing';
 
 const {log} = useSpinners('card-data', chalk.whiteBright);
 
@@ -293,8 +292,6 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
             ? productVariant.prices
             : setData.category?.metadata?.prices,
     );
-    log(`Prices: ${prices.map((price) => `${price.region_id}: ${price.amount}`).join(', ')}`);
-    log(`PV Before: ${productVariant.prices?.map((price) => `${price.region_id}: ${price.amount}`).join(', ')}`);
     if (productVariant.prices) {
         productVariant.prices = prices.filter((price) =>
                 !productVariant.prices?.find((p) => p.region_id === price.region_id) ||
@@ -341,32 +338,6 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
         return card;
     }
     throw new Error('No card found');
-}
-
-let basePricing: MoneyAmount[];
-
-export async function getBasePricing(): Promise<MoneyAmount[]> {
-    if (!basePricing) {
-        basePricing = [
-            {amount: 99, region_id: await getRegion('ebay')} as MoneyAmount,
-            {amount: 100, region_id: await getRegion('MCP')} as MoneyAmount,
-            {amount: 25, region_id: await getRegion('BSC')} as MoneyAmount,
-            {amount: 18, region_id: await getRegion('SportLots')} as MoneyAmount,
-        ];
-    }
-    return basePricing;
-}
-
-let commonPricing: MoneyAmount[];
-
-export async function getCommonPricing() {
-    if (!commonPricing) {
-        commonPricing = [
-            {amount: 25, region_id: await getRegion('BSC')} as MoneyAmount,
-            {amount: 18, region_id: await getRegion('SportLots')} as MoneyAmount,
-        ];
-    }
-    return commonPricing;
 }
 
 export async function saveListing(productVariant: ProductVariant, images: string[], quantity: string) {

@@ -3,17 +3,16 @@ import { ensureDir } from 'fs-extra';
 import unzip from 'decompress';
 import chalk from 'chalk';
 import { useSpinners } from './spinners.js';
+import {minimist} from "zx";
+import ParsedArgs = minimist.ParsedArgs;
 
 const { showSpinner, log } = useSpinners('trim', chalk.cyan);
 
-export async function getInputs() {
+export async function getInputs(args: ParsedArgs) {
   const {finish} = showSpinner('inputs', 'Getting Input Information');
-  if (process.argv.length > 2) {
-    // console.log(process.argv[2]);
-    const zipFile: string = process.argv[2];
-    if (zipFile === '-r') {
-      return await getInputDirectory();
-    } else if (zipFile.endsWith('.zip')) {
+  if (args._.length > 0) {
+    const zipFile: string = args._[0];
+    if (zipFile.endsWith('.zip')) {
       const zipDir = zipFile?.split('/')?.pop()?.split('.')[0].replace(/[\s()]/g, '_');
       const dir = `input/${zipDir}/`;
       await ensureDir(dir);

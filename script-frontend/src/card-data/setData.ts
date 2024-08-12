@@ -304,11 +304,10 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
   }
 }
 
-export async function updateSetDefaults() {
+export async function updateSetDefaults(metadata: Metadata = {}) {
   const { finish, error } = showSpinner('updateSetDefaults', 'Updating Set Defaults');
 
-  const metadata: Metadata = {};
-
+  log(`Metadata ${JSON.stringify(metadata)}`);
   try {
     const update = async (field: string) => {
       const response = await ask(field, metadata[field]);
@@ -325,11 +324,7 @@ export async function updateSetDefaults() {
     await update('features');
     await update('printRun');
 
-    const current: MoneyAmount[] = <MoneyAmount[]>metadata.prices;
-    const prices: MoneyAmount[] = await getPricing(current);
-    if (prices && prices.length > 1) {
-      metadata.prices = prices;
-    }
+    metadata.prices = await getPricing(<MoneyAmount[]>metadata.prices);
 
     finish();
   } catch (e) {
