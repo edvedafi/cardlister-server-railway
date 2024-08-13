@@ -301,7 +301,6 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
     } else {
         productVariant.prices = prices;
     }
-    log(`PV After: ${productVariant.prices.map((price) => `${price.region_id}: ${price.amount}`).join(', ')}`);
 
     const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
 

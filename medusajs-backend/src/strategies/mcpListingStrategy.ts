@@ -3,6 +3,7 @@ import process from 'node:process';
 import AbstractListingStrategy from './AbstractListingStrategy';
 import axios from 'axios';
 import JSZip from 'jszip';
+import _ from "lodash";
 
 class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
   static identifier = 'mcp-strategy';
@@ -100,9 +101,10 @@ class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
       if (siteCount === 0) {
         await mcp.$('button=Add Card').click();
         const form = await mcp.$('//form[@action="https://mycardpost.com/add-card"]');
-        const frontImage = await this.tempImage(product.images[0].url, mcp);
+        const images = _.sortBy(product.images, 'url').map((image) => image.url)
+        const frontImage = await this.tempImage(images[0], mcp);
         await form.$('#front_image').setValue(frontImage);
-        const backImage = await this.tempImage(product.images[1].url, mcp);
+        const backImage = await this.tempImage(images[1], mcp);
         await form.$('#back_image').setValue(backImage);
         await form.$('textarea[name="name"]').setValue(`${product.title} [${productVariant.sku}]`);
         await form.$('input[name="price"]').setValue(price);
