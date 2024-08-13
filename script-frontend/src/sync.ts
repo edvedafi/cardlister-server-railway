@@ -49,7 +49,7 @@ try {
   }
 
   if (await ask(`Sync All listing from ${set.category.name}?`, true)) {
-    await startSync(set.category.id);
+    await startSync(set.category.id, args.only?.split(','));
   } else {
     const answers = await checkbox({
       message: 'Select Platforms to Sync',

@@ -38,7 +38,8 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> 
           lineItems: [],
         };
         i = 15; // skip a bunch of junk
-        while (i + 6 < divs.length) {
+        this.log(`Processing divs: ${divs.length}`);
+        while (i + 6 <= divs.length) {
           i++; //first is a blank div
           const quantity = await divs[i++]?.getText();
           const title = await divs[i++]?.getText();
