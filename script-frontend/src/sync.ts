@@ -52,7 +52,7 @@ try {
   }
 
   if (args.d) {
-    await deleteCardsFromSet(set.category.id);
+    await deleteCardsFromSet(set.category);
   } else {
     if (await ask(`Build Products for ${set.category.name}?`, true)) {
       await buildSet(set);

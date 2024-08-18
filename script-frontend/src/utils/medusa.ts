@@ -131,6 +131,7 @@ export type Variation = {
 };
 
 export async function createProduct(product: Product, variations: Variation[] = []): Promise<Product> {
+  log('Creating SKUs: ', variations.map((v) => v.sku).join(', '));
   const payload = {
     title: product.title,
     description: product.description as string,
@@ -451,10 +452,29 @@ export async function completeOrder(order: Order): Promise<Order[]> {
   return response.orders;
 }
 
-export async function deleteCardsFromSet(categoryId: string) {
-  const cards = await getProducts(categoryId);
-  const i = 0;
+export async function deleteCardsFromSet(category: ProductCategory) {
   const { update, finish } = showSpinner('delete', 'Deleting Cards');
+  const cards = await getProducts(category.id);
+  let offset = 0;
+  let inventoryResponse;
+  while (!inventoryResponse || inventoryResponse.count > offset) {
+    inventoryResponse = await medusa.admin.inventoryItems.list({ limit: 1000, offset: offset });
+    const inventoryItems = inventoryResponse.inventory_items;
+    update('Inventory Items');
+    for (const inventoryItem of inventoryItems) {
+      // log(`Checking ${inventoryItem.sku} for BIN ${category.metadata?.bin}`);
+      if (inventoryItem.sku?.startsWith(`${category.metadata?.bin}|`)) {
+        // log(`Deleting ${inventoryItem.sku} from inventory`);
+        const { inventory_item } = await medusa.admin.inventoryItems.listLocationLevels(inventoryItem.id);
+        for (const level of inventory_item.location_levels) {
+          await medusa.admin.inventoryItems.deleteLocationLevel(level.inventory_item_id, level.location_id);
+        }
+        await medusa.admin.inventoryItems.delete(inventoryItem.id);
+      }
+    }
+    offset += 1000;
+  }
+  const i = 0;
   await Promise.all(
     cards.map((card) => {
       update(`${i}/${cards.length}`);
@@ -462,4 +482,23 @@ export async function deleteCardsFromSet(categoryId: string) {
     }),
   );
   finish(`Deleted ${cards.length} cards`);
+}
+
+export async function getNextBin() {
+  const bins: number[] = [];
+  const checkCategory = async (parent: string) => {
+    const children = await getCategories(parent);
+    for (const category of children) {
+      if (category.metadata && category.metadata.bin) {
+        const newBin = parseInt(category.metadata?.bin);
+        bins.push(newBin);
+      }
+      await checkCategory(category.id);
+    }
+  };
+  await checkCategory(await getRootCategory());
+  let bin = 1;
+  while (bins.includes(bin)) {
+    bin++;
+  }
 }
