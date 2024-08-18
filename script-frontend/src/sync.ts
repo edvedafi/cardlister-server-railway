@@ -5,11 +5,18 @@ import { shutdownSportLots } from './listing-sites/sportlots';
 import { useSpinners } from './utils/spinners';
 import { buildSet, findSet, updateSetDefaults } from './card-data/setData';
 import initializeFirebase from './utils/firebase';
-import { startSync, updateCategory } from './utils/medusa';
+import { deleteCardsFromSet, startSync, updateCategory } from './utils/medusa';
 import { ask } from './utils/ask';
 import { checkbox } from '@inquirer/prompts';
 
-const args = minimist(process.argv.slice(2));
+const args = minimist(process.argv.slice(2), {
+  boolean: ['d'],
+  string: ['o'],
+  alias: {
+    d: 'delete',
+    o: 'only',
+  },
+});
 
 $.verbose = false;
 
@@ -44,24 +51,32 @@ try {
     await updateCategory(set.category.id, await updateSetDefaults(set.category.metadata || undefined));
   }
 
-  if (await ask(`Build Products for ${set.category.name}?`, true)) {
-    await buildSet(set);
-  }
-
-  if (await ask(`Sync All listing from ${set.category.name}?`, true)) {
-    await startSync(set.category.id, args.only?.split(','));
+  if (args.d) {
+    await deleteCardsFromSet(set.category.id);
   } else {
-    const answers = await checkbox({
-      message: 'Select Platforms to Sync',
-      choices: [
-        { name: 'SportLots', value: 'sportlots', checked: true },
-        { name: 'BuySportsCards', value: 'bsc', checked: true },
-        { name: 'ebay', value: 'ebay', checked: true },
-        { name: 'MyCardPost', value: 'mcp', checked: true },
-      ],
-    });
-    if (answers && answers.length > 0) {
-      await startSync(set.category.id, answers);
+    if (await ask(`Build Products for ${set.category.name}?`, true)) {
+      await buildSet(set);
+    }
+
+    if (!args.only && (await ask(`Sync All listing from ${set.category.name}?`, true))) {
+      await startSync(set.category.id, args.only?.split(','));
+    } else {
+      const answers = await checkbox({
+        message: 'Select Platforms to Sync',
+        choices: [
+          {
+            name: 'SportLots',
+            value: 'sportlots',
+            checked: args.only.indexOf('sportlots') > -1 || args.only.indexOf('sl') > -1,
+          },
+          { name: 'BuySportsCards', value: 'bsc', checked: args.only.indexOf('bsc') > -1 },
+          { name: 'ebay', value: 'ebay', checked: args.only.indexOf('ebay') > -1 },
+          { name: 'MyCardPost', value: 'mcp', checked: args.only.indexOf('mcp') > -1 },
+        ],
+      });
+      if (answers && answers.length > 0) {
+        await startSync(set.category.id, answers);
+      }
     }
   }
 } finally {
