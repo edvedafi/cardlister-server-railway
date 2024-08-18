@@ -347,6 +347,12 @@ export async function saveListing(productVariant: ProductVariant, images: string
     id: productVariant.product.id,
     images: images,
   });
+  if (!productVariant.metadata) productVariant.metadata = {};
+  productVariant.metadata.frontImage = images.shift();
+  productVariant.metadata.backImage = images.shift();
+  if (images.length > 0) {
+    productVariant.metadata.extraImages = images;
+  }
   await updateProductVariant(productVariant);
   await updateInventory(listing, quantity);
   return listing;

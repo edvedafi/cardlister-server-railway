@@ -483,7 +483,7 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
             ];
             if (variationsBSC) {
               for (const variation of variationsBSC) {
-                const slVariation = variationsSL?.pop();
+                const slVariation = variationsSL?.shift();
                 const metadata = { ...product.metadata };
 
                 metadata.variationName = slVariation?.title.match(/\[(.*?)\]/)?.[1] || 'Variation';

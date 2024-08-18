@@ -33,6 +33,7 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
       offers?: {
         offerId: string;
         availableQuantity: number;
+        status: 'PUBLISHED' | 'UNPUBLISHED';
       }[];
     };
     try {
@@ -44,7 +45,12 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     if (offers && offers.offers && offers.offers.length > 0) {
       const offer = offers.offers[0];
       if (quantity === offer.availableQuantity) {
-        this.log(`No Updates needed for:: ${variant.sku}`);
+        if (offer.status === 'PUBLISHED') {
+          this.log(`No Updates needed for:: ${variant.sku}`);
+        } else {
+          //TODO This should update the offer to ensure it has the latest data
+          await eBay.sell.inventory.publishOffer(offer.offerId);
+        }
         return 0;
       } else if (quantity === 0) {
         try {
