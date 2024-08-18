@@ -29,7 +29,8 @@ export interface Card {
   players: string[];
   teamName: string; //TODO: remove this or the next line
   teams: string;
-  playerAttribute: string;
+  playerAttribute: string | string[];
+  playerAttributeDesc: string;
   id: string;
   sportlots?: string;
   features?: string;

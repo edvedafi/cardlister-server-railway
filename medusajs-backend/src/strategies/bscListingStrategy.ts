@@ -1,4 +1,4 @@
-import { Product, ProductCategory } from '@medusajs/medusa';
+import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 import { remote } from 'webdriverio';
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
@@ -99,9 +99,18 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
     let count = 0;
 
     for (const listing of listings) {
-      const product = products.find((product) => `${product.metadata.cardNumber}` === `${listing.card.cardNo}`);
-      if (product) {
-        const variant = product?.variants[0]; //TODO This will need to handle multiple variants
+      let product: Product | undefined;
+      let variant: ProductVariant | undefined;
+      if (listing.card.playerAttribute.indexOf('VAR') > -1) {
+        product = products.find((product) => {
+          variant = product.variants.find((variant) => `${variant.metadata.cardNumber}` === `${listing.card.cardNo}`);
+          return variant;
+        });
+      } else {
+        product = products.find((product) => `${product.metadata.cardNumber}` === `${listing.card.cardNo}`);
+        variant = product?.variants.find((variant) => variant.metadata.isBase);
+      }
+      if (product && variant) {
         const quantity = await this.getQuantity({ variant });
 
         if (quantity !== listing.availableQuantity || (listing.sellerSku && listing.sellerSku !== variant.sku)) {
@@ -112,15 +121,14 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
             sellerSku: variant.sku,
           };
 
-          // TODO Fix images
-          if (product.images) {
-            const images = product.images.map((image) => image.url).sort();
-            if (images.length > 0 && (!listing.sellerImgFront || listing.sellerImgFront.indexOf('Default') > -1)) {
-              newListing.sellerImgFront = await this.postImage(api, `${images[0]}`);
-            }
-            if (images.length > 1 && (!listing.sellerImgBack || listing.sellerImgBack.indexOf('Default') > -1)) {
-              newListing.sellerImgBack = await this.postImage(api, `${images[1]}`);
-            }
+          if (
+            variant.metadata.frontImage &&
+            (!listing.sellerImgFront || listing.sellerImgFront.indexOf('Default') > -1)
+          ) {
+            newListing.sellerImgFront = await this.postImage(api, <string>variant.metadata.frontImage);
+          }
+          if (variant.metadata.backImage && (!listing.sellerImgBack || listing.sellerImgBack.indexOf('Default') > -1)) {
+            newListing.sellerImgBack = await this.postImage(api, <string>variant.metadata.backImage);
           }
           updates.push(newListing);
         }

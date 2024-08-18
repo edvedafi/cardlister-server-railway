@@ -1,4 +1,4 @@
-import { Product, ProductCategory } from '@medusajs/medusa';
+import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 import process from 'node:process';
 import AbstractListingStrategy from './AbstractListingStrategy';
 
@@ -90,9 +90,20 @@ class SportlotsListingStrategy extends AbstractListingStrategy<WebdriverIO.Brows
         .$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody')
         .$$('tr:has(td):not(:has(th))');
       for (const row of rows) {
-        const cardNumber = await row.$('td:nth-child(2)').getText();
+        const cardNumberCell = await row.$('td:nth-child(2)');
+        const cardNumber = await cardNumberCell.getText();
         const product = products.find((p) => p.metadata.cardNumber.toString() === cardNumber);
-        const variant = product?.variants[0]; //TODO This will need to handle multiple variants
+
+        const isVariation = await cardNumberCell
+          .getAttribute('class')
+          .then((classes) => classes.includes('smallcolorleft'));
+        let variant: ProductVariant | undefined;
+        if (isVariation) {
+          const title = await row.$('td:nth-child(3)').getText();
+          variant = product?.variants.find((v) => v.metadata.sportlots === title);
+        } else {
+          variant = product?.variants.find((v) => v.metadata.isBase);
+        }
         if (variant) {
           const quantity = await this.getQuantity({ variant });
 
