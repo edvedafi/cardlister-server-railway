@@ -168,7 +168,9 @@ export async function createProduct(product: Product, variations: Variation[] = 
 
 export async function updateProductImages(product: { id: string; images: string[] }): Promise<Product> {
   const response = await medusa.admin.products.update(product.id, {
-    images: product.images,
+    images: product.images.map(
+      (image) => `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${image}?alt=media`,
+    ),
   });
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
@@ -263,6 +265,7 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
   if (only.length > 0) {
     context.only = only;
   }
+  console.log(`Running ${type} batches with context: ${JSON.stringify(context)}`);
   const response = await medusa.admin.custom.post(type, context);
   await Promise.all(
     response.result.map(async (batch: BatchJob) => {
@@ -446,4 +449,17 @@ export async function completeOrder(order: Order): Promise<Order[]> {
   const response = await medusa.admin.orders.complete(order.id);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.orders;
+}
+
+export async function deleteCardsFromSet(categoryId: string) {
+  const cards = await getProducts(categoryId);
+  const i = 0;
+  const { update, finish } = showSpinner('delete', 'Deleting Cards');
+  await Promise.all(
+    cards.map((card) => {
+      update(`${i}/${cards.length}`);
+      return medusa.admin.products.delete(card.id);
+    }),
+  );
+  finish(`Deleted ${cards.length} cards`);
 }
