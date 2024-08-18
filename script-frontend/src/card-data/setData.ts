@@ -9,24 +9,25 @@ import {
   getBSCVariantTypeFilter,
   getBSCYearFilter,
 } from '../listing-sites/bsc.js';
-import { getSLCards, getSLSport, getSLBrand, getSLYear, getSLSet } from '../listing-sites/sportlots';
+import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear } from '../listing-sites/sportlots';
 import { ask, type AskSelectOption } from '../utils/ask';
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import {
-  getCategories,
-  getProductCardNumbers,
-  createProduct,
-  setCategoryActive,
   createCategory,
   createCategoryActive,
+  createProduct,
+  getCategories,
+  getProductCardNumbers,
+  getRootCategory,
+  setCategoryActive,
   updateCategory,
-  getRootCategory, type Variation,
+  type Variation,
 } from '../utils/medusa.js';
 import { getGroup } from '../listing-sites/firebase.js';
 import Queue from 'queue';
 import { type Card } from '../models/bsc';
 import { type SLCard } from '../models/cards';
-import { buildProductFromBSCCard } from './cardData';
+import { buildProductFromBSCCard, getTitles } from './cardData';
 import { getPricing } from './pricing';
 import type { MoneyAmount } from '@medusajs/client-types';
 
@@ -366,7 +367,7 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
     update('Building Products');
     const slCardOptions: AskSelectOption[] = slCards.map(
       (card): AskSelectOption => ({
-        value: card.cardNumber,
+        value: card.title,
         name: `${card.cardNumber} - ${card.title}`,
       }),
     );
@@ -384,12 +385,20 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
     const bscBase: Card[] = [];
     const bscVariations: { [key: string]: Card[] } = {};
     bscCards.forEach((card) => {
-      if (card.playerAttribute.indexOf('VAR') > -1) {
+      if (
+        card.playerAttribute.indexOf('VAR') > -1 ||
+        card.playerAttribute.indexOf('ERR') > -1 ||
+        card.playerAttribute.indexOf('COR') > -1
+      ) {
         const baseCardNumber = card.cardNo.slice(0, -1);
-        if (!bscVariations[baseCardNumber]) {
-          bscVariations[baseCardNumber] = [];
+        if (card.playerAttribute.indexOf('COR') > -1 && !bscBase.find((bscCard) => bscCard.cardNo === baseCardNumber)) {
+          bscBase.push(card);
+        } else {
+          if (!bscVariations[baseCardNumber]) {
+            bscVariations[baseCardNumber] = [];
+          }
+          bscVariations[baseCardNumber].push(card);
         }
-        bscVariations[baseCardNumber].push(card);
       } else {
         bscBase.push(card);
       }
@@ -409,13 +418,25 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
       }
     });
 
-    if (slBase.length !== bscBase.length) throw new Error(`Set counts do not match! BSC: ${bscCards.length} SL: ${slCards.length}`);
+    if (slBase.length !== bscBase.length) {
+      log(
+        'Extra Cards in BSC: ',
+        bscBase.filter((card) => !slBase.find((slCard) => slCard.cardNumber === card.cardNo)),
+      );
+      log(
+        'Extra Cards in SL: ',
+        slBase.filter((card) => !bscBase.find((bscCard) => bscCard.cardNo === card.cardNumber)),
+      );
+      throw new Error(`Set counts do not match! BSC: ${bscBase.length} SL: ${slBase.length}`);
+    }
 
     const cards: TempCard[] = await Promise.all(
       bscBase.map(async (card): Promise<TempCard> => {
         const slCard = slCards.find((slCard) => slCard.cardNumber === card.cardNo);
         const rtn: TempCard = { ...card };
-        if (!slCard) {
+        if (slCard) {
+          rtn.sportlots = slCard.title;
+        } else {
           rtn.sportlots = await ask(
             `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${
               card.cardNo
@@ -428,8 +449,8 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
       }),
     );
 
-
     const existing = await getProductCardNumbers(category.id);
+    log(existing);
     const queue = new Queue({ concurrency: 1, results: products, autostart: true });
     let hasQueueError: boolean | Error = false;
 
@@ -450,34 +471,78 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
             const product = await buildProductFromBSCCard(card, category);
             const variationsBSC = bscVariations[card.cardNo];
             const variationsSL = slVariations[card.cardNo];
-            const variations: Variation[] = [];
-            if ( variationsBSC || variationsSL) {
-              variationsBSC.forEach((variation: Card) => {
+            const variations: Variation[] = [
+              {
+                title: product.title,
+                sku: product.metadata?.sku,
+                metadata: {
+                  ...product.metadata,
+                  isBase: true,
+                },
+              },
+            ];
+            if (variationsBSC) {
+              for (const variation of variationsBSC) {
                 const slVariation = variationsSL?.pop();
-                const metadata = {...product.metadata};
+                const metadata = { ...product.metadata };
+
+                metadata.variationName = slVariation?.title.match(/\[(.*?)\]/)?.[1] || 'Variation';
                 metadata.cardNumber = variation.cardNo;
-                metadata.cardName = slVariation ? slVariation.title : `${metadata.cardName} Variation`;
+                metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
                 metadata.bsc = card.id;
                 metadata.sku = `${category.metadata?.bin}|${variation.cardNo}`;
-                if ( metadata.features ) {
+                if (metadata.features) {
                   metadata.features.push('Variation');
                 } else {
                   metadata.features = ['Variation'];
                 }
-                if ( slVariation ) {
+                if (slVariation) {
                   metadata.sportlots = slVariation.title;
                 }
 
+                const titles = await getTitles({ ...metadata, ...category.metadata });
+                metadata.description = `${titles.longTitle} ${variation.playerAttributeDesc}`;
                 //remove duplicates from metadata.features
-                metadata.features = metadata.features.filter((item: string, index: number) => metadata.features.indexOf(item) === index);
+                metadata.features = metadata.features.filter(
+                  (item: string, index: number) => metadata.features.indexOf(item) === index,
+                );
 
-                const slTitle = slVariation?.title.match(/\[(.*?)\]/)?.[1];
                 variations.push({
-                  title: slTitle || 'Variation',
+                  title: titles.title,
                   sku: `${category.metadata?.bin}|${variation.cardNo}`,
-                  metadata: metadata
+                  metadata: metadata,
                 });
-              });
+              }
+            }
+            if (variationsSL) {
+              for (const slVariation of variationsSL) {
+                const metadata = { ...product.metadata };
+
+                metadata.variationName = slVariation.title.match(/\[(.*?)\]/)?.[1];
+
+                metadata.cardNumber = slVariation.cardNumber + ['a', 'b', 'c', 'd', 'e', 'f', 'g'][variations.length];
+                metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
+                metadata.sku = `${category.metadata?.bin}|${metadata.cardNumber}`;
+                if (metadata.features) {
+                  metadata.features.push('Variation');
+                } else {
+                  metadata.features = ['Variation'];
+                }
+                metadata.sportlots = slVariation.title;
+
+                //remove duplicates from metadata.features
+                metadata.features = metadata.features.filter(
+                  (item: string, index: number) => metadata.features.indexOf(item) === index,
+                );
+
+                const titles = await getTitles({ ...metadata, ...category.metadata });
+                metadata.description = titles.longTitle;
+                variations.push({
+                  title: titles.title,
+                  sku: `${category.metadata?.bin}|${metadata.cardNumber}`,
+                  metadata: metadata,
+                });
+              }
             }
             const result = await createProduct(product, variations);
             update(`Saving Product ${++count}/${cards.length}`);

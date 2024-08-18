@@ -3,7 +3,6 @@ import process from 'node:process';
 import AbstractListingStrategy from './AbstractListingStrategy';
 import axios from 'axios';
 import JSZip from 'jszip';
-import _ from "lodash";
 
 class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
   static identifier = 'mcp-strategy';
@@ -101,15 +100,14 @@ class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
       if (siteCount === 0) {
         await mcp.$('button=Add Card').click();
         const form = await mcp.$('//form[@action="https://mycardpost.com/add-card"]');
-        const images = _.sortBy(product.images, 'url').map((image) => image.url)
-        const frontImage = await this.tempImage(images[0], mcp);
+        const frontImage = await this.tempImage(<string>productVariant.metadata.frontImage, mcp);
         await form.$('#front_image').setValue(frontImage);
-        const backImage = await this.tempImage(images[1], mcp);
+        const backImage = await this.tempImage(<string>productVariant.metadata.backImage, mcp);
         await form.$('#back_image').setValue(backImage);
-        await form.$('textarea[name="name"]').setValue(`${product.title} [${productVariant.sku}]`);
+        await form.$('textarea[name="name"]').setValue(`${productVariant.title} [${productVariant.sku}]`);
         await form.$('input[name="price"]').setValue(price);
         await form.$('select[name="sport"]').selectByVisibleText(category.metadata.sport as string);
-        for (const team of product.metadata.teams as string[]) {
+        for (const team of productVariant.metadata.teams as string[]) {
           await form.$(`//span[@role='textbox' and @data-placeholder='Type something']`).setValue(team);
         }
         const typeSelect = await form.$('#card_type');
@@ -121,18 +119,18 @@ class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
         // } else {
         await typeSelect.selectByVisibleText('Raw');
         // }
-        const features: string[] = (product.metadata.features as string[])?.map((f) => f.toLowerCase()) || [];
+        const features: string[] = (productVariant.metadata.features as string[])?.map((f) => f.toLowerCase()) || [];
         const featureInput = await form.$('#attribute_name');
         if (features.includes('rc')) {
           await featureInput.selectByVisibleText('Rookie');
         }
-        if (product.metadata.printRun > 0) {
+        if (productVariant.metadata.printRun > 0) {
           await featureInput.selectByVisibleText('Serial Numbered');
-          if (product.metadata.printRun === 1) {
+          if (productVariant.metadata.printRun === 1) {
             await featureInput.selectByVisibleText('1/1');
           }
         }
-        if (product.metadata.autographed) {
+        if (productVariant.metadata.autographed) {
           await featureInput.selectByVisibleText('Autograph');
         }
         if (features.includes('jersey') || features.includes('patch')) {
@@ -164,7 +162,9 @@ class McpListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
           await featureInput.selectByVisibleText('Jersey Numbered');
         }
 
-        await form.$('textarea[name="details"').setValue(`${product.description}\n\n[${productVariant.sku}]`);
+        await form
+          .$('textarea[name="details"')
+          .setValue(`${productVariant.metadata.description}\n\n[${productVariant.sku}]`);
 
         await form.$('button.yellow-btn').click();
 

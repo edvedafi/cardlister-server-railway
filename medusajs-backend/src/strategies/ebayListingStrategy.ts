@@ -5,7 +5,6 @@ import process from 'node:process';
 import { isNo, isYes, titleCase } from '../utils/data';
 import { EbayOfferDetailsWithKeys, InventoryItem } from 'ebay-api/lib/types';
 import { login as ebayLogin } from '../utils/ebayAPI';
-import _ from 'lodash';
 
 class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   static identifier = 'ebay-strategy';
@@ -30,11 +29,6 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     quantity: number,
     price: number,
   ): Promise<number> {
-    //only sync products with images
-    if (product.images.length === 0) {
-      return 0;
-    }
-
     let offers: {
       offers?: {
         offerId: string;
@@ -95,6 +89,8 @@ function convertCardToInventory(
   category: ProductCategory,
   quantity: number,
 ): InventoryItem {
+  if (!variant.metadata) variant.metadata = {};
+
   const inventoryItem: InventoryItem = {
     availability: {
       // pickupAtLocationAvailability: [
@@ -122,23 +118,23 @@ function convertCardToInventory(
         quantity: quantity,
       },
     },
-    condition: card.metadata.grade ? 'LIKE_NEW' : 'USED_VERY_GOOD', // could be "2750 :4000" instead?
+    condition: variant.metadata.grade ? 'LIKE_NEW' : 'USED_VERY_GOOD', // could be "2750 :4000" instead?
     //'ConditionEnum : [NEW,LIKE_NEW,NEW_OTHER,NEW_WITH_DEFECTS,MANUFACTURER_REFURBISHED,CERTIFIED_REFURBISHED,EXCELLENT_REFURBISHED,VERY_GOOD_REFURBISHED,GOOD_REFURBISHED,SELLER_REFURBISHED,USED_EXCELLENT,USED_VERY_GOOD,USED_GOOD,USED_ACCEPTABLE,FOR_PARTS_OR_NOT_WORKING]',
     // conditionDescription: 'string',
     // need to support graded as well, this is only ungraded
-    conditionDescriptors: card.metadata.grade
+    conditionDescriptors: variant.metadata.grade
       ? [
           {
             name: '27501',
-            values: [graderIds[card.metadata.grader as string] || 2750123],
+            values: [graderIds[variant.metadata.grader as string] || 2750123],
           },
           {
             name: '27502',
-            values: [gradeIds[card.metadata.grade as string]],
+            values: [gradeIds[variant.metadata.grade as string]],
           },
           {
             name: '27503',
-            values: [card.metadata.certNumber],
+            values: [variant.metadata.certNumber],
           },
         ]
       : [
@@ -162,17 +158,18 @@ function convertCardToInventory(
       },
     },
     product: {
-      title: card.title,
+      title: variant.title,
       // subtitle: 'string',
       brand: category.metadata.brand as string,
-      description: `${card.description}
+      description: `${variant.metadata.description}
                   <br><br>
                    All shipping is with quality (though often used) top loaders, securely packaged and protected in an envelope if you choose the low-cost Ebay Standard Envelope option. If you would like true tracking and a bubble mailer for further protection please choose the First Class Mail option. Please know your card will be packaged equally securely in both options!`,
       // ean: ['string'],
       // epid: 'string',
-      imageUrls: _.sortBy(card.images, 'url').map(
-        (image) => `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${image.url}?alt=media`,
-      ),
+      imageUrls: [
+        `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${variant.metadata.frontImage}?alt=media`,
+        `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${variant.metadata.backImage}?alt=media`,
+      ],
       // isbn: ['string'],
       mpn: category.metadata.setName as string,
       // upc: ['string'],
@@ -189,8 +186,8 @@ function convertCardToInventory(
     country: ['United States'],
     type: ['Sports Trading Card'],
     sport: displayOrNA(category.metadata.sport as string),
-    Franchise: displayOrNA(card.metadata.teams),
-    team: displayOrNA(card.metadata.teams),
+    Franchise: displayOrNA(variant.metadata.teams),
+    team: displayOrNA(variant.metadata.teams),
     league: displayOrNA(
       {
         mlb: 'Major League (MLB)',
@@ -207,34 +204,34 @@ function convertCardToInventory(
     Manufacturer: [category.metadata.brand],
     'Year Manufactured': [displayYear(category.metadata.year as string)],
     Season: [displayYear(category.metadata.year as string)],
-    Character: card.metadata.player,
-    'Player/Athlete': card.metadata.player,
-    'Autograph Authentication': displayOrNA(card.metadata.autographed, category.metadata.brand),
-    Grade: displayOrNA(card.metadata.grade),
-    Graded: booleanText(card.metadata.graded),
-    'Autograph Format': displayOrNA(card.metadata.autoFormat),
-    'Professional Grader': displayOrNA(card.metadata.grader),
-    'Certification Number': displayOrNA(card.metadata.certNumber),
-    'Autograph Authentication Number': displayOrNA(card.metadata.certNumber),
+    Character: variant.metadata.player,
+    'Player/Athlete': variant.metadata.player,
+    'Autograph Authentication': displayOrNA(variant.metadata.autographed, category.metadata.brand),
+    Grade: displayOrNA(variant.metadata.grade),
+    Graded: booleanText(variant.metadata.graded),
+    'Autograph Format': displayOrNA(variant.metadata.autoFormat),
+    'Professional Grader': displayOrNA(variant.metadata.grader),
+    'Certification Number': displayOrNA(variant.metadata.certNumber),
+    'Autograph Authentication Number': displayOrNA(variant.metadata.certNumber),
     Features: displayOrNA(variant.metadata.features),
     'Parallel/Variety': [
       category.metadata.parallel ||
         (category.metadata.insert && !isNo(category.metadata.insert) ? 'Base Insert' : 'Base Set'),
     ],
-    Autographed: booleanText(card.metadata.autographed),
+    Autographed: booleanText(variant.metadata.autographed),
     'Card Name': [variant.metadata?.cardName || card.metadata?.cardName],
-    'Card Number': [card.metadata.cardNumber],
-    'Signed By': displayOrNA(card.metadata.autographed, card.metadata.player),
+    'Card Number': [variant.metadata.cardNumber],
+    'Signed By': displayOrNA(variant.metadata.autographed, variant.metadata.player),
     Material: [card.material],
-    'Card Size': [card.metadata.size],
-    'Card Thickness': getThickness(card.metadata.thickness as string),
+    'Card Size': [variant.metadata.size],
+    'Card Thickness': getThickness(variant.metadata.thickness as string),
     Language: [category.metadata.language || 'English'],
     'Original/Licensed Reprint': [category.metadata.original || 'Original'],
     Vintage: booleanText(parseInt(card.metadata.year as string) < 1986),
-    'Card Condition': [card.metadata.condition || 'Excellent'],
-    'Convention/Event': displayOrNA(card.metadata.convention),
-    'Insert Set': [card.metadata.insert || 'Base Set'],
-    'Print Run': displayOrNA(card.metadata.printRun),
+    'Card Condition': [variant.metadata.condition || 'Excellent'],
+    'Convention/Event': displayOrNA(variant.metadata.convention),
+    'Insert Set': [variant.metadata.insert || 'Base Set'],
+    'Print Run': displayOrNA(variant.metadata.printRun),
   };
   return inventoryItem;
 }
