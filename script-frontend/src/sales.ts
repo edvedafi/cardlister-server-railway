@@ -1,34 +1,36 @@
 import dotenv from 'dotenv';
 import 'zx/globals';
 import { shutdownSportLots } from './listing-sites/sportlots';
-import { shutdownSportLots as oldShutdownSportLots } from './old-scripts/sportlots';
+import { removeFromSportLots, shutdownSportLots as oldShutdownSportLots } from './old-scripts/sportlots';
 import { useSpinners } from './utils/spinners';
 import initializeFirebase from './utils/firebase';
-import {
-  completeOrder,
-  getOrders,
-  getProduct,
-  getProductVariant,
-  getProductVariantBySKU,
-  getSales,
-} from './utils/medusa';
+import { completeOrder, getOrders, getProductVariant, getSales } from './utils/medusa';
 import type { Order } from '@medusajs/client-types';
 // @ts-expect-error - no types
 import chalkTable from 'chalk-table';
 import { buildTableData, type OldSale } from './utils/data';
 import { getSingleListingInfo } from './old-scripts/firebase';
-import { removeFromSportLots } from './old-scripts/sportlots';
 import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/bsc';
 import { removeFromEbay } from './old-scripts/ebay';
 import { removeFromMyCardPost, shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
 import open from 'open';
+import minimist from 'minimist';
 
 $.verbose = false;
 
 dotenv.config();
 
-const { log, showSpinner } = useSpinners('Sync', chalk.cyanBright);
+const args = minimist(process.argv.slice(2), {
+  boolean: ['o', 'n', 'r'],
+  alias: {
+    o: 'skip-old',
+    r: 'skip-old-remove',
+    n: 'skip-new',
+  },
+});
+
+const { showSpinner } = useSpinners('Sync', chalk.cyanBright);
 
 let isShuttingDown = false;
 const shutdown = async () => {
@@ -52,51 +54,59 @@ initializeFirebase();
 const { update, error, finish } = showSpinner('top-level', 'Running sales processing');
 
 try {
-  update('Get Orders from Platforms');
-  await getSales();
+  if (!args['skip-new']) {
+    update('Get Orders from Platforms');
+    await getSales();
+  }
 
   update('Gather Orders');
   const orders: Order[] = await getOrders();
   if (orders.length > 0) {
     update('Process old orders');
 
-    //first find old style cards
-    const oldSales: OldSale[] = [];
-    for (const order of orders) {
-      if (!order.items) throw new Error('Order has no items');
-      for (const item of order.items) {
-        let variant = item.variant;
-        if (item.variant_id && !variant) {
-          variant = await getProductVariant(item.variant_id);
-        }
-        if (variant) {
-          item.variant = variant;
-        } else {
-          const cardFromTitle = convertTitleToCard(item.title);
-          const fuzzy = await getSingleListingInfo(cardFromTitle);
-          if (fuzzy) {
-            fuzzy.quantity = item.quantity;
-            fuzzy.sku = item.metadata?.sku;
-            fuzzy.platform = order.metadata?.platform;
-            oldSales.push(fuzzy);
+    let oldSales: OldSale[] = [];
+    if (args['skip-old']) {
+      if (fs.existsSync('oldSales.json')) {
+        oldSales = fs.readJSONSync('oldSales.json');
+      }
+    } else {
+      //first find old style cards
+      for (const order of orders) {
+        if (!order.items) throw new Error('Order has no items');
+        for (const item of order.items) {
+          let variant = item.variant;
+          if (item.variant_id && !variant) {
+            variant = await getProductVariant(item.variant_id);
+          }
+          if (variant) {
+            item.variant = variant;
           } else {
-            throw new Error(`Could not find old style match for ${item.title}`);
+            const cardFromTitle = convertTitleToCard(item.title);
+            const fuzzy = await getSingleListingInfo(cardFromTitle);
+            if (fuzzy) {
+              fuzzy.quantity = item.quantity;
+              fuzzy.sku = item.metadata?.sku;
+              fuzzy.platform = order.metadata?.platform;
+              oldSales.push(fuzzy);
+            } else {
+              throw new Error(`Could not find old style match for ${item.title}`);
+            }
           }
         }
       }
-    }
+      fs.writeJSONSync('oldSales.json', oldSales);
 
-    // const oldSales = fs.readJSONSync('oldSales.json');
-    const groupedCards = await createGroups({}, oldSales);
-    fs.writeJSONSync('oldSales.json', oldSales);
-
-    update('Remove listings from sites');
-    if (oldSales && oldSales.length > 0) {
-      await removeFromEbay(oldSales);
-      await removeFromMyCardPost(oldSales);
-      if (groupedCards && Object.keys(groupedCards).length > 0) {
-        await removeFromSportLots(groupedCards);
-        await removeFromBuySportsCards(groupedCards);
+      if (!args['skip-old-remove']) {
+        const groupedCards = await createGroups({}, oldSales);
+        update('Remove listings from sites');
+        if (oldSales && oldSales.length > 0) {
+          await removeFromEbay(oldSales);
+          await removeFromMyCardPost(oldSales);
+          if (groupedCards && Object.keys(groupedCards).length > 0) {
+            await removeFromSportLots(groupedCards);
+            await removeFromBuySportsCards(groupedCards);
+          }
+        }
       }
     }
 
@@ -109,16 +119,16 @@ try {
     const output = await buildTableData(orders, oldSales);
 
     update('Open external sites');
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots: ') > -1)) {
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
       await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
     }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC: ') > -1)) {
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
       await open('https://www.buysportscards.com/sellers/orders');
     }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP: ') > -1)) {
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
       await open('https://www.mycardpost.com/edvedafi/orders');
     }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay: ') > -1)) {
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
       await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
     }
 
