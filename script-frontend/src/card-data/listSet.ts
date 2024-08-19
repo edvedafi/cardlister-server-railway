@@ -12,6 +12,7 @@ import { processImageFile } from '../listing-sites/firebase';
 import imageRecognition from './imageRecognition';
 import type { Product, ProductVariant } from '@medusajs/client-types';
 import { buildSet } from './setData';
+import _ from 'lodash';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
@@ -105,13 +106,22 @@ const processBulk = async (setData: SetInfo) => {
     //TODD needs to handle variations
     // log(listings);
     const listedProducts = listings.map((listing) => listing.id);
-    for (let i = 0; i < setData.products.length; i++) {
-      const product = setData.products[i];
+    const products = _.sortBy(setData.products, (p) => {
+      const asInt = parseInt(p.metadata?.cardNumber);
+      if (isNaN(asInt)) {
+        return p.metadata?.cardNumber;
+      } else {
+        return asInt;
+      }
+    });
+    for (let i = 0; i < products.length; i++) {
+      const product = products[i];
       if (!product.variants) throw new Error('Product has no variants');
-      for (let j = 0; j < product.variants.length; j++) {
-        const variant = product.variants[j];
+      const variants = _.sortBy(product.variants, 'metadata.cardNumber');
+      for (let j = 0; j < variants.length; j++) {
+        const variant = variants[j];
         if (!listedProducts.includes(variant.id)) {
-          const createListing = await ask(product.title, 0);
+          const createListing = await ask(variant.title, 0);
           if (createListing > 0) {
             await saveBulk(product, variant, createListing);
           }
