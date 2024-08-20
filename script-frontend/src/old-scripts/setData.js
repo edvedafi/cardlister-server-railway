@@ -1,18 +1,8 @@
 import { getGroup, getGroupByBin, getGroupBySportlotsId, updateGroup } from './firebase.js';
-import {
-  findSetId,
-  findSetList,
-  getSLBrand,
-  getSLCards,
-  getSLSet,
-  getSLSport,
-  getSLYear,
-  updateSetBin,
-} from './sportlots.js';
+import { findSetId, findSetList, getSLBrand, getSLSet, getSLSport, getSLYear, updateSetBin } from './sportlots.js';
 import { useSpinners } from '../utils/spinners.js';
 import {
   findSetInfo,
-  getBSCCards,
   getBSCSetFilter,
   getBSCSportFilter,
   getBSCVariantNameFilter,
@@ -27,14 +17,10 @@ import { convertTitleToCard } from './uploads.js';
 import {
   createCategory,
   createCategoryActive,
-  createProduct,
   getCategories,
-  getProductCardNumbers,
   setCategoryActive,
   updateCategory,
 } from '../utils/medusa.ts';
-import { buildProductFromBSCCard } from './cardData.js';
-import Queue from 'queue';
 
 const { showSpinner, log } = useSpinners('setData', chalk.white);
 
@@ -388,91 +374,6 @@ export async function findSet() {
 
     finish();
     return setInfo;
-  } catch (e) {
-    error(e);
-    throw e;
-  }
-}
-
-export async function buildSet(setInfo) {
-  const { update, finish, error } = showSpinner('buildSet', 'Building Set');
-  try {
-    update('Building Set');
-    const category = setInfo.variantName || setInfo.variantType;
-    const cards = await getBSCCards(category);
-    const slCards = await getSLCards(setInfo, category);
-    await buildProducts(category, cards, slCards);
-    finish('Set Built');
-  } catch (e) {
-    error(e);
-    throw e;
-  }
-}
-
-async function buildProducts(category, bscCards, slCards) {
-  const { update, finish, error } = showSpinner('buildProducts', 'Building Products');
-  try {
-    update('Building Products');
-    const slCardOptions = slCards.map((card) => ({
-      value: card.cardNumber,
-      name: `${card.cardNumber} - ${card.title}`,
-    }));
-    const cards = await Promise.all(
-      bscCards.map(async (card) => {
-        const slCard = slCards.find((slCard) => slCard.cardNumber === card.cardNo);
-        if (slCard) {
-          return card;
-        } else {
-          card.sportlots = await ask(
-            `Which Sportlots Card maps to ${card.year} ${card.setName} ${card.variantName} #${
-              card.cardNo
-            } ${card.players.join(' ')}?`,
-            card.players[0],
-            { selectOptions: slCardOptions },
-          );
-        }
-        return card;
-      }),
-    );
-    const existing = await getProductCardNumbers(category.id);
-    const products = [];
-    const queue = new Queue({ concurrency: 1, results: products, autostart: true });
-    let hasQueueError = false;
-
-    queue.addEventListener('error', (error, job) => {
-      hasQueueError = error;
-      log(`Queue error: `, error, job);
-      queue.stop();
-    });
-
-    let count = 0;
-
-    cards
-      .filter((card) => !existing.includes(card.cardNo))
-      .forEach((card) =>
-        queue.push(async () => {
-          try {
-            const product = await buildProductFromBSCCard(card, category);
-            const result = await createProduct(product);
-            update(`Saving Product ${++count}/${cards.length}`);
-            return result;
-          } catch (e) {
-            error(e);
-            throw e;
-          }
-        }),
-      );
-
-    if (queue.length > 0 && !hasQueueError) {
-      await new Promise((resolve) => queue.addEventListener('end', resolve));
-      finish('Products Built');
-    } else if (hasQueueError) {
-      throw new Error(hasQueueError);
-    } else {
-      finish('Products Built');
-    }
-
-    return products;
   } catch (e) {
     error(e);
     throw e;

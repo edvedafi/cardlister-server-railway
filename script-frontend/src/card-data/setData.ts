@@ -30,10 +30,22 @@ import { type SLCard } from '../models/cards';
 import { buildProductFromBSCCard, getTitles } from './cardData';
 import { getPricing } from './pricing';
 import type { MoneyAmount } from '@medusajs/client-types';
+import _ from 'lodash';
 
 const { showSpinner, log } = useSpinners('setData', chalk.whiteBright);
 
-export async function findSet(allowParent = false): Promise<SetInfo> {
+export async function findSet(
+  {
+    allowParent,
+    onlySportlots,
+  }: {
+    allowParent?: boolean;
+    onlySportlots?: boolean;
+  } = {
+    allowParent: false,
+    onlySportlots: false,
+  },
+): Promise<SetInfo> {
   const { update, finish, error } = showSpinner('findSet', 'Finding Set');
   const setInfo: Partial<SetInfo> = { handle: '', metadata: {} };
 
@@ -164,8 +176,14 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
     while (!setInfo.set) {
       update('New Set');
       const bscSet: { name: string; filter: unknown } = await getBSCSetFilter(setInfo);
-      setInfo.handle = `${setInfo.brand.handle}-${bscSet.name}`;
-      setInfo.set = await createCategory(bscSet.name, setInfo.brand.id, setInfo.handle, { bsc: bscSet.filter });
+      let setName: string;
+      if (onlySportlots) {
+        setName = await ask('Series 2 Title', bscSet.name);
+      } else {
+        setName = bscSet.name;
+      }
+      setInfo.handle = `${setInfo.brand.handle}-${setName}`;
+      setInfo.set = await createCategory(setName, setInfo.brand.id, setInfo.handle, { bsc: bscSet.filter });
     }
 
     update('Variant Type');
@@ -247,7 +265,14 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
         if (isInsert && !isParallel) {
           isParallel = await ask('Is this a parallel of an insert?', false);
         }
-        setInfo.handle = `${setInfo.variantType.handle}-${bscVariantName.name}`;
+        let variantName: string;
+        if (onlySportlots) {
+          variantName = await ask('Series 2 Variant Name', bscVariantName.name);
+        } else {
+          variantName = bscVariantName.name;
+        }
+
+        setInfo.handle = `${setInfo.variantType.handle}-${variantName}`;
         const metaData: Metadata = {
           bsc: bscVariantName.filter,
           isInsert,
@@ -258,8 +283,8 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
               manufacture: setInfo.brand.name,
               year: setInfo.year.name,
               setName: setInfo.set.name,
-              insert: isInsert ? bscVariantName.name : null,
-              parallel: isParallel ? bscVariantName.name : null,
+              insert: isInsert ? variantName : null,
+              parallel: isParallel ? variantName : null,
             })
           ).bin,
           sport: setInfo.sport?.name,
@@ -271,12 +296,7 @@ export async function findSet(allowParent = false): Promise<SetInfo> {
           ...(await updateSetDefaults()),
         };
 
-        setInfo.variantName = await createCategory(
-          bscVariantName.name,
-          setInfo.variantType.id,
-          setInfo.handle,
-          metaData,
-        );
+        setInfo.variantName = await createCategory(variantName, setInfo.variantType.id, setInfo.handle, metaData);
       }
       if (!setInfo.variantName) throw new Error('Variant Name not found');
       const updates: Metadata = {};
@@ -349,96 +369,148 @@ export async function buildSet(setInfo: SetInfo) {
   try {
     update('Building Set');
     const category: Category = setInfo.variantName || setInfo.variantType;
-    const bscCards = await getBSCCards(category);
+    let bscCards = await getBSCCards(category);
     const slCards = await getSLCards(setInfo, category);
-    const products = await buildProducts(category, bscCards, slCards);
-    finish(`Built ${products.length} products for ${category.name}`);
+    let cards = findVariations(bscCards, slCards);
+    let builtProducts = 0;
+
+    while (cards.slBase.length < cards.bscBase.length && (await ask('Is there another series?', true))) {
+      update('Looking for Series 2');
+      const nextSeries = await findSet({ onlySportlots: true });
+      const nextSLCards = await getSLCards(nextSeries, nextSeries.category);
+      const maxCardNumberString = _.maxBy(nextSLCards, 'cardNumber')?.cardNumber;
+      const minCardNumberString = _.minBy(nextSLCards, 'cardNumber')?.cardNumber;
+      const maxCardNumber = parseInt(maxCardNumberString?.replace(/\D/g, '') || '0');
+      const minCardNumber = parseInt(minCardNumberString?.replace(/\D/g, '') || '0');
+      const nextBSCCards: Card[] = [];
+      const prevBSC: Card[] = [];
+      bscCards.forEach((card) => {
+        const cardNo = parseInt(card.cardNo.replace(/\D/g, '') || '0');
+        // log(
+        //   `cardNo >= minCardNumber && cardNo <= maxCardNumber: ${cardNo} >= ${minCardNumber} && ${cardNo} <= ${maxCardNumber}`,
+        // );
+        if (cardNo >= minCardNumber && cardNo <= maxCardNumber) {
+          nextBSCCards.push(card);
+        } else {
+          prevBSC.push(card);
+        }
+      });
+      bscCards = prevBSC;
+      const nextCards = findVariations(nextBSCCards, nextSLCards);
+      log(`After sorting ${nextBSCCards.length} are in Series 2 and ${bscCards.length} are in Series 1`);
+      const nextProducts = await buildProducts(nextSeries.category, nextCards);
+      builtProducts += nextProducts.length;
+      cards = findVariations(bscCards, slCards);
+    }
+
+    const products = await buildProducts(category, cards);
+    builtProducts += products.length;
+    finish(`Built ${builtProducts} products for ${category.name}`);
   } catch (e) {
     error(e);
   }
 }
 
+export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
+  const cards: SiteCards = {
+    bsc: bscCards,
+    sl: slCards,
+    bscBase: [],
+    bscVariations: {},
+    slBase: [],
+    slVariations: {},
+  };
+
+  bscCards.forEach((card) => {
+    if (
+      card.playerAttribute.indexOf('VAR') > -1 ||
+      card.playerAttribute.indexOf('ERR') > -1 ||
+      card.playerAttribute.indexOf('COR') > -1 ||
+      (card.cardNo.match(/[a-z]$/) && bscCards.find((bscCard) => bscCard.cardNo === card.cardNo.slice(0, -1)))
+    ) {
+      const baseCardNumber = card.cardNo.slice(0, -1);
+      if (
+        card.playerAttribute.indexOf('COR') > -1 &&
+        !cards.bscBase.find((bscCard) => bscCard.cardNo === baseCardNumber)
+      ) {
+        cards.bscBase.push(card);
+      } else {
+        if (!cards.bscVariations[baseCardNumber]) {
+          cards.bscVariations[baseCardNumber] = [];
+        }
+        cards.bscVariations[baseCardNumber].push(card);
+      }
+    } else {
+      cards.bscBase.push(card);
+    }
+  });
+
+  slCards.forEach((card) => {
+    if (card.title.indexOf('VAR') > -1) {
+      const baseCardNumber = card.cardNumber.match(/[a-z]$/) ? card.cardNumber.slice(0, -1) : card.cardNumber;
+      if (!cards.slVariations[baseCardNumber]) {
+        cards.slVariations[baseCardNumber] = [];
+      }
+      cards.slVariations[baseCardNumber].push(card);
+    } else {
+      cards.slBase.push(card);
+    }
+  });
+
+  if (cards.slBase.length !== cards.bscBase.length) {
+    log(
+      'Extra Cards in BSC: ',
+      cards.bscBase
+        .filter((card) => !cards.slBase.find((slCard) => slCard.cardNumber === card.cardNo))
+        .map((card) => card.cardNo),
+    );
+    log(
+      'Extra Cards in SL: ',
+      cards.slBase
+        .filter((card) => !cards.bscBase.find((bscCard) => bscCard.cardNo === card.cardNumber))
+        .map((card) => card.cardNumber),
+    );
+  }
+  return cards;
+}
+
 type CardProduct = object;
 
-async function buildProducts(category: Category, bscCards: Card[], slCards: SLCard[]): Promise<CardProduct[]> {
+type SiteCards = {
+  bsc: Card[];
+  sl: SLCard[];
+  bscBase: Card[];
+  bscVariations: { [key: string]: Card[] };
+  slBase: SLCard[];
+  slVariations: { [key: string]: SLCard[] };
+};
+
+async function buildProducts(category: Category, inputCards: SiteCards): Promise<CardProduct[]> {
   const { update, finish, error } = showSpinner('buildProducts', 'Building Products');
   const products: CardProduct[] = [];
   try {
     update('Building Products');
-    const slCardOptions: AskSelectOption[] = slCards.map(
+    const slCardOptions: AskSelectOption[] = inputCards.slBase.map(
       (card): AskSelectOption => ({
         value: card.title,
         name: `${card.cardNumber} - ${card.title}`,
       }),
     );
-    if (slCards.length === 0) {
-      throw new Error('No Sportlots cards found');
-    } else {
-      // log(slCards);
-    }
 
     interface TempCard extends Card {
       sportlots?: string;
       variations?: Variation[];
     }
 
-    const bscBase: Card[] = [];
-    const bscVariations: { [key: string]: Card[] } = {};
-    bscCards.forEach((card) => {
-      if (
-        card.playerAttribute.indexOf('VAR') > -1 ||
-        card.playerAttribute.indexOf('ERR') > -1 ||
-        card.playerAttribute.indexOf('COR') > -1
-      ) {
-        const baseCardNumber = card.cardNo.slice(0, -1);
-        if (card.playerAttribute.indexOf('COR') > -1 && !bscBase.find((bscCard) => bscCard.cardNo === baseCardNumber)) {
-          bscBase.push(card);
-        } else {
-          if (!bscVariations[baseCardNumber]) {
-            bscVariations[baseCardNumber] = [];
-          }
-          bscVariations[baseCardNumber].push(card);
-        }
-      } else {
-        bscBase.push(card);
-      }
-    });
-
-    const slBase: SLCard[] = [];
-    const slVariations: { [key: string]: SLCard[] } = {};
-    slCards.forEach((card) => {
-      if (card.title.indexOf('VAR') > -1) {
-        const baseCardNumber = card.cardNumber.match(/[a-z]$/) ? card.cardNumber.slice(0, -1) : card.cardNumber;
-        if (!slVariations[baseCardNumber]) {
-          slVariations[baseCardNumber] = [];
-        }
-        slVariations[baseCardNumber].push(card);
-      } else {
-        slBase.push(card);
-      }
-    });
-
-    if (slBase.length !== bscBase.length) {
-      log(
-        'Extra Cards in BSC: ',
-        bscBase.filter((card) => !slBase.find((slCard) => slCard.cardNumber === card.cardNo)),
-      );
-      log(
-        'Extra Cards in SL: ',
-        slBase.filter((card) => !bscBase.find((bscCard) => bscCard.cardNo === card.cardNumber)),
-      );
-      throw new Error(`Set counts do not match! BSC: ${bscBase.length} SL: ${slBase.length}`);
-    }
-
     const cards: TempCard[] = await Promise.all(
-      bscBase.map(async (card): Promise<TempCard> => {
-        const slCard = slCards.find((slCard) => slCard.cardNumber === card.cardNo);
+      inputCards.bscBase.map(async (card): Promise<TempCard> => {
+        const slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === card.cardNo);
         const rtn: TempCard = { ...card };
         if (slCard) {
           rtn.sportlots = slCard.title;
         } else {
           rtn.sportlots = await ask(
-            `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${
+            `Which Sportlots  Card maps to ${card.setName} ${card.variantName} #${
               card.cardNo
             } ${card.players.join(' ')}?`,
             card.players[0],
@@ -450,7 +522,6 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
     );
 
     const existing = await getProductCardNumbers(category.id);
-    log(existing);
     const queue = new Queue({ concurrency: 1, results: products, autostart: true });
     let hasQueueError: boolean | Error = false;
 
@@ -469,8 +540,8 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
         queue.push(async () => {
           try {
             const product = await buildProductFromBSCCard(card, category);
-            const variationsBSC = bscVariations[card.cardNo];
-            const variationsSL = slVariations[card.cardNo];
+            const variationsBSC = inputCards.bscVariations[card.cardNo];
+            const variationsSL = inputCards.slVariations[card.cardNo];
             const variations: Variation[] = [
               {
                 title: product.title,
@@ -557,6 +628,9 @@ async function buildProducts(category: Category, bscCards: Card[], slCards: SLCa
     if (queue.length > 0 && !hasQueueError) {
       await new Promise((resolve) => queue.addEventListener('end', resolve));
       finish('Products Built');
+      if (hasQueueError) {
+        throw hasQueueError;
+      }
     } else if (hasQueueError) {
       throw hasQueueError;
     } else {

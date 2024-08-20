@@ -45,7 +45,7 @@ const shutdown = async () => {
 initializeFirebase();
 
 try {
-  const set = await findSet(true);
+  const set = await findSet({ allowParent: true });
 
   if (await ask('Update Defaults?', false)) {
     await updateCategory(set.category.id, await updateSetDefaults(set.category.metadata || undefined));
