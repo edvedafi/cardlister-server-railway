@@ -3,32 +3,36 @@ import { ensureDir } from 'fs-extra';
 import unzip from 'decompress';
 import chalk from 'chalk';
 import { useSpinners } from './spinners.js';
-import {minimist} from "zx";
+import { minimist } from 'zx';
 import ParsedArgs = minimist.ParsedArgs;
 
 const { showSpinner, log } = useSpinners('trim', chalk.cyan);
 
 export async function getInputs(args: ParsedArgs) {
-  const {finish} = showSpinner('inputs', 'Getting Input Information');
+  const { finish } = showSpinner('inputs', 'Getting Input Information');
   if (args._.length > 0) {
     const zipFile: string = args._[0];
     if (zipFile.endsWith('.zip')) {
-      const zipDir = zipFile?.split('/')?.pop()?.split('.')[0].replace(/[\s()]/g, '_');
+      const zipDir = zipFile
+        ?.split('/')
+        ?.pop()
+        ?.split('.')[0]
+        .replace(/[\s()]/g, '_');
       const dir = `input/${zipDir}/`;
       await ensureDir(dir);
       await unzip(zipFile, dir);
-      finish( `Input Directory: ${dir}`);
+      finish(`Input Directory: ${dir}`);
       return dir;
     } else if (zipFile.indexOf('input') > -1) {
       finish(`Input Directory: ${zipFile}`);
       return zipFile;
     } else {
-      finish( `Input Directory: input/${zipFile}/`);
+      finish(`Input Directory: input/${zipFile}/`);
       return `input/${zipFile}/`;
     }
   } else {
     const input_directory = await getInputDirectory();
-    finish (`Input Directory: ${input_directory}`);
+    finish(`Input Directory: ${input_directory}`);
     return input_directory;
   }
 }
@@ -61,16 +65,16 @@ export const getInputDirectory = async () => {
   return input_directory;
 };
 
-export const getFiles = async (inputDirectory :string):Promise<string[]> => {
-  const {finish, error} = showSpinner('inputs', 'Getting Files');
+export const getFiles = async (inputDirectory: string): Promise<string[]> => {
+  const { finish, error } = showSpinner('inputs', 'Getting Files');
   let files: string[] = [];
   try {
-    const lsOutput = await $`ls ${inputDirectory}PXL*.jpg`;
+    const lsOutput = await $`ls ${inputDirectory}*.jpg`;
     files = lsOutput
       .toString()
       .split('\n')
       .filter((image) => image !== '');
-    finish( `Found ${files.length} Files`);
+    finish(`Found ${files.length} Files`);
   } catch (e) {
     files = [];
     error(`No Files Found`);
