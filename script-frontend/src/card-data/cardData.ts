@@ -319,6 +319,14 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
     return card;
   }
   card = setInfo.products?.find(
+    (product) =>
+      product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}` &&
+      product.metadata.player.includes((<string>imageDefaults.player).replace(/[^a-zA-Z ]/g, '')),
+  );
+  if (card) {
+    return card;
+  }
+  card = setInfo.products?.find(
     (product) => product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}`,
   );
   if (card) {
@@ -328,7 +336,7 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
       return card;
     }
   }
-  card = await ask('Which card is this?', undefined, {
+  card = await ask('Which card is this?', imageDefaults.player, {
     selectOptions: setInfo.products?.map((product) => ({
       name: `${product.metadata?.cardNumber} ${product.metadata?.player.join(', ')}`,
       value: product,
