@@ -8,7 +8,7 @@ import { onShutdown } from 'node-graceful-shutdown';
 import { findSet } from './card-data/setData';
 import { processSet } from './card-data/listSet';
 import { getFiles, getInputs } from './utils/inputs';
-import minimist from "minimist";
+import minimist from 'minimist';
 
 configDotenv();
 
@@ -20,7 +20,7 @@ const shutdown = async () => {
 
 onShutdown(shutdown);
 
-const { showSpinner, log } = useSpinners('addCards', chalk.cyan);
+const { showSpinner } = useSpinners('addCards', chalk.cyan);
 
 const { update, finish, error } = showSpinner('addCards', 'Adding Cards');
 
@@ -30,8 +30,16 @@ try {
 
   // Set up full run information
   update('Gathering Inputs');
-  const args = minimist(process.argv.slice(2));
-  const input_directory = await getInputs(args);
+  const args = minimist(process.argv.slice(2), {
+    boolean: ['s', 'b'],
+    alias: {
+      s: 'select-bulk-cards',
+      b: 'bulk',
+      n: 'skip-new',
+    },
+  });
+
+  const input_directory = args['bulk'] || args['select-bulk-cards'] ? 'input/bulk' : await getInputs(args);
 
   update('Gathering Set Data');
   const setData = await findSet();
@@ -43,7 +51,7 @@ try {
   }
 
   update('Processing Singles');
-  await processSet(setData, files);
+  await processSet(setData, files, args);
 } catch (e) {
   error(e);
 } finally {
