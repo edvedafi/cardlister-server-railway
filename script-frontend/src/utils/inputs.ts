@@ -6,7 +6,7 @@ import { useSpinners } from './spinners.js';
 import { minimist } from 'zx';
 import ParsedArgs = minimist.ParsedArgs;
 
-const { showSpinner, log } = useSpinners('trim', chalk.cyan);
+const { showSpinner } = useSpinners('trim', chalk.cyan);
 
 export async function getInputs(args: ParsedArgs) {
   const { finish } = showSpinner('inputs', 'Getting Input Information');
@@ -46,7 +46,7 @@ export const getInputDirectory = async () => {
   } else if (input_directory === 'bulk') {
     //check to see if the bulk directory exists
     if (fs.existsSync('input/bulk')) {
-      const shouldRest = await ask('Reset Bulk?', false);
+      const shouldRest = true; //await ask('Reset Bulk?', false);
       if (shouldRest) {
         //delete everything in the bulk directory
         fs.rmSync('input/bulk', { recursive: true });

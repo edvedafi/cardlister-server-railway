@@ -273,6 +273,12 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   if (await ask('Update Card Details?', false)) {
     if (!productVariant.metadata) productVariant.metadata = {};
 
+    let nextName: string | undefined;
+    let i = 0;
+    while (nextName || i === 0) {
+      nextName = await ask('Player', productVariant.metadata?.player[i++]);
+    }
+
     const printRun = await ask('Print Run', productVariant.metadata.printRun);
     if (printRun) {
       productVariant.metadata.printRun = printRun;

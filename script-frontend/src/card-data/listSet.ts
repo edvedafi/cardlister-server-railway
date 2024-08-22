@@ -10,7 +10,7 @@ import type { SetInfo } from '../models/setInfo';
 import type { ProductImage } from '../models/cards';
 import { processImageFile } from '../listing-sites/firebase';
 import imageRecognition from './imageRecognition';
-import type { Product, ProductVariant } from '@medusajs/client-types';
+import type { InventoryItemDTO, Product, ProductVariant } from '@medusajs/client-types';
 import { buildSet } from './setData';
 import _ from 'lodash';
 
@@ -88,7 +88,7 @@ const processUploads = async (productVariant: ProductVariant, imageInfo: Product
   const images = await Promise.all(
     imageInfo.map(async (image, i) => {
       if (!productVariant.product) throw 'Must set Product on the Variant before processing uploads';
-      const uploadedFileName = `${productVariant.product.handle}${i + 1}.jpg`;
+      const uploadedFileName: string = `${productVariant.product.handle}${i + 1}.jpg`;
       await processImageFile(image.file, uploadedFileName);
       return uploadedFileName;
     }),
@@ -102,10 +102,8 @@ const processBulk = async (setData: SetInfo) => {
 
   const { finish, error } = showSpinner('bulk', `Processing Bulk Listings`);
   log('Adding Bulk Listings');
+  const saving: Promise<InventoryItemDTO>[] = [];
   try {
-    //TODD needs to handle variations
-    // log(listings);
-    const listedProducts = listings.map((listing) => listing.id);
     const products = _.sortBy(setData.products, (p) => {
       const asInt = parseInt(p.metadata?.cardNumber);
       if (isNaN(asInt)) {
@@ -120,22 +118,28 @@ const processBulk = async (setData: SetInfo) => {
       const variants = _.sortBy(product.variants, 'metadata.cardNumber');
       for (let j = 0; j < variants.length; j++) {
         const variant = variants[j];
-        if (!listedProducts.includes(variant.id)) {
-          const createListing = await ask(variant.title, 0);
-          if (createListing > 0) {
-            await saveBulk(product, variant, createListing);
-          }
+        const createListing = await ask(variant.title, variant.inventory_quantity || undefined);
+        if (createListing > 0) {
+          saving.push(saveBulk(product, variant, createListing));
         }
       }
     }
-    finish();
+    const inventory = await Promise.all(saving);
+    finish(`Processed ${inventory.length} Bulk Listings`);
   } catch (e) {
     error(e);
     throw e;
   }
 };
 
-export async function processSet(setData: SetInfo, files: string[] = []) {
+export async function processSet(
+  setData: SetInfo,
+  files: string[] = [],
+  args: {
+    'select-bulk-cards': boolean;
+    bulk: boolean;
+  },
+) {
   const {
     update: updateSpinner,
     finish: finishSpinner,
@@ -218,7 +222,10 @@ export async function processSet(setData: SetInfo, files: string[] = []) {
     if (hasQueueError) {
       errorSpinner(hasQueueError);
     } else {
-      const addBulk = await ask('Add Bulk Listings?', false);
+      if (args['select-bulk-cards']) {
+        //do some special stuff
+      }
+      const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
       if (addBulk) {
         updateSpinner(`Process Bulk`);
         await processBulk(setData);
