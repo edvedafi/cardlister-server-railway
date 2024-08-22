@@ -13,7 +13,7 @@ const queue = new Queue({
   concurrency: 1,
 });
 
-export type AskSelectOption<T = any> = {
+export type AskSelectOption<T = unknown> = {
   value: T;
   name: string;
 };
@@ -52,7 +52,7 @@ const askInternal = async (
   }
   let answer;
   if (selectOptions) {
-    let choices = selectOptions.map((option) => (typeof option === 'string' ? { value: option } : option));
+    const choices = selectOptions.map((option) => (typeof option === 'string' ? { value: option } : option));
     answer = await filterSelectPrompt({
       message: questionText,
       choices: choices,
@@ -99,7 +99,6 @@ const askInternal = async (
       }
     }
   }
-
 
   resumeSpinners();
   return answer;

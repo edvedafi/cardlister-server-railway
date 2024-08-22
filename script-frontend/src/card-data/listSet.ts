@@ -5,7 +5,7 @@ import { getCardData, saveBulk, saveListing } from './cardData';
 import terminalImage from 'terminal-image';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync } from '../utils/medusa';
-import { ask } from '../utils/ask';
+import { ask, type AskSelectOption } from '../utils/ask';
 import type { SetInfo } from '../models/setInfo';
 import type { ProductImage } from '../models/cards';
 import { processImageFile } from '../listing-sites/firebase';
@@ -13,6 +13,7 @@ import imageRecognition from './imageRecognition';
 import type { InventoryItemDTO, Product, ProductVariant } from '@medusajs/client-types';
 import { buildSet } from './setData';
 import _ from 'lodash';
+import type { ParsedArgs } from 'minimist';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
@@ -97,14 +98,33 @@ const processUploads = async (productVariant: ProductVariant, imageInfo: Product
   return productVariant;
 };
 
-const processBulk = async (setData: SetInfo) => {
+const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
   if (!setData.products) throw 'Must set products on Set Data before processing bulk listings';
 
   const { finish, error } = showSpinner('bulk', `Processing Bulk Listings`);
   log('Adding Bulk Listings');
   const saving: Promise<InventoryItemDTO>[] = [];
   try {
-    const products = _.sortBy(setData.products, (p) => {
+    let products = setData.products;
+    if (args.numbers) {
+      if (args.numbers.includes(',')) {
+        const numbers = args.numbers.split(',');
+        products = products.filter((p) => {
+          console.log(`Checking ${p.metadata?.cardNumber} in ${numbers}`);
+          return numbers.includes(p.metadata?.cardNumber);
+        });
+      } else if (args.numbers.startsWith('<')) {
+        const number = parseInt(args.numbers.replace('<', ''));
+        products = products.filter((p) => parseInt(p.metadata?.cardNumber) < number);
+      } else if (args.numbers.startsWith('>')) {
+        const number = parseInt(args.numbers.replace('>', ''));
+        products = products.filter((p) => parseInt(p.metadata?.cardNumber) > number);
+      } else {
+        products = products.filter((p) => p.metadata?.cardNumber === args.numbers);
+      }
+    }
+    if (products.length === 0) throw new Error(`No products found for ${args.numbers}`);
+    products = _.sortBy(products, (p) => {
       const asInt = parseInt(p.metadata?.cardNumber);
       if (isNaN(asInt)) {
         return p.metadata?.cardNumber;
@@ -112,15 +132,35 @@ const processBulk = async (setData: SetInfo) => {
         return asInt;
       }
     });
-    for (let i = 0; i < products.length; i++) {
-      const product = products[i];
-      if (!product.variants) throw new Error('Product has no variants');
-      const variants = _.sortBy(product.variants, 'metadata.cardNumber');
-      for (let j = 0; j < variants.length; j++) {
-        const variant = variants[j];
-        const createListing = await ask(variant.title, variant.inventory_quantity || undefined);
-        if (createListing > 0) {
-          saving.push(saveBulk(product, variant, createListing));
+    if (args['select-bulk-cards']) {
+      type Option = { product: Product; variant: ProductVariant };
+      const variants: AskSelectOption<Option>[] = products.reduce((acc: AskSelectOption<Option>[], product) => {
+        if (!product.variants) throw new Error('Product has no variants');
+        return acc.concat(product.variants?.map((variant) => ({ value: { product, variant }, name: variant.title })));
+      }, []);
+      const selectOptions = [{ value: 'done', name: 'done' }, ...variants];
+      let selected: Option | string | undefined;
+      while (selected !== 'done') {
+        selected = await ask('Select Variants for Bulk Listings', undefined, { selectOptions });
+        if (selected && selected !== 'done') {
+          const selectedOption: Option = <Option>selected;
+          const createListing = await ask(selectedOption.variant.title, selectedOption.variant.inventory_quantity || 1);
+          if (createListing > 0) {
+            saving.push(saveBulk(selectedOption.product, selectedOption.variant, createListing));
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < products.length; i++) {
+        const product = products[i];
+        if (!product.variants) throw new Error('Product has no variants');
+        const variants = _.sortBy(product.variants, 'metadata.cardNumber');
+        for (let j = 0; j < variants.length; j++) {
+          const variant = variants[j];
+          const createListing = await ask(variant.title, variant.inventory_quantity || undefined);
+          if (createListing > 0) {
+            saving.push(saveBulk(product, variant, createListing));
+          }
         }
       }
     }
@@ -132,14 +172,7 @@ const processBulk = async (setData: SetInfo) => {
   }
 };
 
-export async function processSet(
-  setData: SetInfo,
-  files: string[] = [],
-  args: {
-    'select-bulk-cards': boolean;
-    bulk: boolean;
-  },
-) {
+export async function processSet(setData: SetInfo, files: string[] = [], args: ParsedArgs) {
   const {
     update: updateSpinner,
     finish: finishSpinner,
@@ -155,8 +188,8 @@ export async function processSet(
   updateSpinner('Prepping Queues for AI');
   try {
     let i = 0;
-    log(setData);
-    log(files);
+    // log(setData);
+    // log(files);
 
     setData.products = await getProducts(setData.category.id);
 
@@ -228,7 +261,7 @@ export async function processSet(
       const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
       if (addBulk) {
         updateSpinner(`Process Bulk`);
-        await processBulk(setData);
+        await processBulk(setData, args);
       }
       updateSpinner(`Kickoff Set Processing`);
       await startSync(setData.category.id);

@@ -32,14 +32,19 @@ try {
   update('Gathering Inputs');
   const args = minimist(process.argv.slice(2), {
     boolean: ['s', 'b'],
+    string: ['n'],
     alias: {
       s: 'select-bulk-cards',
       b: 'bulk',
-      n: 'skip-new',
+      n: 'numbers',
     },
   });
 
-  const input_directory = args['bulk'] || args['select-bulk-cards'] ? 'input/bulk' : await getInputs(args);
+  if (args['numbers'] || args['select-bulk-cards']) {
+    args['bulk'] = true;
+  }
+
+  const input_directory = args['bulk'] ? 'input/bulk' : await getInputs(args);
 
   update('Gathering Set Data');
   const setData = await findSet();
