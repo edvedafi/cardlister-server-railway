@@ -50,11 +50,16 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> 
             .split(' ')
             .find((word) => word.startsWith('#'))
             .replace('#', '');
+          const sku = bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`;
+          let variant = await this.productVariantService_.retrieveBySKU(sku);
+          if (variant?.metadata?.sportlots) {
+            variant = variant.product.variants.find((v) => v.metadata.sportlots === title);
+          }
           order.lineItems.push({
             quantity: parseInt(quantity.replace('\n0', '').trim()),
-            title: title,
-            sku: bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`,
-            cardNumber: cardNumber,
+            title: variant.title,
+            sku: variant.sku,
+            cardNumber: <string>variant.metadata.cardNumber,
             unit_price: parseInt(price.replace('.', '').replace('$', '').trim()),
           });
         }
