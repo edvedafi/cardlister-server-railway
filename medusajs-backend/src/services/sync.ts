@@ -135,7 +135,7 @@ class SyncService extends TransactionBaseService {
         );
       }
 
-      if (!request.only || request.only.includes('test')) {
+      if (request.only && request.only.includes('test')) {
         update('Starting TEST Sync');
         responses.push(
           await this.batchJobService.create({
