@@ -374,7 +374,10 @@ export async function buildSet(setInfo: SetInfo) {
     let cards = findVariations(bscCards, slCards);
     let builtProducts = 0;
 
-    while (cards.slBase.length < cards.bscBase.length && (await ask('Is there another series?', true))) {
+    while (
+      cards.slBase.length < cards.bscBase.length &&
+      (await ask(`Is there another series? (${cards.slBase.length} in SL ${cards.bscBase.length} in BSC)`, true))
+    ) {
       update('Looking for Series 2');
       const nextSeries = await findSet({ onlySportlots: true });
       const nextSLCards = await getSLCards(nextSeries, nextSeries.category);
@@ -387,7 +390,7 @@ export async function buildSet(setInfo: SetInfo) {
       bscCards.forEach((card) => {
         const cardNo = parseInt(card.cardNo.replace(/\D/g, '') || '0');
         // log(
-        //   `cardNo >= minCardNumber && cardNo <= maxCardNumber: ${cardNo} >= ${minCardNumber} && ${cardNo} <= ${maxCardNumber}`,
+        //   `cardNo >= minCardNumber && cardNo <= maxCardNumber: ${cardNo} >= ${minCardNumber} && ${cardNo} <= ${maxCardNumber} === ${cardNo >= minCardNumber && cardNo <= maxCardNumber}`,
         // );
         if (cardNo >= minCardNumber && cardNo <= maxCardNumber) {
           nextBSCCards.push(card);
@@ -397,12 +400,18 @@ export async function buildSet(setInfo: SetInfo) {
       });
       bscCards = prevBSC;
       const nextCards = findVariations(nextBSCCards, nextSLCards);
-      log(`After sorting ${nextBSCCards.length} are in Series 2 and ${bscCards.length} are in Series 1`);
+      // log(`After sorting ${nextCards.bscBase.length} are in Series 2 and ${bscCards.length} are in Series 1`);
+      // log(`Next Cards: ${nextCards.slBase.length} SL Cards and ${nextCards.bscBase.length} BSC Cards`);
+      // log(`Next SL Cards: ${nextCards.slBase.map((card) => card.cardNumber)}`);
+      // log(`Next BSC Cards: ${nextCards.bscBase.map((card) => card.cardNo)}`);
       const nextProducts = await buildProducts(nextSeries.category, nextCards);
       builtProducts += nextProducts.length;
+      // log('builtProducts', builtProducts);
       cards = findVariations(bscCards, slCards);
     }
 
+    // log(`Original SL: ${cards.slBase.map((card) => card.cardNumber)} `);
+    // log(`Original BSC  ${cards.bscBase.map((card) => card.cardNo)}`);
     const products = await buildProducts(category, cards);
     builtProducts += products.length;
     finish(`Built ${builtProducts} products for ${category.name}`);
@@ -458,18 +467,16 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
   });
 
   if (cards.slBase.length !== cards.bscBase.length) {
+    const extraBSC = cards.bscBase.filter((card) => !cards.slBase.find((slCard) => slCard.cardNumber === card.cardNo));
     log(
-      'Extra Cards in BSC: ',
-      cards.bscBase
-        .filter((card) => !cards.slBase.find((slCard) => slCard.cardNumber === card.cardNo))
-        .map((card) => card.cardNo),
+      `There are ${extraBSC.length} BSC cards between ${_.minBy(extraBSC, 'cardNo')?.cardNo} and ${_.maxBy(extraBSC, 'cardNo')?.cardNo}`,
     );
+    // log('Extra Cards in BSC: ', extraBSC.map((card) => card.cardNo));
+    const extraSL = cards.slBase.filter((slCard) => !cards.bscBase.find((card) => slCard.cardNumber === card.cardNo));
     log(
-      'Extra Cards in SL: ',
-      cards.slBase
-        .filter((card) => !cards.bscBase.find((bscCard) => bscCard.cardNo === card.cardNumber))
-        .map((card) => card.cardNumber),
+      `There are ${extraSL.length} SL cards between ${_.minBy(extraSL, 'cardNo')?.cardNumber} and ${_.maxBy(extraSL, 'cardNo')?.cardNumber}`,
     );
+    // log('Extra Cards in SL: ', extraSL.map((card) => card.cardNumber));
   }
   return cards;
 }
