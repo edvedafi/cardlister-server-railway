@@ -23,22 +23,38 @@ export type AskOptions = {
   selectOptions?: string[] | AskSelectOption[];
   isYN?: boolean;
   cancellable?: boolean;
+  isArray?: boolean;
 };
 
 export const ask = async (
   questionText: string,
   defaultAnswer: any = undefined,
-  { maxLength, selectOptions, isYN = false, cancellable = false }: AskOptions = {},
+  { maxLength, selectOptions, isYN = false, cancellable = false, isArray = false }: AskOptions = {},
 ): Promise<any> => {
-  return await new Promise((resolve) => {
-    queue.push(async () => {
-      if (cancellable) {
-        resolve(askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable }));
-      } else {
-        resolve(await askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable }));
+  if (isArray) {
+    const defaultAnswers = defaultAnswer ? (defaultAnswer as unknown[]) : [];
+    const result: unknown[] = [];
+    let i = 0;
+    let answer;
+    do {
+      answer = await askInternal(questionText, defaultAnswers[i], { maxLength, selectOptions, isYN, cancellable });
+      if (answer) {
+        result.push(answer);
       }
+      i++;
+    } while (answer);
+    return result;
+  } else {
+    return await new Promise((resolve) => {
+      queue.push(async () => {
+        if (cancellable) {
+          resolve(askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable }));
+        } else {
+          resolve(await askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable }));
+        }
+      });
     });
-  });
+  }
 };
 
 const askInternal = async (
