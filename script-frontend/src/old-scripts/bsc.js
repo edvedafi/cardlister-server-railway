@@ -632,7 +632,7 @@ const findListing = async (listings, card) => {
   let found = false;
 
   //look for exact card number match
-  let listing = listings.find((listing) => listing.card.cardNo.toString() === card.cardNumber.toString());
+  let listing = listings.find((listing) => listing.card.cardNo.toString() === card.cardNumber?.toString());
   if (listing) {
     finish();
     return listing;
@@ -641,7 +641,7 @@ const findListing = async (listings, card) => {
   update('Fuzzy Card Number Match');
   if (!found) {
     listing = listings.find(
-      (listing) => listing.card.cardNo.replaceAll(/\D/g, '') === card.cardNumber.replaceAll(/\D/g, ''),
+      (listing) => listing.card.cardNo.replaceAll(/\D/g, '') === card.cardNumber?.replaceAll(/\D/g, ''),
     );
     if (listing) {
       found = await ask(`Is this a match? ${listing.card.cardNo} ${listing.card.players}`, true);
@@ -815,7 +815,7 @@ export async function updateBSCSKU(setInfo, counts) {
           })
         : false;
 
-    updateByPrefix(firstCardNumber.replace(/\d/g, ''));
+    updateByPrefix(firstCardNumber?.replace(/\d/g, ''));
 
     if (updated < counts.length) {
       updateByPrefix(

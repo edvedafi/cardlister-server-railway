@@ -64,6 +64,9 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
 }
 
 const add = (info?: unknown, modifier?: string): string => {
+  if (Array.isArray(info)) {
+    info = info.join(' | ');
+  }
   if (info === undefined || info === null || info === '' || isNo(<string>info)) {
     return '';
   } else if (modifier) {
@@ -87,6 +90,7 @@ export async function getTitles(card: Metadata): Promise<Titles> {
 
   let insert = add(card.insert, 'Insert');
   let parallel = add(card.parallel, 'Parallel');
+
   const features = add(card.features).replace(' | ', '');
   const printRun = card.printRun ? ` /${card.printRun}` : '';
   const variation = add(card.variation);
@@ -133,6 +137,14 @@ export async function getTitles(card: Metadata): Promise<Titles> {
     insert = add((<string>card.insert).replace('Rookie', 'RC'));
     title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
   }
+  if (title.length > maxTitleLength && card.parallel_xs) {
+    parallel = add(<string>card.parallel_xs);
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+  }
+  if (title.length > maxTitleLength && card.insert_xs) {
+    insert = add(<string>card.insert_xs);
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+  }
 
   title = title.replace(/ {2}/g, ' ');
 
@@ -177,6 +189,9 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
   }
   if (cardName.length > maxCardNameLength) {
     cardName = `${category.metadata.setName}${insert}${parallel}`;
+  }
+  if (cardName.length > maxCardNameLength) {
+    cardName = `${category.metadata.setName}${category.metadata.insert_xs || insert}${category.metadata.parallel_xs || parallel}`;
   }
   cardName = cardName.replace(/ {2}/g, ' ').replace(' | ', ' ');
 
@@ -238,6 +253,9 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   updatePVMetadata('features');
   if (!productVariant.metadata) productVariant.metadata = {};
   if (!productVariant.metadata.features) productVariant.metadata.features = [];
+  if (typeof productVariant.metadata.features === 'string') {
+    productVariant.metadata.features = productVariant.metadata.features.split('|');
+  }
   if (
     setData.metadata?.parallel &&
     !isNo(setData.metadata?.parallel) &&
