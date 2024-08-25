@@ -10,7 +10,7 @@ import {
   getBSCYearFilter,
 } from '../listing-sites/bsc.js';
 import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear } from '../listing-sites/sportlots';
-import { ask, type AskSelectOption } from '../utils/ask';
+import { ask, type AskOptions, type AskSelectOption } from '../utils/ask';
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import {
   createCategory,
@@ -307,7 +307,18 @@ export async function findSet(
       if (!setInfo.variantName?.description) {
         description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name} ${setInfo.variantName?.name}`);
       }
-
+      if (setInfo.variantName?.metadata?.insert && !setInfo.variantName?.metadata?.insert_xs) {
+        const xs_insert = await ask('XS Insert Name?', setInfo.variantName?.metadata?.insert);
+        if (xs_insert && xs_insert !== setInfo.variantName?.metadata?.insert) {
+          updates.insert_xs = xs_insert;
+        }
+      }
+      if (setInfo.variantName?.metadata?.parallel && !setInfo.variantName?.metadata?.parallel_xs) {
+        const xs_parallel = await ask('XS Parallel Name?', setInfo.variantName?.metadata?.parallel);
+        if (xs_parallel && xs_parallel !== setInfo.variantName?.metadata?.parallel) {
+          updates.parallel_xs = xs_parallel;
+        }
+      }
       if (Object.keys(updates).length > 0 || description || !setInfo.variantName?.is_active) {
         setInfo.variantName = await setCategoryActive(setInfo.variantName.id, description, {
           ...setInfo.variantName.metadata,
@@ -328,23 +339,19 @@ export async function findSet(
   }
 }
 
-export async function updateSetDefaults(metadata: Metadata = {}) {
+export async function updateSetDefaults(metadata: Metadata = {}): Promise<Metadata> {
   const { finish, error } = showSpinner('updateSetDefaults', 'Updating Set Defaults');
 
   try {
-    const update = async (field: string) => {
-      const response = await ask(field, metadata[field]);
+    const update = async (field: string, config?: AskOptions) => {
+      const response = await ask(field, metadata[field], config);
       if (response) {
-        if (response.indexOf('|') > -1) {
-          metadata[field] = response.split('|').map((r: string) => r.trim());
-        } else {
-          metadata[field] = response;
-        }
+        metadata[field] = response;
       }
     };
 
     await update('card_number_prefix');
-    await update('features');
+    await update('features', { isArray: true });
     await update('printRun');
 
     metadata.prices = await getPricing(<MoneyAmount[]>metadata.prices);
@@ -437,7 +444,7 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
       card.playerAttribute.indexOf('COR') > -1 ||
       (card.cardNo.match(/[a-z]$/) && bscCards.find((bscCard) => bscCard.cardNo === card.cardNo.slice(0, -1)))
     ) {
-      const baseCardNumber = card.cardNo.slice(0, -1);
+      const baseCardNumber = card.cardNo.match(/[a-z]$/) ? card.cardNo.slice(0, -1) : card.cardNo;
       if (
         card.playerAttribute.indexOf('COR') > -1 &&
         !cards.bscBase.find((bscCard) => bscCard.cardNo === baseCardNumber)
@@ -549,6 +556,7 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
             const product = await buildProductFromBSCCard(card, category);
             const variationsBSC = inputCards.bscVariations[card.cardNo];
             const variationsSL = inputCards.slVariations[card.cardNo];
+            // log(`Product Metadata: ${JSON.stringify(product.metadata)}`);
             const variations: Variation[] = [
               {
                 title: product.title,
@@ -560,17 +568,23 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
               },
             ];
             if (variationsBSC) {
+              const counter: string = 'a';
               for (const variation of variationsBSC) {
                 const slVariation = variationsSL?.shift();
                 const metadata = { ...product.metadata };
 
                 metadata.variationName = slVariation?.title.match(/\[(.*?)\]/)?.[1] || 'Variation';
-                metadata.cardNumber = variation.cardNo;
+                metadata.cardNumber = variations.find((v) => v.sku === `${category.metadata?.bin}|${variation.cardNo}`)
+                  ? `${variation.cardNo}${counter}`
+                  : variation.cardNo;
                 metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
                 metadata.bsc = card.id;
                 metadata.sku = `${category.metadata?.bin}|${variation.cardNo}`;
                 if (metadata.features) {
-                  metadata.features.push('Variation');
+                  if (!metadata.features.push) {
+                    metadata.features = metadata.features.split('|');
+                  }
+                  metadata.features = [...metadata.features, 'Variation'];
                 } else {
                   metadata.features = ['Variation'];
                 }
@@ -580,10 +594,7 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
 
                 const titles = await getTitles({ ...metadata, ...category.metadata });
                 metadata.description = `${titles.longTitle} ${variation.playerAttributeDesc}`;
-                //remove duplicates from metadata.features
-                metadata.features = metadata.features.filter(
-                  (item: string, index: number) => metadata.features.indexOf(item) === index,
-                );
+                metadata.features = _.uniq(metadata.features);
 
                 variations.push({
                   title: titles.title,
@@ -602,7 +613,10 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
                 metadata.sku = `${category.metadata?.bin}|${metadata.cardNumber}`;
                 if (metadata.features) {
-                  metadata.features.push('Variation');
+                  if (!metadata.features.push) {
+                    metadata.features = metadata.features.split('|');
+                  }
+                  metadata.features = [...metadata.features, 'Variation'];
                 } else {
                   metadata.features = ['Variation'];
                 }

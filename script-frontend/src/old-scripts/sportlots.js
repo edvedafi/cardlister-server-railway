@@ -610,7 +610,7 @@ export async function removeFromSportLots(groupedCards) {
           tdWithName = await driver.findElement(By.xpath(`//td[contains(text(), ' ${card.cardNumber} ')]`));
         } catch (e) {
           // remove all non-numeric characters from the card number and try again
-          const cardNumber = card.cardNumber.replace(/\D/g, '');
+          const cardNumber = card.cardNumber?.replace(/\D/g, '');
           update(`${card.title}: Trying card Number ${card.cardNumber}`);
           try {
             tdWithName = await driver.findElement(By.xpath(`//td[contains(text(), ' ${cardNumber} ')]`));
