@@ -4,6 +4,7 @@ import {
   CreateBatchJobInput,
   Logger,
   ProductCategoryService,
+  ProductService,
   ProductVariant,
   ProductVariantService,
   RegionService,
@@ -38,6 +39,7 @@ abstract class AbstractSiteStrategy<
   protected batchJobService_: BatchJobService;
   protected categoryService_: ProductCategoryService;
   protected productVariantService_: ProductVariantService;
+  protected productService: ProductService;
   protected regionService: RegionService;
   protected stockLocationService: StockLocationService;
   private readonly logger: Logger;
@@ -83,7 +85,7 @@ abstract class AbstractSiteStrategy<
   protected progress(message: string, error?: Error) {
     if (this.baseMessage) {
       if (error) {
-        this.logger.error(`${message}`, error);
+        this.logger.error(`${message} - ${error.message}`, error);
         this.logger.failure(this.activityId, `${this.baseMessage}: Failed: ${message}`);
       } else {
         this.logger.progress(this.activityId, `${this.baseMessage} (${message})`);

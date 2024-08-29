@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { useSpinners } from '../utils/spinners';
 import { ask } from '../utils/ask';
 import { type Category, type SetInfo } from '../models/setInfo';
+import { getBrowserlessConfig } from '../utils/browserless';
 
 const { showSpinner, log } = useSpinners('sportlots', chalk.blueBright);
 
@@ -13,16 +14,19 @@ async function login() {
     const { update, error, finish } = showSpinner('login', 'Login');
     update('Opening Browser');
     try {
-      _browser = await remote({
-        capabilities: {
-          browserName: 'chrome',
-          'goog:chromeOptions': {
-            args: ['headless', 'disable-gpu'],
-          },
-        },
-        baseUrl: 'https://www.sportlots.com/',
-        logLevel: 'error',
-      });
+      // _browser = await remote({
+      //   capabilities: {
+      //     browserName: 'chrome',
+      //     'goog:chromeOptions': {
+      //       args: ['headless', 'disable-gpu'],
+      //     },
+      //     browserVersion: '126',
+      //   },
+      //   baseUrl: 'https://www.sportlots.com/',
+      //   logLevel: 'error',
+      // });
+
+      _browser = await remote(getBrowserlessConfig('https://www.sportlots.com/', 'SPORTLOTS_LOG_LEVEL'));
 
       update('Logging in');
       await _browser.url('cust/custbin/login.tpl?urlval=/index.tpl&qs=');

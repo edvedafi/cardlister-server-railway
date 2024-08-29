@@ -12,7 +12,7 @@ import {
   updateProductVariant,
 } from '../utils/medusa';
 import { useSpinners } from '../utils/spinners';
-import type { InventoryItemDTO, Product, ProductVariant } from '@medusajs/client-types';
+import type { InventoryItemDTO, MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
 import { getCommonPricing, getPricing } from './pricing';
 
 const { log } = useSpinners('card-data', chalk.whiteBright);
@@ -216,7 +216,7 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
   } else {
     productVariantId = await ask('Which variant is this?', undefined, {
       selectOptions: product.variants.map((variant) => ({
-        name: `${variant.title}`,
+        name: `${variant.metadata?.description || variant.title}`,
         value: variant.id,
       })),
     });
@@ -318,11 +318,26 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
       : setData.category?.metadata?.prices,
   );
   if (productVariant.prices) {
-    productVariant.prices = prices.filter(
-      (price) =>
-        !productVariant.prices?.find((p) => p.region_id === price.region_id) ||
-        productVariant.prices?.find((p) => p.region_id === price.region_id && p.amount !== price.amount),
-    );
+    productVariant.prices = <MoneyAmount[]>prices
+      .map((price: MoneyAmount): MoneyAmount | undefined => {
+        const existingPrice = productVariant.prices?.find((p) => p.region_id === price.region_id);
+        log('Existing Price', existingPrice);
+        if (existingPrice) {
+          if (existingPrice.amount !== price.amount) {
+            log('Price Change', existingPrice.amount, price.amount);
+            return {
+              id: existingPrice.id,
+              amount: price.amount,
+              currency_code: existingPrice.currency_code,
+              region_id: existingPrice.region_id,
+            } as MoneyAmount;
+          }
+        } else {
+          console.log('New Price', price);
+          return price;
+        }
+      })
+      .filter((price) => price && price.amount);
   } else {
     productVariant.prices = prices;
   }
@@ -396,8 +411,11 @@ export async function saveBulk(
   quantity: number,
 ): Promise<InventoryItemDTO> {
   const listing = await getInventory(productVariant);
-  await updatePrices(product.id, productVariant.id, await getCommonPricing());
-  // await updatePrices(product.id, productVariant.id, await getPricing());
-  await updateInventory(listing, quantity);
+  if (quantity && listing.stocked_quantity != quantity) {
+    if (!productVariant.prices || productVariant.prices.length === 1) {
+      await updatePrices(product.id, productVariant.id, await getCommonPricing());
+    }
+    await updateInventory(listing, quantity);
+  }
   return listing;
 }

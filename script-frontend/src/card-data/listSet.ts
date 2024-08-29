@@ -261,6 +261,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
       if (addBulk) {
         updateSpinner(`Process Bulk`);
+        setData.products = await getProducts(setData.category.id);
         await processBulk(setData, args);
       }
       updateSpinner(`Kickoff Set Processing`);

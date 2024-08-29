@@ -45,7 +45,7 @@ const baseHeaders = {
 export const login = async () => {
   if (!_api) {
     const { update, finish } = showSpinner('login', 'Logging into BSC');
-    _driver = await new Builder().forBrowser(Browser.CHROME, 'latest').build();
+    _driver = await new Builder().forBrowser(Browser.CHROME, '126').build();
     await _driver.get('https://www.buysportscards.com');
     const waitForElement = useWaitForElement(_driver);
 
