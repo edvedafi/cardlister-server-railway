@@ -1,5 +1,6 @@
 import SaleStrategy, { SystemOrder } from './AbstractSalesStrategy';
 import process from 'node:process';
+import { ProductVariant } from '@medusajs/medusa';
 
 abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> {
   static identifier = 'sportlots-sales-strategy';
@@ -51,15 +52,43 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> 
             .find((word) => word.startsWith('#'))
             .replace('#', '');
           const sku = bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`;
-          let variant = await this.productVariantService_.retrieveBySKU(sku);
-          if (variant?.metadata?.sportlots) {
+          let variant: ProductVariant | undefined;
+          try {
+            variant = await this.productVariantService_.retrieveBySKU(sku, {
+              relations: ['product', 'product.variants'],
+            });
+          } catch (e) {
+            this.log(`Could not find product variant for SKU: ${sku}`);
+          }
+          if (!variant && bin) {
+            const [categories] = await this.categoryService_.listAndCount({});
+            const category = categories.find((c) => c?.metadata?.bin === bin);
+            if (category) {
+              const [products] = await this.productService.listAndCount(
+                { category_id: [category.id] },
+                { relations: ['variants'] },
+              );
+              const product = products.find((p) => p.metadata.cardNumber === cardNumber);
+              if (product) {
+                variant = product?.variants.find((v) => v.metadata.sportlots === title);
+              } else {
+                products.forEach((p) => {
+                  const v = p?.variants.find((v) => v.metadata.sportlots === title);
+                  if (v) {
+                    variant = v;
+                  }
+                });
+              }
+            }
+          }
+          if (variant && variant.metadata?.sportlots) {
             variant = variant.product.variants.find((v) => v.metadata.sportlots === title);
           }
           order.lineItems.push({
             quantity: parseInt(quantity.replace('\n0', '').trim()),
-            title: variant.title,
-            sku: variant.sku,
-            cardNumber: <string>variant.metadata.cardNumber,
+            title: variant?.title || title,
+            sku: variant?.sku,
+            cardNumber: variant ? <string>variant.metadata.cardNumber : cardNumber,
             unit_price: parseInt(price.replace('.', '').replace('$', '').trim()),
           });
         }

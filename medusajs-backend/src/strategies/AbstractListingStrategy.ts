@@ -190,14 +190,18 @@ abstract class AbstractListingStrategy<
 
   protected async getQuantity(search: QuantityOptions): Promise<number> {
     const sku = search.sku ? search.sku : search.variant.sku;
-    const [inventoryItems] = await this.inventoryModule.listInventoryItems({ sku });
-    const quantityFromService = await this.inventoryModule.retrieveAvailableQuantity(inventoryItems[0].id, [
-      this.location,
-    ]);
-    this.log(
-      `Quantity for ${sku} is ${quantityFromService} at location ${this.location}. Inventory Items had ${inventoryItems.length} records: ${JSON.stringify(inventoryItems)}`,
-    );
-    return isNaN(quantityFromService) ? 0 : quantityFromService;
+    const [inventoryItems, count] = await this.inventoryModule.listInventoryItems({ sku });
+    // this.log(`Found ${count} inventory items for [${sku}]`);
+    if (count > 0) {
+      const quantityFromService = await this.inventoryModule.retrieveAvailableQuantity(inventoryItems[0].id, [
+        this.location,
+      ]);
+      this.log(`Quantity for ${sku} is ${quantityFromService} at location ${this.location}.`);
+      return isNaN(quantityFromService) ? 0 : quantityFromService;
+    } else {
+      this.log(`No inventory items found for [${sku}]: ${JSON.stringify(inventoryItems)}`);
+      return 0;
+    }
   }
 }
 

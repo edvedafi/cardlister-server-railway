@@ -5,6 +5,7 @@ import axiosRetry from 'axios-retry';
 import { ask } from '../utils/ask';
 import type { Aggregations, Card, Filter, FilterParams, Filters } from '../models/bsc';
 import type { Category, SetInfo } from '../models/setInfo';
+import { getBrowserlessConfig } from '../utils/browserless';
 
 const { showSpinner, log } = useSpinners('bsc', '#e5e5e5');
 
@@ -12,15 +13,18 @@ let _api: AxiosInstance;
 
 async function login() {
   if (!_api) {
-    const browser = await remote({
-      capabilities: {
-        browserName: 'chrome',
-        'goog:chromeOptions': {
-          args: ['headless', 'disable-gpu', '--window-size=1200,2000'],
-        },
-      },
-      logLevel: 'error',
-    });
+    // const browser = await remote({
+    //   capabilities: {
+    //     browserName: 'chrome',
+    //     'goog:chromeOptions': {
+    //       args: ['headless', 'disable-gpu', '--window-size=1200,2000'],
+    //     },
+    //     browserVersion: '126',
+    //   },
+    //   logLevel: 'error',
+    // });
+
+    const browser = await remote(getBrowserlessConfig('https://www.buysportscards.com/', 'BSC_LOG_LEVEL'));
 
     try {
       await browser.url('https://www.buysportscards.com');

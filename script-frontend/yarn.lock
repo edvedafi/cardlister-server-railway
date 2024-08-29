@@ -1724,6 +1724,13 @@
   dependencies:
     "@types/node" "^20.1.0"
 
+"@wdio/types@^9.0.4":
+  version "9.0.4"
+  resolved "https://registry.yarnpkg.com/@wdio/types/-/types-9.0.4.tgz#794716fddff049ca7a58d1420c6ddd719135a0dd"
+  integrity sha512-MN7O4Uk3zPWvkN8d6SNdIjd7qHUlTxS7j0QfRPu6TdlYbHu6BJJ8Rr84y7GcUzCnTAJ1nOIpvUyR8MY3hOaVKg==
+  dependencies:
+    "@types/node" "^20.1.0"
+
 "@wdio/utils@8.39.0":
   version "8.39.0"
   resolved "https://registry.npmjs.org/@wdio/utils/-/utils-8.39.0.tgz"

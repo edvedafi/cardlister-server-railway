@@ -141,7 +141,7 @@ let _driver;
 export async function login() {
   if (!_driver) {
     const { update, finish } = showSpinner('login', 'Logging into SportLots');
-    _driver = await new Builder().forBrowser(Browser.CHROME, 'latest').build();
+    _driver = await new Builder().forBrowser(Browser.CHROME, '126').build();
     await _driver.get('https://sportlots.com/cust/custbin/login.tpl?urlval=/index.tpl&qs=');
     const waitForElement = useWaitForElement(_driver);
 
