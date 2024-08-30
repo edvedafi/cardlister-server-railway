@@ -1,0 +1,24 @@
+diff --git a/node_modules/bullmq/dist/cjs/classes/queue-base.js b/node_modules/bullmq/dist/cjs/classes/queue-base.js
+index d516db5..4f76831 100644
+--- a/node_modules/bullmq/dist/cjs/classes/queue-base.js
++++ b/node_modules/bullmq/dist/cjs/classes/queue-base.js
+@@ -24,6 +24,7 @@ class QueueBase extends events_1.EventEmitter {
+      * testing with mockups and/or extending the Connection class and passing an alternate implementation.
+      */
+     constructor(name, opts = { connection: {} }, Connection = redis_connection_1.RedisConnection) {
++	try {
+         super();
+         this.name = name;
+         this.opts = opts;
+@@ -44,6 +45,11 @@ class QueueBase extends events_1.EventEmitter {
+         this.keys = queueKeys.getKeys(name);
+         this.toKey = (type) => queueKeys.toKey(name, type);
+         this.setScripts();
++	} catch (e) {
++		console.log(e.message);
++		console.log(e);
++		throw e;
++	}
+     }
+     /**
+      * Returns a promise that resolves to a redis client. Normally used only by subclasses.
