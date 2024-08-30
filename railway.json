@@ -6,7 +6,7 @@
   "deploy": {
     "runtime": "V2",
     "numReplicas": 1,
-    "startCommand": "yarn migrate && yarn start",
+    "startCommand": "npm run migrate && npm run start",
     "healthcheckPath": "/health",
     "sleepApplication": false,
     "restartPolicyType": "ON_FAILURE",

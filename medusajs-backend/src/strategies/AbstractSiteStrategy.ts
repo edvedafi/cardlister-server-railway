@@ -155,11 +155,11 @@ abstract class AbstractSiteStrategy<
     const newCount = count + 1;
     this.log(`Advancing count to ${newCount}`);
     await this.atomicPhase_(async (transactionManager) => {
-      await this.batchJobService_.withTransaction(transactionManager).update(batchId, {
-        result: {
-          advancement_count: newCount,
-        },
-      });
+      // await this.batchJobService_.withTransaction(transactionManager).update(batchId, {
+      //   result: {
+      //     advancement_count: newCount,
+      //   },
+      // });
       const job = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchId);
       if (job.status === 'canceled') {
         throw new Error(`Job ${batchId} was canceled`);
