@@ -1,0 +1,14 @@
+diff --git a/node_modules/@medusajs/medusa/dist/loaders/config.js b/node_modules/@medusajs/medusa/dist/loaders/config.js
+index 115d1f3..5dcb3bb 100644
+--- a/node_modules/@medusajs/medusa/dist/loaders/config.js
++++ b/node_modules/@medusajs/medusa/dist/loaders/config.js
+@@ -20,6 +20,9 @@ var logger_1 = __importDefault(require("./logger"));
+ var isProduction = ["production", "prod"].includes(process.env.NODE_ENV || "");
+ var errorHandler = isProduction
+     ? function (msg) {
++	console.log('here');
++	console.log(msg);
++	console.log('there');
+         throw new Error(msg);
+     }
+     : console.log;
