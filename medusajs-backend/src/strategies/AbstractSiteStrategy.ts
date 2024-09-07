@@ -17,6 +17,7 @@ import { StockLocationService } from '@medusajs/stock-location/dist/services';
 import axios, { AxiosInstance } from 'axios';
 import axiosRetry from 'axios-retry';
 import eBayApi from 'ebay-api';
+import { PuppeteerHelper } from '../utils/puppeteer-helper';
 
 type InjectedDependencies = {
   batchJobService: BatchJobService;
@@ -31,7 +32,7 @@ type InjectedDependencies = {
 };
 
 abstract class AbstractSiteStrategy<
-  T extends WebdriverIO.Browser | AxiosInstance | eBayApi,
+  T extends WebdriverIO.Browser | AxiosInstance | eBayApi | PuppeteerHelper,
 > extends AbstractBatchJobStrategy {
   static identifier = 'listing-strategy';
   static batchType = 'listing-sync';
@@ -120,6 +121,18 @@ abstract class AbstractSiteStrategy<
     );
   }
 
+  private logoutConnection: () => void | undefined;
+
+  protected async loginPuppeteer(
+    baseUrl: string,
+    loginFunction?: (pup: PuppeteerHelper) => Promise<PuppeteerHelper>,
+  ): Promise<PuppeteerHelper> {
+    const puppeteerHelper = new PuppeteerHelper();
+    await puppeteerHelper.init(baseUrl);
+    this.logoutConnection = puppeteerHelper.logout.bind(puppeteerHelper);
+    return loginFunction ? loginFunction(puppeteerHelper) : puppeteerHelper;
+  }
+
   protected loginAxios(baseURL: string, headers: { [key: string]: string }): AxiosInstance {
     const api = axios.create({
       baseURL: baseURL,
@@ -149,11 +162,14 @@ abstract class AbstractSiteStrategy<
       // @ts-expect-error - deleteSession is not defined on AxiosInstance and can't figure out how to type it
       await connection.deleteSession();
     }
+    if (this.logoutConnection) {
+      await this.logoutConnection();
+    }
   }
 
   protected async advanceCount(batchId: string, count: number): Promise<number> {
     const newCount = count + 1;
-    this.log(`Advancing count to ${newCount}`);
+    // this.log(`Advancing count to ${newCount}`);
     await this.atomicPhase_(async (transactionManager) => {
       // await this.batchJobService_.withTransaction(transactionManager).update(batchId, {
       //   result: {
@@ -165,7 +181,6 @@ abstract class AbstractSiteStrategy<
         throw new Error(`Job ${batchId} was canceled`);
       }
     });
-    this.log('Advancing count complete');
     return newCount;
   }
 
@@ -199,7 +214,10 @@ abstract class AbstractSiteStrategy<
       price = variant.prices?.find((p) => !p.region_id)?.amount;
     }
 
-    if (!price) throw new Error(`Unable to find price of variant ${JSON.stringify(variant, null, 2)}`);
+    if (!price) {
+      console.log(`Unable to find price of variant ${JSON.stringify(variant, null, 2)}`);
+      price = 99;
+    }
 
     return price / 100;
   }

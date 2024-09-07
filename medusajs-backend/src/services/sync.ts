@@ -87,56 +87,8 @@ class SyncService extends TransactionBaseService {
     }
 
     for (const category of categories) {
-      if (!request.only || request.only.includes('sportlots')) {
-        update('Starting Sportlots Sync');
-        responses.push(
-          await this.batchJobService.create({
-            type: 'sportlots-sync',
-            context: { category_id: category },
-            dry_run: false,
-            created_by: request.user,
-          }),
-        );
-      }
-
-      if (!request.only || request.only.includes('bsc')) {
-        update('Starting BSC Sync');
-        responses.push(
-          await this.batchJobService.create({
-            type: 'bsc-sync',
-            context: { category_id: category },
-            dry_run: false,
-            created_by: request.user,
-          }),
-        );
-      }
-
-      if (!request.only || request.only.includes('ebay')) {
-        update('Starting Ebay Sync');
-        responses.push(
-          await this.batchJobService.create({
-            type: 'ebay-sync',
-            context: { category_id: category },
-            dry_run: false,
-            created_by: request.user,
-          }),
-        );
-      }
-
-      if (!request.only || request.only.includes('mcp')) {
-        update('Starting MCP Sync');
-        responses.push(
-          await this.batchJobService.create({
-            type: 'mcp-sync',
-            context: { category_id: category },
-            dry_run: false,
-            created_by: request.user,
-          }),
-        );
-      }
-
-      if (request.only && request.only.includes('test')) {
-        update('Starting TEST Sync');
+      if (process.env.NODE_ENV === 'development' && !request.only) {
+        update('Running TEST Sync because we are in development mode');
         responses.push(
           await this.batchJobService.create({
             type: 'test-sync',
@@ -145,6 +97,66 @@ class SyncService extends TransactionBaseService {
             created_by: request.user,
           }),
         );
+      } else {
+        if (!request.only || request.only.includes('sportlots')) {
+          update('Starting Sportlots Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'sportlots-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
+
+        if (!request.only || request.only.includes('bsc')) {
+          update('Starting BSC Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'bsc-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
+
+        if (!request.only || request.only.includes('ebay')) {
+          update('Starting Ebay Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'ebay-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
+
+        if (!request.only || request.only.includes('mcp')) {
+          update('Starting MCP Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'mcp-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
+
+        if (request.only && request.only.includes('test')) {
+          update('Starting TEST Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'test-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
       }
     }
     const displayableCategories = Array.from(categories);

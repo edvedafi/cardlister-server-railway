@@ -321,10 +321,8 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
     productVariant.prices = <MoneyAmount[]>prices
       .map((price: MoneyAmount): MoneyAmount | undefined => {
         const existingPrice = productVariant.prices?.find((p) => p.region_id === price.region_id);
-        log('Existing Price', existingPrice);
         if (existingPrice) {
           if (existingPrice.amount !== price.amount) {
-            log('Price Change', existingPrice.amount, price.amount);
             return {
               id: existingPrice.id,
               amount: price.amount,
@@ -333,7 +331,6 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
             } as MoneyAmount;
           }
         } else {
-          console.log('New Price', price);
           return price;
         }
       })

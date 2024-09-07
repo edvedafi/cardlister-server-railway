@@ -11,7 +11,6 @@ import chalkTable from 'chalk-table';
 import { buildTableData, type OldSale } from './utils/data';
 import { getSingleListingInfo } from './old-scripts/firebase';
 import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/bsc';
-import { removeFromEbay } from './old-scripts/ebay';
 import { removeFromMyCardPost, shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
 import open from 'open';
@@ -100,7 +99,7 @@ try {
         const groupedCards = await createGroups({}, oldSales);
         update('Remove listings from sites');
         if (oldSales && oldSales.length > 0) {
-          await removeFromEbay(oldSales);
+          // await removeFromEbay(oldSales);
           await removeFromMyCardPost(oldSales);
           if (groupedCards && Object.keys(groupedCards).length > 0) {
             await removeFromSportLots(groupedCards);

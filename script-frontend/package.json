@@ -57,7 +57,7 @@
     "prettier": "^3.3.2",
     "queue": "^7.0.0",
     "selenium-webdriver": "^4.23.0",
-    "sharp": "^0.33.4",
+    "sharp": "^0.33.5",
     "spinnies": "^0.5.1",
     "terminal-image": "^2.0.0",
     "ts-node": "^10.9.2",

@@ -73,15 +73,18 @@ export const login = async () => {
     await _driver.findElement(By.css('body')).sendKeys(Key.F12);
 
     update('Getting BSC Token');
+    log('Getting BSC Token');
     const reduxAsString = await _driver.executeScript(
       'return Object.values(localStorage).filter((value) => value.includes("secret")).find(value=>value.includes("Bearer"));',
     );
+    log(`Redux: ${reduxAsString}`);
 
     update('Saving  Token');
     const redux = JSON.parse(reduxAsString);
 
     baseHeaders.authorization = 'Bearer ' + redux.secret.trim(); //REMOVE
 
+    log('CREATING AXIOS');
     _api = axios.create({
       baseURL: 'https://api-prod.buysportscards.com/',
       headers: {
@@ -102,6 +105,7 @@ export const login = async () => {
       },
     });
 
+    log('CREATED AXIOS');
     finish('Logged into BSC');
   }
 

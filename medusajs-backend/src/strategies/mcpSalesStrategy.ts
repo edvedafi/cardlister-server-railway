@@ -1,72 +1,55 @@
 import SaleStrategy, { SystemOrder } from './AbstractSalesStrategy';
-import process from 'node:process';
+import { PuppeteerHelper } from '../utils/puppeteer-helper';
+import { login } from '../utils/mcp';
 
-abstract class McpSalesStrategy extends SaleStrategy<WebdriverIO.Browser> {
+abstract class McpSalesStrategy extends SaleStrategy<PuppeteerHelper> {
   static identifier = 'mcp-sales-strategy';
   static batchType = 'mcp-sales-sync';
   static listingSite = 'MCP';
 
   async login() {
-    const browser = await this.loginWebDriver('https://mycardpost.com/');
-
-    await browser.url('login');
-    await browser.$('input[type="email"]').setValue(process.env.MCP_EMAIL);
-    await browser.$('input[type="password"]').setValue(process.env.MCP_PASSWORD);
-    await browser.$('button=Login').click();
-
-    let toast: WebdriverIO.Element;
-    try {
-      toast = await browser.$('.toast-message');
-    } catch (e) {
-      // no toast so all is good
-    }
-    if (toast && (await toast.isDisplayed())) {
-      const resultText = await toast.getText();
-      if (resultText.indexOf('Invalid Credentials') > -1) {
-        throw new Error('Invalid Credentials');
-      }
-    }
-
-    await browser.$('h2=edvedafi').waitForDisplayed();
-
-    return browser;
+    return this.loginPuppeteer('https://mycardpost.com/', login);
   }
 
-  async getOrders(browser: WebdriverIO.Browser): Promise<SystemOrder[]> {
-    await browser.url('/orders');
+  async getOrders(pup: PuppeteerHelper): Promise<SystemOrder[]> {
+    await pup.goto('orders');
 
     const orders: SystemOrder[] = [];
-    await browser.$('input[type="radio"][value="3"][wire\\:model="order_type"]').click();
-    await browser.$('h2=Shipping Address').waitForDisplayed();
+    await pup.locator('input[type="radio"][value="3"][wire\\:model="order_type"]').click();
+    await pup.locatorText('h2', 'Shipping Address').wait();
 
-    const orderTable = await browser.$$('div.orders-blk');
-    for (const table of orderTable) {
-      let foundTracking = false;
+    const orderTable = await pup.$$('div.orders-blk');
+    let first = true;
+    for await (const table of orderTable) {
+      let foundTracking: boolean;
       try {
-        foundTracking = await table.$('div.tr-id').isDisplayed();
+        foundTracking = !!(await table.$('div.tr-id'));
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (e) {
-        // no tracking id so all is good
+        foundTracking = false;
       }
-      if (!foundTracking) {
-        const orderIdLink = await table.$('a*=Order id:');
-        const orderId = await orderIdLink.getText();
+      if (first || !foundTracking) {
+        first = false;
+        // const orderIdLink = await table.$('a*=Order id:');
+        const orderIdLink = await pup.getLink({ parent: table, locator: 'a', text: 'Order id:' });
+        const orderId = orderIdLink.text;
 
-        const shippingContainer = browser.$('h2=Shipping Address').$('..');
+        const shippingContainer = await pup.el({ locator: 'h2', text: 'Shipping Address' });
 
         const order: SystemOrder = {
           id: orderId.substring(orderId.indexOf('#') + 1),
           customer: {
-            name: await shippingContainer.$('p').getText(),
-            email: (await table.$('p*=Email').getText()).split(':')[1].trim(),
-            username: (await table.$('p*=Buyer').getText()).split(':')[1].trim(),
+            name: await pup.getText({ locator: 'p', parent: shippingContainer }), //await shippingContainer.$('p').getText(),
+            email: (await pup.getText({ locator: 'p', text: 'Email', parent: table })).split(':')[1].trim(), // (await table.$('p*=Email').getText()).split(':')[1].trim(),
+            username: (await pup.getText({ locator: 'p', text: 'Buyer', parent: table })).split(':')[1].trim(), //(await table.$('p*=Buyer').getText()).split(':')[1].trim(),
           },
-          packingSlip: await orderIdLink.getAttribute('href'),
+          packingSlip: orderIdLink.href,
           lineItems: [],
         };
 
-        const itemLines = await table.$('div.col-md-4').$$('p');
+        const itemLines = await (await table.$('div.col-md-4')).$$('p');
         for (const itemLine of itemLines) {
-          const line = await itemLine.getText();
+          const line = await pup.getText(itemLine);
           const [title, sku] = line.split('[').map((s) => s.replace(']', '').trim());
           order.lineItems.push({
             quantity: 1,

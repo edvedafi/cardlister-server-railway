@@ -12,9 +12,11 @@ import {
   LineItemService,
   Order,
   OrderService,
+  ShippingOptionService,
 } from '@medusajs/medusa';
 import SyncService from '../services/sync';
 import { InventoryItemService, InventoryService, ReservationItemService } from '@medusajs/inventory/dist/services';
+import { PuppeteerHelper } from '../utils/puppeteer-helper';
 
 type InjectedDependencies = {
   transactionManager: EntityManager;
@@ -27,6 +29,7 @@ type InjectedDependencies = {
   inventoryService: InventoryService;
   inventoryItemService: InventoryItemService;
   lineItemService: LineItemService;
+  shippingOptionService: ShippingOptionService;
   listModules: () => string[];
 };
 
@@ -55,7 +58,9 @@ export type SystemOrder = {
   }[];
 };
 
-abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBayApi> extends AbstractSiteStrategy<T> {
+abstract class SaleStrategy<
+  T extends WebdriverIO.Browser | AxiosInstance | eBayApi | PuppeteerHelper,
+> extends AbstractSiteStrategy<T> {
   static identifier = 'sales-strategy';
   static batchType = 'sales-sync';
   static listingSite = 'sync-site';
@@ -66,9 +71,11 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
   private readonly syncService: SyncService;
   private readonly inventoryService: InventoryService;
   private readonly lineItemService: LineItemService;
+  private readonly shippingOptionService: ShippingOptionService;
+  private shippingOption: string;
+
   // private readonly reservationItemService: ReservationItemService;
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected constructor(__container__: InjectedDependencies) {
     // @ts-expect-error super call
     // eslint-disable-next-line prefer-rest-params
@@ -85,7 +92,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
       this.inventoryService = __container__.inventoryService;
       // this.inventoryItemService = __container__.inventoryItemService;
       this.lineItemService = __container__.lineItemService;
-      // console.log(__container__.reservationItemService);
+      this.shippingOptionService = __container__.shippingOptionService;
     } catch (e) {
       this.log(`${(<typeof SaleStrategy>this.constructor).identifier}::constructor::error`, e);
     }
@@ -125,12 +132,20 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
       await this.getRegionId();
 
       this.progress('Getting Orders');
-      const systemOrders = (await this.getOrders(api))
-        .map((order) => ({
-          ...order,
-          lineItems: order.lineItems.filter((li) => li.sku),
-        }))
-        .filter((order) => order.lineItems.length > 0);
+      let systemOrders: SystemOrder[];
+      try {
+        systemOrders = (await this.getOrders(api))
+          .map((order) => ({
+            ...order,
+            lineItems: order.lineItems.filter((li) => li.sku),
+          }))
+          .filter((order) => order.lineItems.length > 0);
+      } catch (e) {
+        if ('screenshot' in api) {
+          await api.screenshot();
+        }
+        throw e;
+      }
       this.log(`Converting ${systemOrders.length} Orders`);
 
       const orders: Order[] = [];
@@ -193,7 +208,7 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
               customer_id: customers[0]?.id,
               email: systemOrder.customer.email,
               region_id: await this.getRegionId(),
-              shipping_methods: [],
+              shipping_methods: [{ option_id: await this.getShippingOption() }],
               items: items,
               no_notification_order: true,
               idempotency_key: systemOrder.id,
@@ -226,6 +241,12 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                     this.log(`Error authorizing payment for draft ${draftOrder.id}`, e);
                     throw e;
                   }
+                  // try {
+                  //   cart = await this.cartService.addShippingMethod(draftOrder.cart_id, );
+                  // } catch (e) {
+                  //   this.log(`Error authorizing payment for draft ${draftOrder.id}`, e);
+                  //   throw e;
+                  // }
                 }
                 try {
                   order = await this.orderService.createFromCart(cart.id);
@@ -233,6 +254,12 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
                   this.log(`Error creating order from cart ${cart.id}`, e);
                   throw e;
                 }
+                // try {
+                //   await this.orderService.addShippingMethod(order.id, cart.shipping_methods[0].id);
+                // } catch (e) {
+                //   this.log(`Error adding shipping method to order ${order.id}`, e);
+                //   throw e;
+                // }
                 try {
                   await this.draftOrderService.registerCartCompletion(draftOrder.id, order.id);
                 } catch (e) {
@@ -320,6 +347,19 @@ abstract class SaleStrategy<T extends WebdriverIO.Browser | AxiosInstance | eBay
   }
 
   abstract getOrders(api: T): Promise<SystemOrder[]>;
+
+  private async getShippingOption(): Promise<string> {
+    if (!this.shippingOption) {
+      const shippingOptions = await this.shippingOptionService.list({
+        region_id: await this.getRegionId(),
+      });
+      this.shippingOption = shippingOptions[0]?.id;
+      if (!this.shippingOption) {
+        throw `No ShippingOption Found for ${(<typeof AbstractSiteStrategy>this.constructor).listingSite}`;
+      }
+    }
+    return this.shippingOption;
+  }
 }
 
 export default SaleStrategy;

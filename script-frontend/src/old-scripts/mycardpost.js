@@ -15,7 +15,7 @@ export const login = async () => {
   if (!_driver) {
     const { finish, update } = showSpinner('login', 'Login');
     update('Loading');
-    _driver = await new Builder().forBrowser(Browser.CHROME, 'latest').build();
+    _driver = await new Builder().forBrowser(Browser.CHROME, '126').build();
     await _driver.get('https://mycardpost.com/login');
 
     const waitForElement = useWaitForElement(_driver);
