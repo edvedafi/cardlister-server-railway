@@ -13,7 +13,7 @@
     "medusa"
   ],
   "engines": {
-    "node": "22.5.1"
+    "node": "22"
   },
   "scripts": {
     "clean": "cross-env ./node_modules/.bin/rimraf dist",

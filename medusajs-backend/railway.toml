@@ -1,0 +1,21 @@
+[install]
+packages = ["nodejs", "yarn"]
+commands = [
+    "yarn install"
+]
+
+[build]
+builder = "NIXPACKS"
+node_version = "22"
+command = "yarn build" # Adjust to match your build command
+
+[deploy]
+runtime = "V2"
+num_replicas = 1
+start_command = "yarn migrate && yarn start"
+healthcheck_path = "/health"
+sleep_application = false
+
+[deploy.restart_policy]
+type = "ON_FAILURE"
+max_retries = 11
