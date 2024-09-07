@@ -1,13 +1,6 @@
-[install]
-packages = ["nodejs", "yarn"]
-commands = [
-    "yarn install"
-]
-
 [build]
 builder = "NIXPACKS"
 node_version = "22"
-command = "yarn build" # Adjust to match your build command
 
 [deploy]
 runtime = "V2"
