@@ -69,7 +69,7 @@ async function login() {
       log(e);
       await browser.saveScreenshot('.error.png');
     } finally {
-      await browser.shutdown();
+      await browser.deleteSession();
     }
 
     axiosRetry(_api, { retries: 5, retryDelay: axiosRetry.exponentialDelay });

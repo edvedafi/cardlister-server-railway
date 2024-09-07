@@ -1,5 +1,7 @@
 import { IInventoryService } from '@medusajs/types';
 import { ProductVariant } from '@medusajs/medusa';
+import fs from 'node:fs';
+import axios from 'axios';
 
 export const isYes = (str: string | boolean | unknown): boolean =>
   (typeof str === 'boolean' && str) ||
@@ -41,3 +43,20 @@ export const getAvailableQuantity = async (
 
 export const getRegionPrice = (variant: ProductVariant, regionId: string): number =>
   (variant?.prices?.find((p) => p.region_id === regionId)?.amount || 0) / 100;
+
+export async function downloadFile(url: string, outputPath: string) {
+  const writer = fs.createWriteStream(outputPath);
+
+  const response = await axios({
+    url,
+    method: 'GET',
+    responseType: 'stream',
+  });
+
+  response.data.pipe(writer);
+
+  return new Promise((resolve, reject) => {
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+}

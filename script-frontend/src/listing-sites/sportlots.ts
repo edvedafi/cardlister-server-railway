@@ -167,19 +167,15 @@ export async function getSLSet(setInfo: SetInfo): Promise<SelectOption> {
     );
 
     //find the table and iterate through the rows
-    const allSets = [];
     const table = await browser.$('th=Set Name');
     await table.waitForDisplayed({ timeout: 5000 });
-    const rows = await table.$('../..').$$('tr:has(td):not(:has(th))');
-    for (const row of rows) {
-      const columns = await row.$$('td');
-      if (columns.length > 1) {
-        const fullSetText = await columns[1].getText();
-        const setNumber = fullSetText.substring(0, fullSetText.indexOf(' '));
-        const setText = fullSetText.substring(fullSetText.indexOf(' ') + 1);
-        allSets.push({ name: setText, value: setNumber });
-      }
-    }
+    const tableText = await table.$('../..').getText();
+    //split the text into rows
+    const allSets = tableText.split('\n').map((row) => {
+      const setNumber = row.substring(0, row.indexOf(' '));
+      const setText = row.substring(row.indexOf(' ') + 1);
+      return { name: setText, value: setNumber };
+    });
 
     let defaultAnswer = `${setInfo.brand.name} ${setInfo.set.name}`;
     if (setInfo.variantName) {
@@ -198,7 +194,7 @@ export async function shutdownSportLots() {
   const { finish, error } = showSpinner('shutdown', 'Shutting down SportLots');
   if (_browser) {
     try {
-      await _browser.shutdown();
+      await _browser.deleteSession();
       finish('Sportlots shutdown complete');
     } catch (e) {
       error('Sportslots shutdown errored');

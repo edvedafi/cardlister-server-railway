@@ -441,12 +441,15 @@ export async function getOrders(): Promise<Order[]> {
 }
 
 export async function completeOrder(order: Order): Promise<Order[]> {
-  // if (order.items && order.items?.length > 0) {
-  //   await medusa.admin.orders.createFulfillment(order.id, {
-  //     location_id: await getStockLocationId(),
-  //     items: order.items.map((li) => ({ item_id: li.id, quantity: li.quantity })),
-  //   });
-  // }
+  if (order.items && order.items?.length > 0) {
+    const fulfillmentResponse = await medusa.admin.orders.createFulfillment(order.id, {
+      location_id: await getStockLocationId(),
+      items: order.items.map((li) => ({ item_id: li.id, quantity: li.quantity })),
+    });
+    await medusa.admin.orders.createShipment(order.id, {
+      fulfillment_id: fulfillmentResponse.order.fulfillments[0].id,
+    });
+  }
   const response = await medusa.admin.orders.complete(order.id);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.orders;

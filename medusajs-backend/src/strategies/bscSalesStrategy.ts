@@ -137,14 +137,8 @@ abstract class BSCSalesStrategy extends SaleStrategy<AxiosInstance> {
   static batchType = 'bsc-sales-sync';
   static listingSite = 'BSC';
 
-  // // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  // protected constructor(__container__: unknown) {
-  //   // eslint-disable-next-line prefer-rest-params
-  //   super(arguments[0]);
-  // }
-
   async login(): Promise<AxiosInstance> {
-    return bscLogin(this.loginAxios);
+    return bscLogin(await this.loginPuppeteer('https://www.buysportscards.com'), this.loginAxios);
   }
 
   async getOrders(api: AxiosInstance): Promise<SystemOrder[]> {

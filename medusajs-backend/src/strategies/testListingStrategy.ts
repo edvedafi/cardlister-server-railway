@@ -1,22 +1,23 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 import AbstractListingStrategy from './AbstractListingStrategy';
+import axios, { AxiosInstance } from 'axios';
 
-class TestListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
+class TestListingStrategy extends AbstractListingStrategy<AxiosInstance> {
   static identifier = 'test-strategy';
   static batchType = 'test-sync';
   static listingSite = 'ebay';
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async removeAllInventory(api: WebdriverIO.Browser, category: ProductCategory): Promise<void> {
+  async removeAllInventory(api: AxiosInstance, category: ProductCategory): Promise<void> {
     //TODO Need to Implement
   }
 
   async login() {
-    return this.loginWebDriver('https://www.medusajs.com/');
+    return axios.create();
   }
 
   async syncProduct(
-    eBay: WebdriverIO.Browser,
+    api: AxiosInstance,
     product: Product,
     variant: ProductVariant,
     category: ProductCategory,

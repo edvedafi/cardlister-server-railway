@@ -5,6 +5,7 @@ import { InventoryService } from '@medusajs/inventory/dist/services';
 import { AxiosInstance } from 'axios';
 import eBayApi from 'ebay-api';
 import AbstractSiteStrategy from './AbstractSiteStrategy';
+import { PuppeteerHelper } from '../utils/puppeteer-helper';
 
 type InjectedDependencies = {
   transactionManager: EntityManager;
@@ -12,7 +13,7 @@ type InjectedDependencies = {
 };
 
 abstract class AbstractListingStrategy<
-  T extends WebdriverIO.Browser | AxiosInstance | eBayApi,
+  T extends WebdriverIO.Browser | AxiosInstance | eBayApi | PuppeteerHelper,
 > extends AbstractSiteStrategy<T> {
   static identifier = 'listing-strategy';
   static batchType = 'listing-sync';

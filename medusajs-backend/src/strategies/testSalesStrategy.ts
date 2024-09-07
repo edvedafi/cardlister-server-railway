@@ -20,7 +20,7 @@ abstract class TestSalesStrategy extends SaleStrategy<AxiosInstance> {
   async getOrders(): Promise<SystemOrder[]> {
     return [
       {
-        id: _.uniqueId('test-order-4-'),
+        id: _.uniqueId('test-order-11-'),
         customer: {
           email: 'jburich+test@gmail.com',
           username: 'jburich',
@@ -29,14 +29,8 @@ abstract class TestSalesStrategy extends SaleStrategy<AxiosInstance> {
           {
             title: 'testing 1',
             unit_price: 199,
-            quantity: 2,
-            sku: '801|8B-16',
-          },
-          {
-            title: 'testing 2',
-            unit_price: 199,
-            quantity: 1,
-            sku: '801|8B-9',
+            quantity: 3,
+            sku: '910|CS-20',
           },
         ],
       },

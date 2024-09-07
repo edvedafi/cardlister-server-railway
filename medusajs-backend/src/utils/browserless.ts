@@ -1,7 +1,7 @@
-import { RemoteOptions } from 'webdriverio';
+import { WebdriverIOConfig } from '@wdio/types/build/Capabilities';
 
 export function getBrowserlessConfig(baseUrl: string, logKey: string) {
-  const config: RemoteOptions = {
+  const config: WebdriverIOConfig = {
     capabilities: {
       browserName: 'chrome',
       'goog:chromeOptions': {
@@ -29,8 +29,8 @@ export function getBrowserlessConfig(baseUrl: string, logKey: string) {
     baseUrl: baseUrl,
   };
   if (process.env[logKey]) {
-    // @ts-expect-error Not really sure how to type this correctly
-    config.logLevel = (process.env[logKey] as string).toLowerCase();
+    // @ts-expect-error - logLevel is not defined on WebdriverIOConfig
+    config.logLevel = process.env[logKey].toLowerCase();
   }
   console.log('process.env.BROWSER_DOMAIN_PRIVATE', process.env.BROWSER_DOMAIN_PRIVATE);
   if (process.env.BROWSER_DOMAIN_PRIVATE) {

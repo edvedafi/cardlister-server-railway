@@ -1,52 +1,56 @@
 import SaleStrategy, { SystemOrder } from './AbstractSalesStrategy';
-import process from 'node:process';
+import { PuppeteerHelper } from '../utils/puppeteer-helper';
+import { login as slLogin } from '../utils/sportlots';
 import { ProductVariant } from '@medusajs/medusa';
 
-abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> {
+abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
   static identifier = 'sportlots-sales-strategy';
   static batchType = 'sportlots-sales-sync';
   static listingSite = 'SportLots';
 
   async login() {
-    const browser = await this.loginWebDriver('https://www.sportlots.com/');
-
-    await browser.url('cust/custbin/login.tpl?urlval=/index.tpl&qs=');
-    await browser.$('input[name="email_val"]').setValue(process.env.SPORTLOTS_ID);
-    await browser.$('input[name="psswd"]').setValue(process.env.SPORTLOTS_PASS);
-    await browser.$('input[value="Sign-in"]').click();
-    return browser;
+    return await slLogin(await this.loginPuppeteer('https://www.sportlots.com/'));
   }
 
-  async getOrders(browser: WebdriverIO.Browser): Promise<SystemOrder[]> {
+  async getOrders(pup: PuppeteerHelper): Promise<SystemOrder[]> {
     const orders: SystemOrder[] = [];
 
     const process = async (orderType: string) => {
-      await browser.url(`inven/dealbin/dealacct.tpl?ordertype=${orderType}`);
-      const orderTable = await browser.$$('form[action="/inven/dealbin/dealupd.tpl"]');
+      await pup.goto(`inven/dealbin/dealacct.tpl?ordertype=${orderType}`);
+      const orderTable = await pup.$$('form[action="/inven/dealbin/dealupd.tpl"]');
+      console.log('orderTable', orderTable);
       for (const table of orderTable) {
         //its divs all the way down!
         let i = 0;
         const divs = await table.$$(`div`);
+        console.log('divs', divs.length);
+        console.log('divi', divs[i]);
         const link = await divs[i].$('a');
+        console.log(link);
+        const orderId = await pup.getText(link);
+        const username = orderId.slice(0, orderId.indexOf('2024'));
         const order: SystemOrder = {
-          id: await link.getText(),
+          id: orderId,
           customer: {
-            name: await link.getAttribute('title'),
-            username: await link.getText(),
-            email: (await link.getText()) + '@sportlots.com',
+            name: await pup.getAttribute(link, 'title'),
+            username: username,
+            email: `${username}@sportlots.com`,
           },
-          packingSlip: (await link.getAttribute('href')).replace("javascript:showFAQ('", '').replace("',1400,500)", ''),
+          packingSlip: (await pup.getAttribute(link, 'href'))
+            .replace("javascript:showFAQ('", '')
+            .replace("',1400,500)", ''),
           lineItems: [],
         };
         i = 15; // skip a bunch of junk
-        this.log(`Processing divs: ${divs.length}`);
-        while (i + 6 <= divs.length) {
+        const totalDivs = divs.length;
+        this.log(`Processing divs: ${totalDivs}`);
+        while (i + 6 <= totalDivs) {
           i++; //first is a blank div
-          const quantity = await divs[i++]?.getText();
-          const title = await divs[i++]?.getText();
-          const bin = await divs[i++]?.getText();
+          const quantity = await pup.getText(divs[i++]);
+          const title = await pup.getText(divs[i++]);
+          const bin = await pup.getText(divs[i++]);
           i++; // condition
-          const price = await divs[i++]?.getText();
+          const price = await pup.getText(divs[i++]);
           const cardNumber = title
             .split(' ')
             .find((word) => word.startsWith('#'))
@@ -85,10 +89,11 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> 
             variant = variant.product.variants.find((v) => v.metadata.sportlots === title);
           }
           order.lineItems.push({
-            quantity: parseInt(quantity.replace('\n0', '').trim()),
+            quantity: parseInt(quantity),
             title: variant?.title || title,
-            sku: variant?.sku,
-            cardNumber: variant ? <string>variant.metadata.cardNumber : cardNumber,
+            sku: variant?.sku || sku,
+            cardNumber:
+              <string>variant?.metadata?.cardNumber || <string>variant?.product?.metadata.cardNumber || cardNumber,
             unit_price: parseInt(price.replace('.', '').replace('$', '').trim()),
           });
         }
@@ -97,9 +102,11 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<WebdriverIO.Browser> 
       }
     };
 
-    await process('1a');
     await process('1b');
+    await process('1a');
 
+    this.log('Found Orders:');
+    this.log(JSON.stringify(orders, null, 2));
     return orders;
   }
 }

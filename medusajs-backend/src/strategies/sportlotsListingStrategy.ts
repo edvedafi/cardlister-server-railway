@@ -1,150 +1,141 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
-import process from 'node:process';
 import AbstractListingStrategy from './AbstractListingStrategy';
+import { PuppeteerHelper } from '../utils/puppeteer-helper';
+import { login as slLogin } from '../utils/sportlots';
 
-class SportlotsListingStrategy extends AbstractListingStrategy<WebdriverIO.Browser> {
+class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
   static identifier = 'sportlots-strategy';
   static batchType = 'sportlots-sync';
   static listingSite = 'SportLots';
 
   async login() {
-    const browser = await this.loginWebDriver('https://www.sportlots.com/');
-
-    await browser.url('cust/custbin/login.tpl?urlval=/index.tpl&qs=');
-    await browser.$('input[name="email_val"]').setValue(process.env.SPORTLOTS_ID);
-    await browser.$('input[name="psswd"]').setValue(process.env.SPORTLOTS_PASS);
-    await browser.$('input[value="Sign-in"]').click();
-    return browser;
+    return await slLogin(await this.loginPuppeteer('https://www.sportlots.com/'));
   }
 
-  async removeAllInventory(browser: WebdriverIO.Browser, category: ProductCategory): Promise<void> {
-    await browser.url(`inven/dealbin/setdetail.tpl?Set_id=${category.metadata.sportlots}`);
-    await browser.$('input[value="Delete All Set Inventory"').click();
-    await browser.waitUntil(
-      async () => {
-        try {
-          await browser.getAlertText();
-          return true;
-        } catch (e) {
-          return false;
-        }
-      },
-      {
-        timeout: 5000, // Adjust the timeout as needed
-        timeoutMsg: 'Alert did not appear within the timeout',
-      },
-    );
-    await browser.acceptAlert();
+  async removeAllInventory(pup: PuppeteerHelper, category: ProductCategory): Promise<void> {
+    await pup.goto(`inven/dealbin/setdetail.tpl?Set_id=${category.metadata.sportlots}`);
+    const waitForAlert = pup.acceptAlert();
+    await pup.locator('input[value="Delete All Set Inventory"').click();
+    await waitForAlert;
   }
 
   async loadAddInventoryScreen(
-    browser: WebdriverIO.Browser,
+    pup: PuppeteerHelper,
     year: string,
     brand: string,
     sport: string,
     bin: string,
   ): Promise<void> {
-    await browser.url('inven/dealbin/newinven.tpl');
-    await browser.$('select[name="yr"]').selectByAttribute('value', year);
-    await browser.$('select[name="brd"]').selectByAttribute('value', brand);
-    await browser.$('select[name="sprt"]').selectByAttribute(
-      'value',
-      {
-        baseball: 'BB',
-        football: 'FB',
-        basketball: 'BK',
-      }[sport.toLowerCase()],
-    );
-    await browser.$('input[name="dbin"]').setValue(bin);
-    await browser.$('input[type="radio"][name="pricing"][value="NEW"]').click();
-    await browser.$('input[value="Next"]').click();
+    try {
+      await pup.goto('inven/dealbin/newinven.tpl');
+      await pup.page.select('select[name="yr"]', year);
+      await pup.page.select('select[name="brd"]', brand);
+      await pup.page.select(
+        'select[name="sprt"]',
+        {
+          baseball: 'BB',
+          football: 'FB',
+          basketball: 'BK',
+        }[sport.toLowerCase()],
+      );
+      await pup.locator('input[name="dbin"]').fill(`${bin}`);
+      await pup.locator('input[type="radio"][name="pricing"][value="NEW"]').click();
+      await pup.locator('input[value="Next"]').click();
+    } catch (e) {
+      await pup.screenshot('load-inventory-error');
+      throw e;
+    }
   }
 
-  async selectSet(browser: WebdriverIO.Browser, setId: string) {
-    await browser.waitUntil(async () => (await browser.getUrl()).match(/dealsets.tpl/));
-    await browser.$(`input[name="selset"][value="${setId}"]`).click();
-    await browser.$('input[value="Get Cards"').click();
+  async selectSet(pup: PuppeteerHelper, setId: string) {
+    try {
+      await pup.waitForURL('dealsets.tpl');
+      await pup.locator(`input[name="selset"][value="${setId}"]`).click();
+      await pup.locator('input[value="Get Cards"').click();
+      await pup.waitForURL('listcards.tpl');
+    } catch (e) {
+      await pup.screenshot('select-set-error');
+      throw e;
+    }
   }
 
   async syncProducts(
-    browser: WebdriverIO.Browser,
+    pup: PuppeteerHelper,
     products: Product[],
     category: ProductCategory,
     advanceCount: (count: number) => Promise<number>,
   ): Promise<number> {
-    let count = 0;
-    await this.loadAddInventoryScreen(
-      browser,
-      category.metadata.year as string,
-      category.metadata.brand as string,
-      category.metadata.sport as string,
-      category.metadata.bin as string,
-    );
+    try {
+      let count = 0;
+      await this.loadAddInventoryScreen(
+        pup,
+        category.metadata.year as string,
+        category.metadata.brand as string,
+        category.metadata.sport as string,
+        category.metadata.bin as string,
+      );
 
-    await this.selectSet(browser, category.metadata.sportlots as string);
+      await this.selectSet(pup, category.metadata.sportlots as string);
 
-    const processPage = async (): Promise<number> => {
-      let expectedAdds = 0;
+      const processPage = async (): Promise<number> => {
+        let expectedAdds = 0;
 
-      const rows = await browser
-        .$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody')
-        .$$('tr:has(td):not(:has(th))');
-      for (const row of rows) {
-        const cardNumberCell = await row.$('td:nth-child(2)');
-        const cardNumber = await cardNumberCell.getText();
-        const product = products.find((p) => p.metadata.cardNumber.toString() === cardNumber);
+        const tableBody = await pup.$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody');
+        const rows = await tableBody.$$('tr:has(td):not(:has(th))');
 
-        const isVariation = await cardNumberCell
-          .getAttribute('class')
-          .then((classes) => classes.includes('smallcolorleft'));
-        let variant: ProductVariant | undefined;
-        if (isVariation) {
-          const title = await row.$('td:nth-child(3)').getText();
-          variant = product?.variants.find((v) => v.metadata.sportlots === title);
-        } else {
-          variant = product?.variants.find((v) => v.metadata.isBase);
-        }
-        if (variant) {
-          const quantity = await this.getQuantity({ variant });
+        for (const row of rows) {
+          console.log('Processing row', await pup.getText(row));
+          const cardNumberCell = await row.$('td:nth-child(2)');
+          const cardNumber = await pup.getText(cardNumberCell);
+          const product = products.find((p) => p.metadata.cardNumber.toString() === cardNumber);
 
-          if (quantity > 0) {
-            await row.$('td:nth-child(1) > input').setValue(quantity);
-            await row.$('td:nth-child(4) > input').setValue(this.getPrice(variant));
-            expectedAdds += quantity;
+          const isVariation = await pup.hasClass(row, 'variation');
+          let variant: ProductVariant | undefined;
+          if (isVariation) {
+            const title = await pup.getText(row.$('td:nth-child(3)'));
+            variant = product?.variants.find((v) => v.metadata.sportlots === title);
           } else {
-            this.log(`No quantity for ${cardNumber}`);
+            variant = product?.variants.find((v) => v.metadata.isBase);
           }
-        } else {
-          //TODO Need to handle this in a recoverable way
-          this.log(`variant not found ${cardNumber}`);
+          if (variant) {
+            const quantity = await this.getQuantity({ variant });
+
+            if (quantity > 0) {
+              await (await row.$('td:nth-child(1) > input')).type(`${quantity}`);
+              await (await row.$('td:nth-child(4) > input')).type(this.getPrice(variant).toString());
+              expectedAdds += quantity;
+            } else {
+              this.log(`No quantity for ${cardNumber}`);
+            }
+          } else {
+            //TODO Need to handle this in a recoverable way
+            this.log(`variant not found ${cardNumber}`);
+          }
+          count = await advanceCount(count);
         }
-        count = await advanceCount(count);
-      }
 
-      await browser.$('input[value="Inventory Cards"').click();
-      const banner = await browser.$('h2.message').getText();
-      let resultCount = parseInt(banner.replace('  cards added', ''));
-      if (resultCount == expectedAdds) {
-        this.log('Set Successfully added:' + expectedAdds);
-      } else {
-        throw new Error(`sportlots::Failed. Uploaded ${resultCount} cards but expected ${expectedAdds} cards.`);
-      }
+        await pup.locator('input[value="Inventory Cards"').click();
+        await pup.locator('h2.message').wait();
+        const banner = await pup.getText('h2.message');
+        let resultCount = parseInt(banner.replace('  cards added', ''));
+        if (resultCount == expectedAdds) {
+          this.log('Set Successfully added:' + expectedAdds);
+        } else {
+          throw new Error(`sportlots::Failed. Uploaded ${resultCount} cards but expected ${expectedAdds} cards.`);
+        }
 
-      //keep processing while there are more pages
-      let nextPage: boolean;
-      try {
-        nextPage = await browser.$('td=Skip to Page:').isExisting();
-      } catch (e) {
-        nextPage = false;
-      }
-      if (nextPage) {
-        resultCount += await processPage();
-      }
-      return resultCount;
-    };
-
-    //process at least once
-    return await processPage();
+        if (await pup.hasText('td', 'Skip to Page:')) {
+          resultCount += await processPage();
+        }
+        return resultCount;
+      };
+      //process at least once
+      return await processPage();
+    } catch (e) {
+      console.log('Sync Error', e);
+      await pup.screenshot('sync-error');
+      throw e;
+    }
   }
 }
 
