@@ -9,7 +9,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
   static listingSite = 'SportLots';
 
   async login() {
-    return await slLogin(await this.loginPuppeteer('https://www.sportlots.com/'));
+    return await this.loginPuppeteer('https://www.sportlots.com/', slLogin);
   }
 
   async removeAllInventory(pup: PuppeteerHelper, category: ProductCategory): Promise<void> {
@@ -94,6 +94,8 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
           if (isVariation) {
             const title = await pup.getText(row.$('td:nth-child(3)'));
             variant = product?.variants.find((v) => v.metadata.sportlots === title);
+          } else if (product?.variants.length == 1) {
+            variant = product?.variants[0];
           } else {
             variant = product?.variants.find((v) => v.metadata.isBase);
           }

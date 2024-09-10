@@ -31,7 +31,8 @@
     "release:link": "railway link",
     "redis": "cross-env redis-stack-server",
     "deploy": "cd .. && railway up",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "logs": "railway logs"
   },
   "dependencies": {
     "@medusajs/admin": "7.1.16",

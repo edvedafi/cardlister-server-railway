@@ -15,6 +15,7 @@ import type {
 } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
 import chalk from 'chalk';
+import axios, { type AxiosError } from 'axios';
 
 const { showSpinner, log } = useSpinners('Medusa', chalk.greenBright);
 
@@ -262,6 +263,10 @@ export async function getSales(only: string[] = []) {
   return runBatches('sales', only);
 }
 
+export async function fixVariants(categoryId: string) {
+  return runBatches('fix', [], { category: categoryId });
+}
+
 async function runBatches(type: string, only: string[] = [], context: { [key: string]: unknown } = {}): Promise<void> {
   if (only.length > 0) {
     context.only = only;
@@ -288,7 +293,7 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
         } else {
           update(job.status);
         }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
       if (job.status === 'completed') {
         finish(`${job.type}::${job.id} Complete`);
@@ -426,33 +431,57 @@ export async function getProducts(category: string): Promise<Product[]> {
   return response.products;
 }
 
-export async function getOrders(): Promise<Order[]> {
-  const response = await medusa.admin.orders.list(
-    {
+export async function getOrders(lastNdays?: string): Promise<Order[]> {
+  let response;
+  if (lastNdays && parseInt(lastNdays) > 0) {
+    const today = new Date();
+    const pastDate = new Date(today);
+    pastDate.setDate(today.getDate() - parseInt(lastNdays));
+    response = await medusa.admin.orders.list({
+      created_at: { gt: pastDate },
+      limit: 100,
+      offset: 0,
+      expand: 'items,items.variant',
+    });
+  } else {
+    response = await medusa.admin.orders.list({
       status: ['pending'],
       limit: 100,
       offset: 0,
       expand: 'items,items.variant',
-    },
-    { maxRetries: 3 },
-  );
+    });
+  }
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.orders;
 }
 
-export async function completeOrder(order: Order): Promise<Order[]> {
-  if (order.items && order.items?.length > 0) {
-    const fulfillmentResponse = await medusa.admin.orders.createFulfillment(order.id, {
-      location_id: await getStockLocationId(),
-      items: order.items.map((li) => ({ item_id: li.id, quantity: li.quantity })),
-    });
-    await medusa.admin.orders.createShipment(order.id, {
-      fulfillment_id: fulfillmentResponse.order.fulfillments[0].id,
-    });
+export async function completeOrder(order: Order): Promise<void> {
+  if (order.status === 'pending') {
+    if (order.items && order.items?.length > 0) {
+      try {
+        const fulfillmentResponse = await medusa.admin.orders.createFulfillment(order.id, {
+          location_id: await getStockLocationId(),
+          items: order.items.map((li) => ({ item_id: li.id, quantity: li.quantity })),
+        });
+        await medusa.admin.orders.createShipment(order.id, {
+          fulfillment_id: fulfillmentResponse.order.fulfillments[0].id,
+        });
+      } catch (e: AxiosError | unknown) {
+        if (axios.isAxiosError(e)) {
+          if (e.response?.data?.message?.indexOf('Insufficient stock') !== -1) {
+            log(e.response?.data?.message);
+          } else if (e.response?.data?.message?.indexOf('lacks shipping methods') !== -1) {
+            log(e.response?.data?.message);
+          } else {
+            throw e;
+          }
+        } else {
+          throw e;
+        }
+      }
+    }
+    await medusa.admin.orders.complete(order.id);
   }
-  const response = await medusa.admin.orders.complete(order.id);
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-  return response.orders;
 }
 
 export async function deleteCardsFromSet(category: ProductCategory) {

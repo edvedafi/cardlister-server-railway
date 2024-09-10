@@ -1,23 +1,9 @@
 import dotenv from 'dotenv';
 import 'zx/globals';
 import minimist from 'minimist';
-import { shutdownSportLots } from './listing-sites/sportlots';
 import { useSpinners } from './utils/spinners';
-import { buildSet, findSet, updateSetDefaults } from './card-data/setData';
-import initializeFirebase from './utils/firebase';
-import {
-  addOptions,
-  getCategories,
-  getCategory,
-  getProducts,
-  getRootCategory,
-  startSync,
-  updateCategory,
-} from './utils/medusa';
-import { ask } from './utils/ask';
-import { checkbox } from '@inquirer/prompts';
-import type { Product, ProductCategory } from '@medusajs/client-types';
-import type { Category } from './models/setInfo';
+import { fixVariants } from './utils/medusa';
+import { findSet } from './card-data/setData';
 
 const args = minimist(process.argv.slice(2));
 
@@ -49,34 +35,9 @@ const { showSpinner, log } = useSpinners('Sync', chalk.cyanBright);
 
 const { update, finish, error } = showSpinner('top-level', 'Fixing product variants');
 try {
-  const processCateogry = async (categoryId: string) => {
-    const { finish, error } = showSpinner(categoryId, categoryId);
-    try {
-      const children = await getCategories(categoryId);
-      if (children && children.length > 0) {
-        for (const child of children) {
-          await processCateogry(child.id);
-        }
-      } else {
-        const products = await getProducts(categoryId);
-        if (products) {
-          for (const product of products) {
-            if (product.options && product.options.length > 0) {
-              log(`Product ${product.id} has options`);
-            } else {
-              await addOptions(product);
-            }
-          }
-        }
-      }
-    } catch (e) {
-      error(e);
-    }
-    finish(categoryId);
-  };
-  update('Fetch Root');
-  const rootId = await getRootCategory();
-  await processCateogry(rootId);
+  const set = await findSet({ allowParent: true });
+  update(set.category.name);
+  await fixVariants(set.category.id);
   finish();
 } catch (e) {
   error(e);

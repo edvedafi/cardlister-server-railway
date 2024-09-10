@@ -32,7 +32,7 @@ type InjectedDependencies = {
 };
 
 abstract class AbstractSiteStrategy<
-  T extends WebdriverIO.Browser | AxiosInstance | eBayApi | PuppeteerHelper,
+  T extends AxiosInstance | eBayApi | PuppeteerHelper,
 > extends AbstractBatchJobStrategy {
   static identifier = 'listing-strategy';
   static batchType = 'listing-sync';
@@ -121,15 +121,12 @@ abstract class AbstractSiteStrategy<
     );
   }
 
-  private logoutConnection: () => void | undefined;
-
   protected async loginPuppeteer(
     baseUrl: string,
     loginFunction?: (pup: PuppeteerHelper) => Promise<PuppeteerHelper>,
   ): Promise<PuppeteerHelper> {
     const puppeteerHelper = new PuppeteerHelper();
     await puppeteerHelper.init(baseUrl);
-    this.logoutConnection = puppeteerHelper.logout.bind(puppeteerHelper);
     return loginFunction ? loginFunction(puppeteerHelper) : puppeteerHelper;
   }
 
@@ -162,8 +159,9 @@ abstract class AbstractSiteStrategy<
       // @ts-expect-error - deleteSession is not defined on AxiosInstance and can't figure out how to type it
       await connection.deleteSession();
     }
-    if (this.logoutConnection) {
-      await this.logoutConnection();
+
+    if (connection && 'close' in connection) {
+      connection.close();
     }
   }
 
@@ -210,7 +208,7 @@ abstract class AbstractSiteStrategy<
   protected getPrice(variant: ProductVariant): number {
     let price = variant.prices?.find((p) => p.region_id === this.region)?.amount;
     if (!price) {
-      this.log(`Price not found for variant ${variant.id} in region ${this.region}`); //TODO Need to handle this in a recoverable way
+      this.log(`Price not found for variant ${variant.sku} in region ${this.region}`); //TODO Need to handle this in a recoverable way
       price = variant.prices?.find((p) => !p.region_id)?.amount;
     }
 
@@ -219,7 +217,7 @@ abstract class AbstractSiteStrategy<
       price = 99;
     }
 
-    return price / 100;
+    return price;
   }
 }
 
