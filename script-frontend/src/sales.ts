@@ -11,21 +11,24 @@ import chalkTable from 'chalk-table';
 import { buildTableData, type OldSale } from './utils/data';
 import { getSingleListingInfo } from './old-scripts/firebase';
 import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/bsc';
-import { removeFromMyCardPost, shutdownMyCardPost } from './old-scripts/mycardpost';
+import { shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
 import open from 'open';
 import minimist from 'minimist';
+import { removeFromEbay } from './old-scripts/ebay';
 
 $.verbose = false;
 
 dotenv.config();
 
 const args = minimist(process.argv.slice(2), {
+  string: ['d'],
   boolean: ['o', 'n', 'r'],
   alias: {
     o: 'skip-old',
     r: 'skip-old-remove',
     n: 'skip-new',
+    d: 'days',
   },
 });
 
@@ -53,7 +56,7 @@ initializeFirebase();
 const { update, error, finish } = showSpinner('top-level', 'Running sales processing');
 
 try {
-  if (!args['skip-new']) {
+  if (!args['skip-new'] && !args['days']) {
     update('Get Orders from Platforms');
     await getSales();
   }
@@ -99,8 +102,8 @@ try {
         const groupedCards = await createGroups({}, oldSales);
         update('Remove listings from sites');
         if (oldSales && oldSales.length > 0) {
-          // await removeFromEbay(oldSales);
-          await removeFromMyCardPost(oldSales);
+          await removeFromEbay(oldSales);
+          // await removeFromMyCardPost(oldSales);
           if (groupedCards && Object.keys(groupedCards).length > 0) {
             await removeFromSportLots(groupedCards);
             await removeFromBuySportsCards(groupedCards);

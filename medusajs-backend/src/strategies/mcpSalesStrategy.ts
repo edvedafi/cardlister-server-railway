@@ -19,7 +19,6 @@ abstract class McpSalesStrategy extends SaleStrategy<PuppeteerHelper> {
     await pup.locatorText('h2', 'Shipping Address').wait();
 
     const orderTable = await pup.$$('div.orders-blk');
-    let first = true;
     for await (const table of orderTable) {
       let foundTracking: boolean;
       try {
@@ -28,8 +27,7 @@ abstract class McpSalesStrategy extends SaleStrategy<PuppeteerHelper> {
       } catch (e) {
         foundTracking = false;
       }
-      if (first || !foundTracking) {
-        first = false;
+      if (!foundTracking) {
         // const orderIdLink = await table.$('a*=Order id:');
         const orderIdLink = await pup.getLink({ parent: table, locator: 'a', text: 'Order id:' });
         const orderId = orderIdLink.text;

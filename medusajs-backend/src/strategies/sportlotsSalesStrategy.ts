@@ -9,7 +9,7 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
   static listingSite = 'SportLots';
 
   async login() {
-    return await slLogin(await this.loginPuppeteer('https://www.sportlots.com/'));
+    return await this.loginPuppeteer('https://www.sportlots.com/', slLogin);
   }
 
   async getOrders(pup: PuppeteerHelper): Promise<SystemOrder[]> {

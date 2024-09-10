@@ -13,7 +13,7 @@ type InjectedDependencies = {
 };
 
 abstract class AbstractListingStrategy<
-  T extends WebdriverIO.Browser | AxiosInstance | eBayApi | PuppeteerHelper,
+  T extends AxiosInstance | eBayApi | PuppeteerHelper,
 > extends AbstractSiteStrategy<T> {
   static identifier = 'listing-strategy';
   static batchType = 'listing-sync';
@@ -156,13 +156,14 @@ abstract class AbstractListingStrategy<
       if (!this.requireImages || product.images.length > 0) {
         for (const variant of product.variants) {
           try {
+            const quantity = await this.getQuantity({ variant });
             updated += await this.syncProduct(
               browser,
               product,
               variant,
               category,
-              await this.getQuantity({ variant }),
-              this.getPrice(variant),
+              quantity,
+              quantity > 0 ? this.getPrice(variant) : 99999,
             );
             count = await advanceCount(count);
           } catch (e) {
@@ -197,12 +198,17 @@ abstract class AbstractListingStrategy<
       const quantityFromService = await this.inventoryModule.retrieveAvailableQuantity(inventoryItems[0].id, [
         this.location,
       ]);
-      this.log(`Quantity for ${sku} is ${quantityFromService} at location ${this.location}.`);
-      return isNaN(quantityFromService) ? 0 : quantityFromService;
+      const result = isNaN(quantityFromService) ? 0 : quantityFromService;
+      this.log(`Quantity for ${sku} is ${result} at location ${this.location}.`);
+      return result;
     } else {
       this.log(`No inventory items found for [${sku}]: ${JSON.stringify(inventoryItems)}`);
       return 0;
     }
+  }
+
+  protected getPrice(variant: ProductVariant): number {
+    return super.getPrice(variant) / 100;
   }
 }
 

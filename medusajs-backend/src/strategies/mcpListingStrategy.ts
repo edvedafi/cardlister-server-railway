@@ -50,7 +50,7 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
     };
 
     const deleteCard = async () => {
-      (await pup.el({ locator: 'a', text: 'Delete' })).click();
+      await (await pup.el({ locator: 'a', text: 'Delete' })).click();
       await pup.locator('#delete-btn').click();
       siteCount--;
       await searchToBe('0');

@@ -22,21 +22,21 @@ export class PuppeteerHelper {
 
   async init(baseURL: string): Promise<Page> {
     let browser: Browser;
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.BROWSERLESS_WS_ENDPOINT) {
       browser = await puppeteer.connect({
         browserWSEndpoint: process.env.BROWSERLESS_WS_ENDPOINT,
         defaultViewport: { height: 1080, width: 1920 },
       });
-      this.logoutConnection = browser.disconnect;
     } else {
       browser = await puppeteer.launch({ defaultViewport: { height: 1080, width: 1920 } });
     }
     this.page = await browser.newPage();
     this.baseUrl = baseURL;
+    this.logoutConnection = () => browser.close();
     return this.page;
   }
 
-  logout() {
+  close() {
     if (this.logoutConnection) {
       this.logoutConnection();
     }

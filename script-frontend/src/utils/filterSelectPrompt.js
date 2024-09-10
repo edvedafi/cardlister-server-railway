@@ -1,17 +1,16 @@
 import {
   createPrompt,
-  useState,
-  useKeypress,
-  useRef,
-  usePrefix,
+  isBackspaceKey,
+  isDownKey,
   isEnterKey,
   isUpKey,
-  isDownKey,
-  isNumberKey,
-  isBackspaceKey,
   Separator,
-  usePagination,
+  useKeypress,
   useMemo,
+  usePagination,
+  usePrefix,
+  useRef,
+  useState,
 } from '@inquirer/core';
 import chalk from 'chalk';
 import figures from 'figures';
@@ -94,7 +93,7 @@ export default createPrompt((config, done) => {
       } else {
         done();
       }
-    } else if (isUpKey(key) || isDownKey(key)) {
+    } else if ((isUpKey(key) || isDownKey(key)) && !['j', 'k', 'J', 'K'].includes(key.name)) {
       if (loop || (isUpKey(key) && active !== bounds.first) || (isDownKey(key) && active !== bounds.last)) {
         const offset = isUpKey(key) ? -1 : 1;
         let next = active;

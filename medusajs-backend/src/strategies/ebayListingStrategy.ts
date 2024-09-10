@@ -52,7 +52,7 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
           await eBay.sell.inventory.publishOffer(offer.offerId);
         }
         return 0;
-      } else if (quantity === 0) {
+      } else if (quantity <= 0) {
         try {
           this.log(`Deleting offer for ${variant.sku}`);
           await eBay.sell.inventory.deleteOffer(offer.offerId);

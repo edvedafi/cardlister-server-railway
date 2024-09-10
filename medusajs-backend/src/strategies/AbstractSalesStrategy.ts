@@ -58,9 +58,7 @@ export type SystemOrder = {
   }[];
 };
 
-abstract class SaleStrategy<
-  T extends WebdriverIO.Browser | AxiosInstance | eBayApi | PuppeteerHelper,
-> extends AbstractSiteStrategy<T> {
+abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper> extends AbstractSiteStrategy<T> {
   static identifier = 'sales-strategy';
   static batchType = 'sales-sync';
   static listingSite = 'sync-site';
@@ -124,11 +122,12 @@ abstract class SaleStrategy<
   }
 
   async processJob(batchJobId: string): Promise<void> {
+    let api: T;
     try {
       this.progress(`${(<typeof AbstractSiteStrategy>this.constructor).identifier}::${batchJobId}::Gathering Sales`);
 
       this.progress('Login');
-      const api: T = await this.login();
+      api = await this.login();
       await this.getRegionId();
 
       this.progress('Getting Orders');
@@ -190,7 +189,9 @@ abstract class SaleStrategy<
                   });
                 }
               } catch (e) {
-                this.log(`Error looking for variant for ${lineItem.sku}`, e);
+                this.log(
+                  `Error looking for variant for ${lineItem.sku}, saving record as an old school sale ${e.message}`,
+                );
                 items.push({
                   title: lineItem.title,
                   quantity: lineItem.quantity,
@@ -218,24 +219,29 @@ abstract class SaleStrategy<
               },
             };
             draftOrder = await this.draftOrderService.create(createOrderRequest);
+            this.progress(`Created Draft Order ${draftOrder.id}`);
           }
 
           if (draftOrder) {
             if (draftOrder.order_id) {
+              this.progress(`Order exists, returning it (${draftOrder.order_id})`);
               return await this.orderService.retrieve(draftOrder.order_id);
             } else {
               let cart: Cart;
               let order: Order;
               try {
+                this.progress(`Converting Draft Order ${draftOrder.id}`);
                 cart = await this.cartService.retrieve(draftOrder.cart_id);
                 if (!cart?.payment_authorized_at) {
                   try {
+                    this.progress(`Setting Payment Sessions for Draft Order cart_id ${draftOrder.cart_id}`);
                     await this.cartService.setPaymentSessions(draftOrder.cart_id);
                   } catch (e) {
                     this.log(`Error setting payment sessions for draft ${draftOrder.id}`, e);
                     throw e;
                   }
                   try {
+                    this.progress(`Authorizing Payment for Draft Order cart_id ${draftOrder.cart_id}`);
                     cart = await this.cartService.authorizePayment(draftOrder.cart_id, {});
                   } catch (e) {
                     this.log(`Error authorizing payment for draft ${draftOrder.id}`, e);
@@ -249,6 +255,7 @@ abstract class SaleStrategy<
                   // }
                 }
                 try {
+                  this.progress(`Creating Order from Cart ${cart.id}`);
                   order = await this.orderService.createFromCart(cart.id);
                 } catch (e) {
                   this.log(`Error creating order from cart ${cart.id}`, e);
@@ -261,17 +268,20 @@ abstract class SaleStrategy<
                 //   throw e;
                 // }
                 try {
+                  this.progress(`Registering Cart Completion for Draft Order ${draftOrder.id}`);
                   await this.draftOrderService.registerCartCompletion(draftOrder.id, order.id);
                 } catch (e) {
                   this.log(`Error registering cart completion for draft ${draftOrder.id}`, e);
                   throw e;
                 }
                 try {
+                  this.progress(`Capturing Payment for Draft Order ${draftOrder.id}`);
                   order = await this.orderService.capturePayment(order.id);
                 } catch (e) {
                   this.log(`Error capturing payment for draft ${draftOrder.id}`, e);
                   throw e;
                 }
+                this.progress(`Order Created: ${order.id}`);
                 orders.push(order);
               } catch (e) {
                 this.log(`Draft Order: ${JSON.stringify(draftOrder, null, 2)}`);
@@ -343,6 +353,8 @@ abstract class SaleStrategy<
     } catch (e) {
       this.progress('SalesStrategy::ProcessJob::error', e);
       throw e;
+    } finally {
+      await this.logout(api);
     }
   }
 
@@ -355,7 +367,7 @@ abstract class SaleStrategy<
       });
       this.shippingOption = shippingOptions[0]?.id;
       if (!this.shippingOption) {
-        throw `No ShippingOption Found for ${(<typeof AbstractSiteStrategy>this.constructor).listingSite}`;
+        throw new Error(`No ShippingOption Found for ${(<typeof AbstractSiteStrategy>this.constructor).listingSite}`);
       }
     }
     return this.shippingOption;

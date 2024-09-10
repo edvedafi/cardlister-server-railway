@@ -288,7 +288,13 @@ export async function getAllListings(setData) {
       const { data: allPossibleListings } = await api.post('seller/bulk-upload/results', buildBody(filters));
 
       if (!allPossibleListings.results || allPossibleListings.results.length === 0) {
-        throw new Error(`No listings found for ${JSON.stringify(filters)}`);
+        let json;
+        try {
+          json = JSON.stringify(filters);
+        } catch (e) {
+          json = `${filters.sport} ${filters.year} ${filters.setName} ${filters.variant} ${filters.variantName}`;
+        }
+        console.log(`No listings found for ${json}`);
       }
     } catch (e) {
       log(e);
