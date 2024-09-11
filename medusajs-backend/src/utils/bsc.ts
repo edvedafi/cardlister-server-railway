@@ -5,32 +5,52 @@ export async function login(
   pup: PuppeteerHelper,
   axiosLogin: (url: string, headers: Record<string, string>) => AxiosInstance,
 ): Promise<AxiosInstance> {
-  console.log('Logging in to BSC');
-  const page = pup.page;
-  await pup.home();
+  let token: string;
+  try {
+    console.log('Logging in to BSC');
+    const page = pup.page;
+    await pup.home();
 
-  console.log('At Home Page');
+    console.log('At Home Page');
 
-  await page.locator('button[tabindex="0"]').click();
-  await page.waitForNavigation();
+    await page.locator('button[tabindex="0"]').click();
+    await pup.waitForURL('identity.buysportscards.com');
+    await page.locator('#next').wait();
 
-  await page.locator('#signInName').fill(process.env.BSC_EMAIL);
-  await page.locator('#password').fill(process.env.BSC_PASSWORD);
-  await page.locator('#next').click();
+    console.log(
+      'evaluated: ',
+      await page.evaluate(
+        (email, pass) => {
+          // @ts-expect-error JS things
+          document.getElementById('signInName').value = email;
+          // @ts-expect-error JS things
+          document.getElementById('password').value = pass;
+          document.getElementById('next').click();
+          // return window.location.href;
+        },
+        process.env.BSC_EMAIL,
+        process.env.BSC_PASSWORD,
+      ),
+    );
 
-  await pup.locatorText('p', 'Welcome back,').wait();
+    await pup.locatorText('p', 'Welcome back,').wait();
 
-  console.log('Logged in!');
+    console.log('Logged in!');
 
-  const token = await page.evaluate(function () {
-    return JSON.parse(
-      Object.values(localStorage)
-        .filter((value) => value.includes('secret'))
-        .find((value) => value.includes('Bearer')),
-    ).secret.trim();
-  });
+    token = await page.evaluate(function () {
+      return JSON.parse(
+        Object.values(localStorage)
+          .filter((value) => value.includes('secret'))
+          .find((value) => value.includes('Bearer')),
+      ).secret.trim();
+    });
 
-  console.log('Token:', token);
+    console.log('Token:', token);
+  } catch (e) {
+    console.error('Error logging in to BSC:', e);
+    await pup.screenshot('login-error');
+    throw e;
+  }
 
   return axiosLogin('https://api-prod.buysportscards.com/', {
     assumedrole: 'sellers',

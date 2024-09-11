@@ -125,9 +125,18 @@ abstract class AbstractSiteStrategy<
     baseUrl: string,
     loginFunction?: (pup: PuppeteerHelper) => Promise<PuppeteerHelper>,
   ): Promise<PuppeteerHelper> {
-    const puppeteerHelper = new PuppeteerHelper();
-    await puppeteerHelper.init(baseUrl);
-    return loginFunction ? loginFunction(puppeteerHelper) : puppeteerHelper;
+    let puppeteerHelper: PuppeteerHelper;
+    try {
+      puppeteerHelper = new PuppeteerHelper();
+      await puppeteerHelper.init(baseUrl);
+      return loginFunction ? loginFunction(puppeteerHelper) : puppeteerHelper;
+    } catch (e) {
+      this.log('Error logging in with puppeteer', e);
+      if (puppeteerHelper) {
+        await this.logout(<T>puppeteerHelper);
+      }
+      throw e;
+    }
   }
 
   protected loginAxios(baseURL: string, headers: { [key: string]: string }): AxiosInstance {

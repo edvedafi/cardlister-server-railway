@@ -308,10 +308,7 @@ export async function findSet(
         description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name} ${setInfo.variantName?.name}`);
       }
       if (setInfo.variantName?.metadata?.insert && !setInfo.variantName?.metadata?.insert_xs) {
-        const xs_insert = await ask('XS Insert Name?', setInfo.variantName?.metadata?.insert);
-        if (xs_insert && xs_insert !== setInfo.variantName?.metadata?.insert) {
-          updates.insert_xs = xs_insert;
-        }
+        updates.insert_xs = await ask('XS Insert Name?', setInfo.variantName?.metadata?.insert);
       }
       if (setInfo.variantName?.metadata?.parallel && !setInfo.variantName?.metadata?.parallel_xs) {
         const xs_parallel = await ask('XS Parallel Name?', setInfo.variantName?.metadata?.parallel);

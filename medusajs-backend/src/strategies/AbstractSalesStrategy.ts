@@ -55,6 +55,7 @@ export type SystemOrder = {
     quantity: number;
     sku: string;
     cardNumber?: string;
+    bin?: string;
   }[];
 };
 
