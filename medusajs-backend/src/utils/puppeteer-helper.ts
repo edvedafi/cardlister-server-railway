@@ -222,7 +222,7 @@ export class PuppeteerHelper {
     });
   }
 
-  async waitForURL(urlMatch: string | RegExp, timeout: number = 1000): Promise<void> {
+  async waitForURL(urlMatch: string | RegExp, timeout: number = 5000): Promise<void> {
     try {
       if (typeof urlMatch === 'string') {
         await this.page.waitForFunction(

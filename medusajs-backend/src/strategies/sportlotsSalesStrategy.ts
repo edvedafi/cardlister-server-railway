@@ -17,67 +17,78 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
 
     const process = async (orderType: string) => {
       await pup.goto(`inven/dealbin/dealacct.tpl?ordertype=${orderType}`);
-      const orderTable = await pup.$$('form[action="/inven/dealbin/dealupd.tpl"]');
-      console.log('orderTable', orderTable);
-      for (const table of orderTable) {
-        //its divs all the way down!
-        let i = 0;
-        const divs = await table.$$(`div`);
-        console.log('divs', divs.length);
-        console.log('divi', divs[i]);
-        const link = await divs[i].$('a');
-        console.log(link);
-        const orderId = await pup.getText(link);
-        const username = orderId.slice(0, orderId.indexOf('2024'));
-        const order: SystemOrder = {
-          id: orderId,
-          customer: {
-            name: await pup.getAttribute(link, 'title'),
-            username: username,
-            email: `${username}@sportlots.com`,
-          },
-          packingSlip: (await pup.getAttribute(link, 'href'))
-            .replace("javascript:showFAQ('", '')
-            .replace("',1400,500)", ''),
-          lineItems: [],
-        };
-        i = 15; // skip a bunch of junk
-        const totalDivs = divs.length;
-        this.log(`Processing divs: ${totalDivs}`);
-        while (i + 6 <= totalDivs) {
-          i++; //first is a blank div
-          const quantity = await pup.getText(divs[i++]);
-          const title = await pup.getText(divs[i++]);
-          const bin = await pup.getText(divs[i++]);
-          i++; // condition
-          const price = await pup.getText(divs[i++]);
-          const cardNumber = title
-            .split(' ')
-            .find((word) => word.startsWith('#'))
-            .replace('#', '');
-          const sku = bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`;
+
+      const rawOrders: SystemOrder[] = await pup.page.evaluate(() => {
+        const tables = Array.from(document.querySelectorAll('form[action="/inven/dealbin/dealupd.tpl"]'));
+        return tables.map((table) => {
+          const divs = table.querySelectorAll('div');
+          let i = 0;
+          const link = divs[i].querySelector('a');
+          const orderId = link?.textContent?.trim();
+          const username = orderId.slice(0, orderId.indexOf('2024'));
+
+          const order = {
+            id: orderId,
+            customer: {
+              name: link.getAttribute('title'),
+              username: username,
+              email: `${username}@sportlots.com`,
+            },
+            packingSlip: link.getAttribute('href').replace("javascript:showFAQ('", '').replace("',1400,500)", ''),
+            lineItems: [],
+          };
+
+          while (i + 6 <= divs.length) {
+            i++; //first is a blank div
+            const quantity = divs[i++].textContent;
+            const title = divs[i++].textContent;
+            const bin = divs[i++].textContent;
+            i++; // condition
+            const price = divs[i++].textContent;
+            const cardNumber = title
+              .split(' ')
+              .find((word) => word.startsWith('#'))
+              .replace('#', '');
+            const sku = bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`;
+            order.lineItems.push({
+              quantity: parseInt(quantity),
+              title: title,
+              sku: sku,
+              bin: bin,
+              cardNumber: cardNumber,
+              unit_price: parseInt(price.replace('.', '').replace('$', '').trim()),
+            });
+          }
+          return order;
+        });
+      });
+
+      for (const rawOrder of rawOrders) {
+        const order: SystemOrder = { ...rawOrder };
+
+        for (const lineItem of order.lineItems) {
           let variant: ProductVariant | undefined;
           try {
-            variant = await this.productVariantService_.retrieveBySKU(sku, {
+            variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {
               relations: ['product', 'product.variants'],
             });
           } catch (e) {
-            this.log(`Could not find product variant for SKU: ${sku}`);
+            this.log(`Could not find product variant for SKU: ${lineItem.sku}`);
           }
-          if (!variant && bin) {
+          if (!variant && lineItem.bin) {
             const [categories] = await this.categoryService_.listAndCount({});
-            const category = categories.find((c) => c?.metadata?.bin === bin);
+            const category = categories.find((c) => c?.metadata?.bin === lineItem.bin);
             if (category) {
               const [products] = await this.productService.listAndCount(
                 { category_id: [category.id] },
                 { relations: ['variants'] },
               );
-              const product = products.find((p) => p.metadata.cardNumber === cardNumber);
+              const product = products.find((p) => p.metadata.cardNumber === lineItem.cardNumber);
               if (product) {
-                variant = product?.variants.find((v) => v.metadata.sportlots === title);
+                variant = product?.variants.find((v) => v.metadata.sportlots === lineItem.title);
               } else {
                 products.forEach((p) => {
-                  const v = p?.variants.find((v) => v.metadata.sportlots === title);
+                  const v = p?.variants.find((v) => v.metadata.sportlots === lineItem.title);
                   if (v) {
                     variant = v;
                   }
@@ -86,22 +97,21 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
             }
           }
           if (variant && variant.metadata?.sportlots) {
-            variant = variant.product.variants.find((v) => v.metadata.sportlots === title);
+            variant = variant.product.variants.find((v) => v.metadata.sportlots === lineItem.title);
           }
           order.lineItems.push({
-            quantity: parseInt(quantity),
-            title: variant?.title || title,
-            sku: variant?.sku || sku,
+            quantity: lineItem.quantity,
+            title: variant?.title || lineItem.title,
+            sku: variant?.sku || lineItem.sku,
             cardNumber:
-              <string>variant?.metadata?.cardNumber || <string>variant?.product?.metadata.cardNumber || cardNumber,
-            unit_price: parseInt(price.replace('.', '').replace('$', '').trim()),
+              <string>variant?.metadata?.cardNumber ||
+              <string>variant?.product?.metadata.cardNumber ||
+              lineItem.cardNumber,
+            unit_price: lineItem.unit_price,
           });
         }
-        this.log(`Found order: ${JSON.stringify(order, null, 2)}`);
-        orders.push(order);
       }
     };
-
     await process('1b');
     await process('1a');
 
