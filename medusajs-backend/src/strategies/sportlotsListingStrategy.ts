@@ -84,7 +84,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
         const rows = await tableBody.$$('tr:has(td):not(:has(th))');
 
         for (const row of rows) {
-          console.log('Processing row', await pup.getText(row));
+          // console.log('Processing row', await pup.getText(row));
           const cardNumberCell = await row.$('td:nth-child(2)');
           const cardNumber = await pup.getText(cardNumberCell);
           const product = products.find((p) => p.metadata.cardNumber.toString() === cardNumber);
@@ -103,8 +103,9 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
             const quantity = await this.getQuantity({ variant });
 
             if (quantity > 0) {
-              await (await row.$('td:nth-child(1) > input')).type(`${quantity}`);
-              await (await row.$('td:nth-child(4) > input')).type(this.getPrice(variant).toString());
+              this.log(`Adding ${quantity} of ${cardNumber} at ${this.getPrice(variant)}`);
+              await pup.fill(row.$('td:nth-child(1) > input'), `${quantity}`);
+              await pup.fill(row.$('td:nth-child(4) > input'), this.getPrice(variant).toString());
               expectedAdds += quantity;
             } else {
               this.log(`No quantity for ${cardNumber}`);
@@ -116,6 +117,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
           count = await advanceCount(count);
         }
 
+        await pup.screenshot('add-inventory');
         await pup.locator('input[value="Inventory Cards"').click();
         await pup.locator('h2.message').wait();
         const banner = await pup.getText('h2.message');

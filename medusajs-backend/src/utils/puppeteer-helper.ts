@@ -266,6 +266,13 @@ export class PuppeteerHelper {
     }
   }
 
+  async fill(locator: ElementOrLocator, value: string) {
+    const element = await this.el(locator);
+    if (!element) throw new Error(`Element not found: ${(await locator).toString()}`);
+    // @ts-expect-error input.value does actually exist. liar!63
+    await element.evaluate((input, value) => (input.value = value), value);
+  }
+
   async uploadImageBase64(imageName: string, id: string): Promise<void> {
     try {
       const response = await axios.get(
