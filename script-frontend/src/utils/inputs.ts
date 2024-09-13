@@ -74,6 +74,13 @@ export const getFiles = async (inputDirectory: string): Promise<string[]> => {
       .toString()
       .split('\n')
       .filter((image) => image !== '');
+    if (files.length % 2 !== 0) {
+      const ok = await ask(`Odd Number of Files? [${files.length}]`, false);
+      if (!ok) {
+        error('Odd Number of Files');
+        process.exit(1);
+      }
+    }
     finish(`Found ${files.length} Files`);
   } catch (e) {
     files = [];

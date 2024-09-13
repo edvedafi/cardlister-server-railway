@@ -354,11 +354,13 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
   if (card) {
     return card;
   }
-  card = setInfo.products?.find(
-    (product) =>
-      product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}` &&
-      product.metadata.player.includes((<string>imageDefaults.player).replace(/[^a-zA-Z ]/g, '')),
-  );
+  if (imageDefaults.player) {
+    card = setInfo.products?.find(
+      (product) =>
+        product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}` &&
+        product.metadata?.player.includes((<string>imageDefaults.player).replace(/[^a-zA-Z ]/g, '')),
+    );
+  }
   if (card) {
     return card;
   }
