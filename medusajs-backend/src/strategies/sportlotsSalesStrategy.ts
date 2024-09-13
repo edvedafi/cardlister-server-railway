@@ -34,35 +34,42 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
               username: username,
               email: `${username}@sportlots.com`,
             },
-            packingSlip: link.getAttribute('href').replace("javascript:showFAQ('", '').replace("',1400,500)", ''),
+            packingSlip: link.getAttribute('href')?.replace("javascript:showFAQ('", '').replace("',1400,500)", ''),
             lineItems: [],
           };
 
+          //skip the junk
+          i = 15;
+
           while (i + 6 <= divs.length) {
             i++; //first is a blank div
-            const quantity = divs[i++].textContent;
-            const title = divs[i++].textContent;
-            const bin = divs[i++].textContent;
+            const quantity = parseInt(divs[i++].textContent.replace('\n', '').trim());
+            const title = divs[i++].textContent.replace('\n', '').trim();
+            const bin = divs[i++].textContent.replace('\n', '').trim();
             i++; // condition
-            const price = divs[i++].textContent;
-            const cardNumber = title
-              .split(' ')
-              .find((word) => word.startsWith('#'))
-              .replace('#', '');
+            const price = divs[i++].textContent.replace('\n', '').trim();
+            const cardNumber =
+              title
+                .split(' ')
+                .find((word) => word.startsWith('#'))
+                ?.replace('#', '') || 'NNO';
             const sku = bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`;
             order.lineItems.push({
-              quantity: parseInt(quantity),
+              quantity: quantity,
               title: title,
               sku: sku,
               bin: bin,
               cardNumber: cardNumber,
-              unit_price: parseInt(price.replace('.', '').replace('$', '').trim()),
+              unit_price: parseInt(price?.replace('.', '').replace('$', '').trim() || '0') / quantity,
             });
           }
           return order;
         });
       });
 
+      // this.log(`Found ${rawOrders.length} ${orderType} orders`);
+      // this.log(JSON.stringify(rawOrders, null, 2));
+      // rawOrders = [];
       for (const rawOrder of rawOrders) {
         const order: SystemOrder = { ...rawOrder };
 
