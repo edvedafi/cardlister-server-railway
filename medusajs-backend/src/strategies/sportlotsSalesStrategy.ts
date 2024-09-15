@@ -1,7 +1,7 @@
 import SaleStrategy, { SystemOrder } from './AbstractSalesStrategy';
 import { PuppeteerHelper } from '../utils/puppeteer-helper';
 import { login as slLogin } from '../utils/sportlots';
-import { ProductVariant } from '@medusajs/medusa';
+import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 
 abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
   static identifier = 'sportlots-sales-strategy';
@@ -70,10 +70,17 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
       // this.log(`Found ${rawOrders.length} ${orderType} orders`);
       // this.log(JSON.stringify(rawOrders, null, 2));
       // rawOrders = [];
-      for (const rawOrder of rawOrders) {
-        const order: SystemOrder = { ...rawOrder };
+      for (let orderNumber = 0; orderNumber < rawOrders.length; orderNumber++) {
+        const rawOrder = rawOrders[orderNumber];
+        const order: SystemOrder = {
+          ...rawOrder,
+          lineItems: [],
+        };
+        const rawLineItems = [...rawOrder.lineItems];
 
-        for (const lineItem of order.lineItems) {
+        for (let i = 0; i < rawLineItems.length; i++) {
+          const lineItem = rawLineItems[i];
+          // this.log(`Processing line item: ${lineItem.sku}`);
           let variant: ProductVariant | undefined;
           try {
             variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {
@@ -83,13 +90,10 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
             this.log(`Could not find product variant for SKU: ${lineItem.sku}`);
           }
           if (!variant && lineItem.bin) {
-            const [categories] = await this.categoryService_.listAndCount({});
+            const categories = await this.getCategories();
             const category = categories.find((c) => c?.metadata?.bin === lineItem.bin);
             if (category) {
-              const [products] = await this.productService.listAndCount(
-                { category_id: [category.id] },
-                { relations: ['variants'] },
-              );
+              const products = await this.getProducts(category.id);
               const product = products.find((p) => p.metadata.cardNumber === lineItem.cardNumber);
               if (product) {
                 variant = product?.variants.find((v) => v.metadata.sportlots === lineItem.title);
@@ -116,15 +120,40 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
               lineItem.cardNumber,
             unit_price: lineItem.unit_price,
           });
+          // this.log(`Found line item: ${order.lineItems.length}`);
         }
+        orders.push(order);
       }
     };
     await process('1b');
     await process('1a');
 
-    this.log('Found Orders:');
-    this.log(JSON.stringify(orders, null, 2));
+    // this.log('Found Orders:');
+    // this.log(JSON.stringify(orders, null, 2));
     return orders;
+  }
+
+  private productCategories: ProductCategory[];
+
+  private async getCategories(): Promise<ProductCategory[]> {
+    if (!this.productCategories) {
+      const [categories] = await this.categoryService_.listAndCount({});
+      this.productCategories = categories;
+    }
+    return this.productCategories;
+  }
+
+  private productsByCategory: { [key: string]: Product[] } = {};
+
+  async getProducts(categoryId: string): Promise<Product[]> {
+    if (!this.productsByCategory[categoryId]) {
+      const [products] = await this.productService.listAndCount(
+        { category_id: [categoryId] },
+        { relations: ['variants'] },
+      );
+      this.productsByCategory[categoryId] = products;
+    }
+    return this.productsByCategory[categoryId];
   }
 }
 
