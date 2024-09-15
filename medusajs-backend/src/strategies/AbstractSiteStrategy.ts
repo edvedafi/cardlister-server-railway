@@ -163,14 +163,12 @@ abstract class AbstractSiteStrategy<
   }
 
   protected async logout(connection: T): Promise<void> {
-    // @ts-expect-error - deleteSession is not defined on AxiosInstance and can't figure out how to type it
-    if (connection && connection.deleteSession) {
-      // @ts-expect-error - deleteSession is not defined on AxiosInstance and can't figure out how to type it
-      await connection.deleteSession();
-    }
-
     if (connection && 'close' in connection) {
       connection.close();
+    }
+
+    if (connection && 'deleteSession' in connection && typeof connection.deleteSession === 'function') {
+      await connection.deleteSession();
     }
   }
 
