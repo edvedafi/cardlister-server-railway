@@ -51,6 +51,7 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
     category: ProductCategory,
     advanceCount: (count: number) => Promise<number>,
   ): Promise<number> {
+    if (!category.metadata.bsc) return 0; //TODO need to log this somewhere actionable
     const updates = [];
     const response = await api.post('seller/bulk-upload/results', {
       condition: 'near_mint',
