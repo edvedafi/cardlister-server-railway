@@ -10,7 +10,9 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
   requireImages = true;
 
   async login() {
-    return await this.loginPuppeteer('https://mycardpost.com/', login);
+    const pup = await this.loginPuppeteer('https://mycardpost.com/', login);
+    // pup.logNetworkRequests();
+    return pup;
   }
 
   async syncProduct(
@@ -30,8 +32,8 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
 
     const searchToBe = async (expectedCount: string): Promise<void> => {
       try {
-        pup.page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
-        await searchField.fill(`[${productVariant.sku}]`);
+        await pup.waitForURL('edvedafi?tab=shop', 30000);
+        await pup.fill('input[type="text"][placeholder="Search Cards"]', `[${productVariant.sku}]`);
         await pup.page.waitForFunction(
           (expectedCount: string) =>
             expectedCount ===
@@ -73,15 +75,20 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
       }
     } else {
       if (siteCount === 0) {
+        // pup.page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
         await pup.locatorText('button', 'Add Card').click();
         // const form = await pup.$('form[@action="https://mycardpost.com/add-card"]');
-        await pup.uploadImage(<string>productVariant.metadata.frontImage, 'front_image');
-        await pup.uploadImage(<string>productVariant.metadata.backImage, 'back_image');
+        await pup.uploadImageBase64(<string>productVariant.metadata.frontImage, 'front_image');
+        await pup.uploadImageBase64(<string>productVariant.metadata.backImage, 'back_image');
         await pup.screenshot('images-uploaded');
+        // console.log(`setting name to ${productVariant.title} [${productVariant.sku}]`);
         await pup.locator('textarea[name="name"]').fill(`${productVariant.title} [${productVariant.sku}]`);
+        // console.log(`Setting price too ${price}`);
         await pup.locator('input[name="price"]').fill(`${price}`);
+        // console.log(`Setting category.metadata.sport too ${category.metadata.sport}`);
         await pup.select('select[name="sport"]', <string>category.metadata.sport);
         for (const team of productVariant.metadata.teams as string[]) {
+          // console.log(`Setting team too ${team}`);
           await (await pup.$(`span[role='textbox'][data-placeholder='Type something']`)).type(team);
         }
 
@@ -136,13 +143,29 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
         if (features.includes('jersey number')) {
           selectValues.push('Jersey Numbered');
         }
+        // console.log(`Setting attributes too ${selectValues}`);
         await pup.select('#attribute_name', selectValues);
 
+        // console.log(`details attributes too ${productVariant.title}\n\n[${productVariant.sku}]`);
         await pup
           .locator('textarea[name="details"')
           .fill(`${productVariant.metadata.description}\n\n[${productVariant.sku}]`);
 
+        // pup.logNetworkRequests();
         await pup.locator('button.yellow-btn').click();
+
+        let errorField: string;
+        try {
+          errorField = await pup.getAttribute('.error', 'name');
+        } catch (e) {
+          console.log(`No Errors Found: ${e.message}`);
+        }
+        if (errorField) {
+          throw new Error(`Field Error: ${errorField}`);
+        }
+
+        // console.log(await (await pup.el('div[role="dialog"]')).evaluate((el) => el.innerHTML));
+        await pup.locatorFound('#swal2-title', 'Adding Card...', true);
 
         try {
           await searchToBe('1');
