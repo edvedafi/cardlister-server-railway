@@ -60,3 +60,13 @@ export async function downloadFile(url: string, outputPath: string) {
     writer.on('error', reject);
   });
 }
+
+export function extractDomain(url) {
+  try {
+    const hostname = new URL(url).hostname; // Get the hostname from the URL
+    return hostname.replace(/^www\./, '').split('.')[0]; // Remove 'www.' and extract the main domain part
+  } catch (error) {
+    console.error('Invalid URL:', error);
+    return null;
+  }
+}

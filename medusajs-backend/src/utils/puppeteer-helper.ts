@@ -1,7 +1,6 @@
 import puppeteer, { Browser, ElementHandle, Page } from 'puppeteer';
 import { downloadFile } from './data';
 import axios from 'axios';
-import JSZip from 'jszip';
 
 export type ElementOrLocator =
   | string
@@ -24,6 +23,7 @@ export class PuppeteerHelper {
     let browser: Browser;
     if (process.env.BROWSERLESS_WS_ENDPOINT) {
       browser = await puppeteer.connect({
+        // browserWSEndpoint: `${process.env.BROWSERLESS_WS_ENDPOINT}&--user-data-dir=/tmp/${extractDomain(baseURL)}`,
         browserWSEndpoint: process.env.BROWSERLESS_WS_ENDPOINT,
         defaultViewport: { height: 1080, width: 1920 },
       });
@@ -32,7 +32,11 @@ export class PuppeteerHelper {
     }
     this.page = await browser.newPage();
     this.baseUrl = baseURL;
-    this.logoutConnection = () => browser.close();
+
+    this.logoutConnection = () => {
+      browser.disconnect();
+      browser.close();
+    };
     return this.page;
   }
 
@@ -52,11 +56,14 @@ export class PuppeteerHelper {
     await this.goto('');
   }
 
-  async goto(url: string) {
-    if (this.page.url() !== `${this.baseUrl}${url}`) {
+  async goto(url: string, redirectUrl?: string) {
+    if (
+      this.page.url() !== `${this.baseUrl}${url}` &&
+      (!redirectUrl || this.page.url() !== `${this.baseUrl}${redirectUrl}`)
+    ) {
       await this.page.goto(`${this.baseUrl}${url}`);
       try {
-        await this.waitForURL(url);
+        await this.waitForURL(url, 10000, redirectUrl);
       } catch (e) {
         console.log(`Navigation failed to ${url}: ${e.message}`);
         await this.screenshot('navigation-failed');
@@ -149,7 +156,7 @@ export class PuppeteerHelper {
     }
   }
 
-  async locatorFound(locator: string, successText?: string) {
+  async locatorFound(locator: string, successText?: string, waitToDisappear?: boolean) {
     try {
       const toast = await this.page.waitForSelector(locator, { visible: true, timeout: 10000 });
       if (successText) {
@@ -165,6 +172,13 @@ export class PuppeteerHelper {
         console.error(e);
       }
       throw new Error(`Element not found: ${locator}`);
+    }
+    if (waitToDisappear) {
+      const dialog = await this.page.waitForSelector(locator, { hidden: true, timeout: 60000 });
+      if (dialog) {
+        await this.screenshot(locator);
+        throw new Error(`${locator} ${successText} still displayed!`);
+      }
     }
   }
 
@@ -222,14 +236,22 @@ export class PuppeteerHelper {
     });
   }
 
-  async waitForURL(urlMatch: string | RegExp, timeout: number = 5000): Promise<void> {
+  async waitForURL(urlMatch: string | RegExp, timeout: number = 5000, redirectUrl?: string): Promise<void> {
     try {
       if (typeof urlMatch === 'string') {
-        await this.page.waitForFunction(
-          (urlMatch: string) => window.location.href.indexOf(urlMatch) > -1,
-          { timeout: timeout },
-          urlMatch,
-        );
+        if (redirectUrl) {
+          await this.page.waitForFunction(
+            (urlMatch: RegExp) => window.location.href.match(urlMatch),
+            { timeout: timeout },
+            new RegExp(`${urlMatch}|${redirectUrl}`),
+          );
+        } else {
+          await this.page.waitForFunction(
+            (urlMatch: string) => window.location.href.indexOf(urlMatch) > -1,
+            { timeout: timeout },
+            urlMatch,
+          );
+        }
       } else {
         await this.page.waitForFunction(
           (urlMatch: RegExp) => window.location.href.match(urlMatch),
@@ -251,13 +273,18 @@ export class PuppeteerHelper {
 
   async uploadImage(imageName: string, id: string): Promise<void> {
     const tmpFile = '/tmp/' + imageName;
+    console.log(
+      `Uploading: https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${imageName}?alt=media`,
+    );
     try {
       await downloadFile(
         `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${imageName}?alt=media`,
         tmpFile,
       );
+      console.log(`Downloaded: ${tmpFile}`);
       const inputUploadHandle = this.page.locator(`input[type="file"][name="${id}"]`);
-      (await inputUploadHandle.waitHandle()).uploadFile(tmpFile);
+      await (await inputUploadHandle.waitHandle()).uploadFile(tmpFile);
+      await this.screenshot('upload-' + imageName);
     } catch (e) {
       await this.screenshot('upload-error');
       throw new Error(`Error uploading image ${imageName} to ${id}: ${e.message}`);
@@ -275,19 +302,59 @@ export class PuppeteerHelper {
 
   async uploadImageBase64(imageName: string, id: string): Promise<void> {
     try {
+      // Step 1: Download the image from the remote URL
       const response = await axios.get(
         `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${imageName}?alt=media`,
         { responseType: 'arraybuffer' },
       );
+
+      // Step 2: Convert the response to a buffer
       const imageBuffer = Buffer.from(response.data, 'binary');
 
-      const zip = new JSZip();
-      zip.file(imageName, imageBuffer);
-      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
-      await this.page.locator(`input[type="file"][name="${id}"]`).fill(Buffer.from(zipBuffer).toString('base64'));
+      const imageBase64 = imageBuffer.toString('base64');
+
+      // Here, we assume you need to set this base64 string to an input field in your page
+      // Modify the selector '#file-input' to the actual selector of your file input
+
+      await this.page.evaluate(
+        (imageBase64, imageName, id) => {
+          const input = document.querySelector(`input[type="file"][name="${id}"]`); // Replace with the correct selector    // Decode base64 to binary
+          function base64ToArrayBuffer(base64: string) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+          }
+
+          // Create a new File object from the base64 data
+          const byteArray = base64ToArrayBuffer(imageBase64);
+          const file = new File([byteArray], imageName, { type: 'image/jpg' });
+
+          const dataTransfer = new DataTransfer();
+          dataTransfer.items.add(file);
+          // @ts-expect-error JS stuff
+          input.files = dataTransfer.files;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        },
+        imageBase64,
+        imageName,
+        id,
+      );
     } catch (e) {
       await this.screenshot('upload-error');
       throw new Error(`Error uploading image ${imageName} to ${id}: ${e.message}`);
     }
+  }
+
+  logNetworkRequests() {
+    // this.page.on('response', async (response) => {
+    //   if (response.url().indexOf('add-card') > -1) {
+    //     console.log(response.statusText());
+    //     console.log(await response.text());
+    //   }
+    // });
   }
 }
