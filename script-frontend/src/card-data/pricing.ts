@@ -42,12 +42,20 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
       region_id: await getRegion(region),
     } as MoneyAmount;
   };
-  return [
-    await getPrice('ebay', 99),
-    await getPrice('MCP', 100),
-    await getPrice('BSC', 25),
-    await getPrice('SportLots', 18),
-  ];
+  const prices: MoneyAmount[] = [];
+  const ebay = await getPrice('ebay', 99);
+  prices.push(ebay);
+  if (ebay.amount > 100) {
+    prices.push(await getPrice('MCP', ebay.amount));
+    prices.push(await getPrice('BSC', ebay.amount));
+    prices.push(await getPrice('SportLots', ebay.amount));
+    prices.push(await getPrice('MySlabs', ebay.amount + 500));
+  } else {
+    prices.push(await getPrice('MCP', 100));
+    prices.push(await getPrice('BSC', 25));
+    prices.push(await getPrice('SportLots', 18));
+  }
+  return prices;
 }
 
 let basePricing: MoneyAmount[];
@@ -55,10 +63,10 @@ let basePricing: MoneyAmount[];
 export async function getBasePricing(): Promise<MoneyAmount[]> {
   if (!basePricing) {
     basePricing = [
-      {amount: 99, region_id: await getRegion('ebay')} as MoneyAmount,
-      {amount: 100, region_id: await getRegion('MCP')} as MoneyAmount,
-      {amount: 25, region_id: await getRegion('BSC')} as MoneyAmount,
-      {amount: 18, region_id: await getRegion('SportLots')} as MoneyAmount,
+      { amount: 99, region_id: await getRegion('ebay') } as MoneyAmount,
+      { amount: 100, region_id: await getRegion('MCP') } as MoneyAmount,
+      { amount: 25, region_id: await getRegion('BSC') } as MoneyAmount,
+      { amount: 18, region_id: await getRegion('SportLots') } as MoneyAmount,
     ];
   }
   return basePricing;
@@ -69,8 +77,8 @@ let commonPricing: MoneyAmount[];
 export async function getCommonPricing() {
   if (!commonPricing) {
     commonPricing = [
-      {amount: 25, region_id: await getRegion('BSC')} as MoneyAmount,
-      {amount: 18, region_id: await getRegion('SportLots')} as MoneyAmount,
+      { amount: 25, region_id: await getRegion('BSC') } as MoneyAmount,
+      { amount: 18, region_id: await getRegion('SportLots') } as MoneyAmount,
     ];
   }
   return commonPricing;

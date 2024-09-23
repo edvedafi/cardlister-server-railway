@@ -7,35 +7,27 @@ export async function login(
 ): Promise<AxiosInstance> {
   let token: string;
   try {
-    console.log('Logging in to BSC');
     const page = pup.page;
     await pup.home();
-
-    console.log('At Home Page');
 
     await page.locator('button[tabindex="0"]').click();
     await pup.waitForURL('identity.buysportscards.com');
     await page.locator('#next').wait();
 
-    console.log(
-      'evaluated: ',
-      await page.evaluate(
-        (email, pass) => {
-          // @ts-expect-error JS things
-          document.getElementById('signInName').value = email;
-          // @ts-expect-error JS things
-          document.getElementById('password').value = pass;
-          document.getElementById('next').click();
-          // return window.location.href;
-        },
-        process.env.BSC_EMAIL,
-        process.env.BSC_PASSWORD,
-      ),
+    await page.evaluate(
+      (email, pass) => {
+        // @ts-expect-error JS things
+        document.getElementById('signInName').value = email;
+        // @ts-expect-error JS things
+        document.getElementById('password').value = pass;
+        document.getElementById('next').click();
+        // return window.location.href;
+      },
+      process.env.BSC_EMAIL,
+      process.env.BSC_PASSWORD,
     );
 
     await pup.locatorText('p', 'Welcome back,').wait();
-
-    console.log('Logged in!');
 
     token = await page.evaluate(function () {
       return JSON.parse(
@@ -44,8 +36,6 @@ export async function login(
           .find((value) => value.includes('Bearer')),
       ).secret.trim();
     });
-
-    console.log('Token:', token);
   } catch (e) {
     console.error('Error logging in to BSC:', e);
     await pup.screenshot('login-error');

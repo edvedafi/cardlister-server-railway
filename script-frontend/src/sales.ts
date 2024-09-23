@@ -6,6 +6,7 @@ import { useSpinners } from './utils/spinners';
 import initializeFirebase from './utils/firebase';
 import { completeOrder, getOrders, getProductVariant, getSales } from './utils/medusa';
 import type { Order } from '@medusajs/client-types';
+import { parseArgs } from './utils/parseArgs';
 // @ts-expect-error - no types
 import chalkTable from 'chalk-table';
 import { buildTableData, type OldSale } from './utils/data';
@@ -14,23 +15,30 @@ import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/
 import { shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
 import open from 'open';
-import minimist from 'minimist';
 import { removeFromEbay } from './old-scripts/ebay';
 
 $.verbose = false;
 
 dotenv.config();
 
-const args = minimist(process.argv.slice(2), {
-  string: ['d'],
-  boolean: ['o', 'n', 'r'],
-  alias: {
-    o: 'skip-old',
-    r: 'skip-old-remove',
-    n: 'skip-new',
-    d: 'days',
+const args = parseArgs(
+  {
+    string: ['d'],
+    boolean: ['o', 'n', 'r'],
+    alias: {
+      o: 'skip-old',
+      r: 'skip-old-remove',
+      n: 'skip-new',
+      d: 'days',
+    },
   },
-});
+  {
+    o: 'Skip all Old Sales',
+    r: 'Skip the Remove step for Old Sales',
+    n: 'No new sales batch processing',
+    d: 'Get all of the orders from the last n days',
+  },
+);
 
 const { showSpinner } = useSpinners('Sync', chalk.cyanBright);
 

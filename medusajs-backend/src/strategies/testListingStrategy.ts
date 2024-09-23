@@ -1,5 +1,5 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
-import AbstractListingStrategy from './AbstractListingStrategy';
+import AbstractListingStrategy, { ListAttempt } from './AbstractListingStrategy';
 import axios, { AxiosInstance } from 'axios';
 
 class TestListingStrategy extends AbstractListingStrategy<AxiosInstance> {
@@ -16,6 +16,15 @@ class TestListingStrategy extends AbstractListingStrategy<AxiosInstance> {
     return axios.create();
   }
 
+  async removeProduct(
+    connection: AxiosInstance,
+    product: Product,
+    productVariant: ProductVariant,
+    category: ProductCategory,
+  ): Promise<ListAttempt> {
+    return { skipped: true };
+  }
+
   async syncProduct(
     api: AxiosInstance,
     product: Product,
@@ -23,9 +32,9 @@ class TestListingStrategy extends AbstractListingStrategy<AxiosInstance> {
     category: ProductCategory,
     quantity: number,
     price: number,
-  ): Promise<number> {
+  ): Promise<ListAttempt> {
     this.log(`Would be setting Quantity to ${quantity} and Price to ${price} for ${variant.title} - ${variant.sku}`);
-    return quantity;
+    return { skipped: true };
   }
 }
 
