@@ -1,10 +1,16 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
-import AbstractListingStrategy from './AbstractListingStrategy';
+import AbstractListingStrategy, { ListAttempt } from './AbstractListingStrategy';
 import eBayApi from 'ebay-api';
 import process from 'node:process';
 import { isNo, isYes, titleCase } from '../utils/data';
 import { EbayOfferDetailsWithKeys, InventoryItem } from 'ebay-api/lib/types';
 import { login as ebayLogin } from '../utils/ebayAPI';
+
+type Offer = {
+  offerId: string;
+  availableQuantity: number;
+  status: 'PUBLISHED' | 'UNPUBLISHED';
+};
 
 class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   static identifier = 'ebay-strategy';
@@ -12,13 +18,30 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   static listingSite = 'ebay';
   requireImages = true;
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async removeAllInventory(api: eBayApi, category: ProductCategory): Promise<void> {
-    //TODO Need to Implement
-  }
-
   async login(): Promise<eBayApi> {
     return ebayLogin();
+  }
+
+  async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
+    try {
+      return (await eBay.sell.inventory.getOffers({ sku })).offers;
+    } catch (e) {
+      this.log(`getOffers::error ${e.meta?.Errors?.ErrorCode || e.message}`, e);
+      return [];
+    }
+  }
+
+  async removeProduct(eBay: eBayApi, product: Product, variant: ProductVariant): Promise<ListAttempt> {
+    const offers: Offer[] = await this.getOffers(eBay, variant.sku);
+    for (let i = 0; i < offers.length; i++) {
+      try {
+        await eBay.sell.inventory.deleteOffer(offers[i].offerId);
+      } catch (e) {
+        return { error: `${e.meta?.Errors?.ErrorCode || e.message}` };
+      }
+    }
+    await eBay.sell.inventory.deleteInventoryItem(variant.sku);
+    return { quantity: offers.length };
   }
 
   async syncProduct(
@@ -28,46 +51,26 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     category: ProductCategory,
     quantity: number,
     price: number,
-  ): Promise<number> {
-    let offers: {
-      offers?: {
-        offerId: string;
-        availableQuantity: number;
-        status: 'PUBLISHED' | 'UNPUBLISHED';
-      }[];
-    };
-    try {
-      offers = await eBay.sell.inventory.getOffers({ sku: variant.sku });
-    } catch (e) {
-      offers = undefined;
-    }
+  ): Promise<ListAttempt> {
+    const offers: Offer[] = await this.getOffers(eBay, variant.sku);
 
-    if (offers && offers.offers && offers.offers.length > 0) {
-      const offer = offers.offers[0];
+    if (offers.length > 0) {
+      const offer = offers[0];
       if (quantity === offer.availableQuantity) {
         if (offer.status === 'PUBLISHED') {
           this.log(`No Updates needed for:: ${variant.sku}`);
+          this.log(JSON.stringify(offer, null, 2));
         } else {
           //TODO This should update the offer to ensure it has the latest data
           await eBay.sell.inventory.publishOffer(offer.offerId);
         }
-        return 0;
-      } else if (quantity <= 0) {
-        try {
-          this.log(`Deleting offer for ${variant.sku}`);
-          await eBay.sell.inventory.deleteOffer(offer.offerId);
-          return 1;
-        } catch (e) {
-          //TODO Need to log this in a handleable way
-          this.log(`deleteOffer::error ${e.meta?.Errors?.ErrorCode || e.message}`, e);
-        }
-        return 1;
+        return { skipped: true };
       } else {
         this.log(`Updating quantity for ${variant.sku}`);
         await eBay.sell.inventory.updateOffer(offer.offerId, { ...offer, availableQuantity: quantity });
-        return quantity;
+        return { quantity };
       }
-    } else if (quantity > 0) {
+    } else {
       this.log(`Creating new offer for ${variant.sku}`);
       const ebayInventoryItem: InventoryItem = convertCardToInventory(product, variant, category, quantity);
       await eBay.sell.inventory.createOrReplaceInventoryItem(variant.sku, ebayInventoryItem);
@@ -84,7 +87,7 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
         }
       }
       await eBay.sell.inventory.publishOffer(offerId);
-      return quantity;
+      return { quantity };
     }
   }
 }

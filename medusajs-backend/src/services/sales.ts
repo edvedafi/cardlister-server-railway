@@ -56,6 +56,16 @@ class SalesService extends TransactionBaseService {
         }),
       );
     }
+    if (!request.only || request.only.includes('myslabs')) {
+      responses.push(
+        await this.batchJobService.create({
+          type: 'myslabs-sales-sync',
+          dry_run: false,
+          created_by: request.user,
+          context: {},
+        }),
+      );
+    }
     if (request.only && request.only.includes('test')) {
       responses.push(
         await this.batchJobService.create({

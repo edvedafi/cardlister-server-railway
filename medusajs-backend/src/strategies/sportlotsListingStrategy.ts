@@ -1,5 +1,5 @@
 import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
-import AbstractListingStrategy from './AbstractListingStrategy';
+import AbstractListingStrategy, { SyncResult } from './AbstractListingStrategy';
 import { PuppeteerHelper } from '../utils/puppeteer-helper';
 import { login as slLogin } from '../utils/sportlots';
 
@@ -64,7 +64,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
     products: Product[],
     category: ProductCategory,
     advanceCount: (count: number) => Promise<number>,
-  ): Promise<number> {
+  ): Promise<SyncResult> {
     try {
       let count = 0;
       await this.loadAddInventoryScreen(
@@ -77,7 +77,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
 
       await this.selectSet(pup, category.metadata.sportlots as string);
 
-      const processPage = async (): Promise<number> => {
+      const processPage = async (): Promise<SyncResult> => {
         let expectedAdds = 0;
 
         const tableBody = await pup.$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody');
@@ -129,9 +129,9 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
         }
 
         if (await pup.hasText('td', 'Skip to Page:')) {
-          resultCount += await processPage();
+          resultCount += (await processPage()).success;
         }
-        return resultCount;
+        return { success: resultCount };
       };
       //process at least once
       return await processPage();

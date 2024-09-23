@@ -12,6 +12,13 @@ type InjectedDependencies = {
   inventoryService: InventoryService;
 };
 
+export type ListAttempt =
+  | { skipped: boolean; quantity?: never; error?: never; platformMetadata?: Record<string, string> }
+  | { skipped?: never; quantity: number; error?: never; platformMetadata?: Record<string, string> }
+  | { skipped?: never; quantity?: never; error: string; platformMetadata?: Record<string, string> };
+
+export type SyncResult = { success: number; error?: string[] };
+
 abstract class AbstractListingStrategy<
   T extends AxiosInstance | eBayApi | PuppeteerHelper,
 > extends AbstractSiteStrategy<T> {
@@ -20,6 +27,7 @@ abstract class AbstractListingStrategy<
   static listingSite = 'sync-site';
   private inventoryModule: IInventoryService;
   protected requireImages = false;
+  protected minPrice = 0.01;
 
   protected constructor(__container__: InjectedDependencies) {
     // eslint-disable-next-line prefer-rest-params
@@ -100,7 +108,7 @@ abstract class AbstractListingStrategy<
           throw e;
         }
         let connection: T;
-
+        let result: SyncResult;
         try {
           this.progress('Login');
           connection = await this.login();
@@ -109,14 +117,9 @@ abstract class AbstractListingStrategy<
           await this.removeAllInventory(connection, category);
 
           this.progress('Adding New inventory');
-          const added = await this.syncProducts(
-            connection,
-            productList,
-            category,
-            this.advanceCount.bind(this, batchJobId),
-          );
+          result = await this.syncProducts(connection, productList, category, this.advanceCount.bind(this, batchJobId));
 
-          this.finishProgress(`${added} cards added`);
+          this.finishProgress(`${result.success} cards added; ${result.error} errors`);
         } catch (e) {
           this.progress(e.message, e);
           throw e;
@@ -126,22 +129,25 @@ abstract class AbstractListingStrategy<
 
         await this.batchJobService_.withTransaction(transactionManager).update(batchJobId, {
           result: {
-            advancement_count: productList.length,
+            advancement_count: result.success,
+            errors: result.error?.map((e) => ({
+              message: 'Error syncing products',
+              code: 'ERR',
+              err: e,
+            })),
           },
         });
-        // await this.batchJobService_.complete(batchJobId);
-        // });
       } catch (e) {
         this.log(`:processJob::error ${e.message}`, e);
-        // await this.batchJobService_.setFailed(batchJobId, e.message);
         throw e;
       }
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async removeAllInventory(browser: T, category: ProductCategory): Promise<void> {
-    this.log('Implement removeAllInventory to do a full sync of all products');
+  async removeAllInventory(connection: T, category: ProductCategory): Promise<void> {
+    this.log(
+      `Implement removeAllInventory to do a full sync of all products from ${category.id} on ${typeof connection} `,
+    );
   }
 
   async syncProducts(
@@ -149,28 +155,53 @@ abstract class AbstractListingStrategy<
     products: Product[],
     category: ProductCategory,
     advanceCount: (count: number) => Promise<number>,
-  ): Promise<number> {
-    let updated = 0;
+  ): Promise<SyncResult> {
+    const updated: { success: number; error?: string[] } = { success: 0 };
     let count = 0;
     for (const product of products) {
       if (!this.requireImages || product.images.length > 0) {
         for (const variant of product.variants) {
           try {
-            const quantity = await this.getQuantity({ variant });
-            updated += await this.syncProduct(
-              browser,
-              product,
-              variant,
-              category,
-              quantity,
-              quantity > 0 ? this.getPrice(variant) : 99999,
-            );
-            count = await advanceCount(count);
+            const price = this.getPrice(variant);
+            if (price < this.minPrice) {
+              this.log(`Skipping ${variant.sku} because price is below minimum`);
+            } else {
+              const quantity = await this.getQuantity({ variant });
+              let result: ListAttempt;
+              let updateType = 'Added ';
+              if (quantity < 1) {
+                result = await this.removeProduct(browser, product, variant, category);
+                updateType = 'Removed ';
+              } else {
+                result = await this.syncProduct(browser, product, variant, category, quantity, price);
+              }
+              if (result.skipped) {
+                this.log(`Skipped ${variant.sku}`);
+              } else if (result.error) {
+                throw new Error(result.error);
+              } else {
+                if (result.platformMetadata) {
+                  await this.productVariantService_.update(variant, {
+                    metadata: {
+                      ...variant.metadata,
+                      ...result.platformMetadata,
+                    },
+                  });
+                }
+                this.log(`Sync Complete on ${variant.sku}: ${updateType} ${result.quantity} items`);
+                updated.success += result.quantity;
+              }
+              count = await advanceCount(count);
+            }
           } catch (e) {
             //TODO Need to log in a way that is actionable
             this.log(`Error syncing ${variant.sku}`, e);
+            if (!updated.error) updated.error = [];
+            updated.error.push(e.message?.indexOf(variant.sku) > -1 ? e.message : `${variant.sku}: ${e.message}`);
           }
         }
+      } else {
+        this.log(`Skipping ${product.title} because it has no images`);
       }
     }
     return updated;
@@ -183,11 +214,21 @@ abstract class AbstractListingStrategy<
     category: ProductCategory,
     quantity: number,
     price: number,
-  ): Promise<number> {
-    this.log(
-      `Implement syncProduct to sync a single product for Connection: ${typeof connection} product: ${product.id} | productVariant: ${productVariant.id} | category: ${category.id} => ${quantity} @ ${price}`,
-    );
-    return 0;
+  ): Promise<ListAttempt> {
+    return {
+      error: `Implement syncProduct to sync a single product for Connection: ${typeof connection} product: ${product.id} | productVariant: ${productVariant.id} | category: ${category.id} => ${quantity} @ ${price}`,
+    };
+  }
+
+  async removeProduct(
+    connection: T,
+    product: Product,
+    productVariant: ProductVariant,
+    category: ProductCategory,
+  ): Promise<ListAttempt> {
+    return {
+      error: `Implement remove to remove from Connection: ${typeof connection} => product: ${product.id} | productVariant: ${productVariant.id} | category: ${category.id}`,
+    };
   }
 
   protected async getQuantity(search: QuantityOptions): Promise<number> {

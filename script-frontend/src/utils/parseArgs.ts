@@ -21,14 +21,28 @@ export function parseArgs(opts: minimist.Opts, helpDescriptions: { [key: string]
     opts.alias.h = 'help';
   }
 
-  const args = minimist(process.argv.slice(2), {
-    boolean: ['d'],
-    string: ['o'],
+  const args = minimist(process.argv.slice(2), opts);
+
+  /*
+  const args = parseArgs(
+  {
+    string: ['d'],
+    boolean: ['o', 'n', 'r'],
     alias: {
-      d: 'delete',
-      o: 'only',
+      o: 'skip-old',
+      r: 'skip-old-remove',
+      n: 'skip-new',
+      d: 'days',
     },
-  });
+  },
+  {
+    o: 'Skip all Old Sales',
+    r: 'Skip the Remove step for Old Sales',
+    n: 'No new sales batch processing',
+    d: 'Get all of the orders from the last n days',
+  },
+);
+   */
 
   if (args.h) {
     console.log('Options:');

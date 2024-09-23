@@ -2,7 +2,7 @@ import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { BscCard } from '../models/bsc-card';
-import AbstractListingStrategy from './AbstractListingStrategy';
+import AbstractListingStrategy, { SyncResult } from './AbstractListingStrategy';
 import { login as bscLogin } from '../utils/bsc';
 
 class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
@@ -50,8 +50,8 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
     products: Product[],
     category: ProductCategory,
     advanceCount: (count: number) => Promise<number>,
-  ): Promise<number> {
-    if (!category.metadata.bsc) return 0; //TODO need to log this somewhere actionable
+  ): Promise<SyncResult> {
+    if (!category.metadata.bsc) return { success: 0, error: ['BSC not implemented'] }; //TODO need to log this somewhere actionable
     const updates = [];
     const response = await api.post('seller/bulk-upload/results', {
       condition: 'near_mint',
@@ -111,7 +111,7 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
         throw new Error(results);
       }
     }
-    return updates.length;
+    return { success: updates.length };
   }
 }
 

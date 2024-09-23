@@ -146,6 +146,18 @@ class SyncService extends TransactionBaseService {
           );
         }
 
+        if (!request.only || request.only.includes('myslabs')) {
+          update('Starting MySlabs Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'myslabs-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
+
         if (request.only && request.only.includes('test')) {
           update('Starting TEST Sync');
           responses.push(

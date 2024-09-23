@@ -10,9 +10,7 @@ import {
   RegionService,
 } from '@medusajs/medusa';
 import { EntityManager } from 'typeorm';
-import { remote } from 'webdriverio';
 import { InventoryService } from '@medusajs/inventory/dist/services';
-import { getBrowserlessConfig } from '../utils/browserless';
 import { StockLocationService } from '@medusajs/stock-location/dist/services';
 import axios, { AxiosInstance } from 'axios';
 import axiosRetry from 'axios-retry';
@@ -112,15 +110,6 @@ abstract class AbstractSiteStrategy<
 
   abstract login(): Promise<T>;
 
-  protected async loginWebDriver(baseURL: string): Promise<WebdriverIO.Browser> {
-    return remote(
-      getBrowserlessConfig(
-        baseURL,
-        `${(<typeof AbstractSiteStrategy>this.constructor).listingSite.toUpperCase()}_LOG_LEVEL`.toLowerCase(),
-      ),
-    );
-  }
-
   protected async loginPuppeteer(
     baseUrl: string,
     loginFunction?: (pup: PuppeteerHelper) => Promise<PuppeteerHelper>,
@@ -215,7 +204,8 @@ abstract class AbstractSiteStrategy<
   protected getPrice(variant: ProductVariant): number {
     let price = variant.prices?.find((p) => p.region_id === this.region)?.amount;
     if (!price) {
-      this.log(`Price not found for variant ${variant.sku} in region ${this.region}`); //TODO Need to handle this in a recoverable way
+      this.log(`Price not found for variant ${variant.sku} in region ${this.region} of the ${variant.prices.length}`); //TODO Need to handle this in a recoverable way
+      variant.prices?.forEach((p) => this.log(`Price: ${p.region_id} - ${p.amount}`));
       price = variant.prices?.find((p) => !p.region_id)?.amount;
     }
 
@@ -224,7 +214,7 @@ abstract class AbstractSiteStrategy<
       price = 99;
     }
 
-    return price;
+    return variant.prices?.find((p) => p.region_id === this.region)?.amount;
   }
 }
 

@@ -122,7 +122,7 @@ export async function getCategories(parent_category_id: string): Promise<Product
 export async function getCategory(id: string): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.retrieve(id);
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-  return response.product_categories;
+  return response.product_category;
 }
 
 export type Variation = {
@@ -256,7 +256,8 @@ export async function getRegion(regionName: string): Promise<string> {
 }
 
 export async function startSync(categoryId: string, only: string[] = []) {
-  return runBatches('sync', only, { category: categoryId });
+  console.log(`Starting sync for ${categoryId} ${only}`);
+  return await runBatches('sync', only, { category: categoryId });
 }
 
 export async function getSales(only: string[] = []) {
@@ -285,6 +286,7 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
       );
       while (!['completed', 'failed'].includes(job.status)) {
         update(job.status);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
         const res = await medusa.admin.batchJobs.retrieve(job.id);
         // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
         job = res.batch_job;
@@ -293,12 +295,18 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
         } else {
           update(job.status);
         }
-        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
-      if (job.status === 'completed') {
-        finish(`${job.type}::${job.id} Complete`);
+      if (job.status === 'completed' && !job.result?.errors) {
+        finish(`${job.result?.count} Complete`);
       } else {
-        error(job.status);
+        // log(job.result);
+        // if (job.result?.errors) {
+        //   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+        //   job.result?.errors?.forEach((e: string) => console.error(e.err || e));
+        // }
+        // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+        const errors = job.result?.errors?.map((e) => e.err).join('\n');
+        error((job.result?.errors?.message || 'Failed  ') + '\n  ' + errors + '\n ');
       }
     }),
   );
@@ -471,6 +479,8 @@ export async function completeOrder(order: Order): Promise<void> {
           if (e.response?.data?.message?.indexOf('Insufficient stock') !== -1) {
             log(e.response?.data?.message);
           } else if (e.response?.data?.message?.indexOf('lacks shipping methods') !== -1) {
+            log(e.response?.data?.message);
+          } else if (e.response?.data?.message?.indexOf('annot fulfill more items than have been purchased') !== -1) {
             log(e.response?.data?.message);
           } else {
             throw e;
