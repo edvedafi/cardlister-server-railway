@@ -29,31 +29,31 @@ export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<Mon
       currentPrices = await getBasePricing();
     }
   }
-  const getPrice = async (region: string, defaultPrice: number): Promise<MoneyAmount> => {
+  const prices: MoneyAmount[] = [];
+  const getPrice = async (region: string, defaultPrice: number, minPrice: number): Promise<number> => {
     let price = await ask(`${region} price`, (await currentPrice(region)) || defaultPrice);
     while (price.toString().indexOf('.') > -1) {
       price = await ask(`${region} price should not have a decimal, did you mean: `, price.toString().replace('.', ''));
     }
-    while (parseInt(price) < defaultPrice) {
+    while (price && parseInt(price) < minPrice) {
       price = await ask(`${region} price should not be less that the minimum, did you mean: `, `${price}00`);
     }
-    return {
-      amount: parseInt(price),
-      region_id: await getRegion(region),
-    } as MoneyAmount;
+    if (price) {
+      prices.push({
+        amount: parseInt(price),
+        region_id: await getRegion(region),
+      } as MoneyAmount);
+    } else {
+      console.log(`Skipping Region: ${region}`);
+    }
+    return parseInt(price);
   };
-  const prices: MoneyAmount[] = [];
-  const ebay = await getPrice('ebay', 99);
-  prices.push(ebay);
-  if (ebay.amount > 100) {
-    prices.push(await getPrice('MCP', ebay.amount));
-    prices.push(await getPrice('BSC', ebay.amount));
-    prices.push(await getPrice('SportLots', ebay.amount));
-    prices.push(await getPrice('MySlabs', ebay.amount + 500));
-  } else {
-    prices.push(await getPrice('MCP', 100));
-    prices.push(await getPrice('BSC', 25));
-    prices.push(await getPrice('SportLots', 18));
+  const ebay = await getPrice('ebay', 99, 99);
+  await getPrice('MCP', ebay > 100 ? ebay : 100, 100);
+  await getPrice('BSC', ebay, 25);
+  await getPrice('SportLots', ebay, 18);
+  if (ebay > 999) {
+    await getPrice('MySlabs', ebay + 500, 999);
   }
   return prices;
 }
