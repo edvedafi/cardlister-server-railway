@@ -163,7 +163,7 @@ abstract class AbstractListingStrategy<
         for (const variant of product.variants) {
           try {
             const price = this.getPrice(variant);
-            if (price < this.minPrice) {
+            if (!price || price < this.minPrice) {
               this.log(`Skipping ${variant.sku} because price is below minimum`);
             } else {
               const quantity = await this.getQuantity({ variant });
