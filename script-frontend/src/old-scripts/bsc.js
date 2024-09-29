@@ -45,7 +45,10 @@ const baseHeaders = {
 export const login = async () => {
   if (!_api) {
     const { update, finish } = showSpinner('login', 'Logging into BSC');
-    _driver = await new Builder().forBrowser(Browser.CHROME, '126').build();
+    _driver = await new Builder()
+      .forBrowser(Browser.CHROME, '126')
+      // .setChromeOptions(new chrome.Options().addArguments(['--headless', '--no-sandbox', '--disable-dev-shm-usage']))
+      .build();
     await _driver.get('https://www.buysportscards.com');
     const waitForElement = useWaitForElement(_driver);
 
@@ -73,18 +76,18 @@ export const login = async () => {
     await _driver.findElement(By.css('body')).sendKeys(Key.F12);
 
     update('Getting BSC Token');
-    log('Getting BSC Token');
+    // log('Getting BSC Token');
     const reduxAsString = await _driver.executeScript(
       'return Object.values(localStorage).filter((value) => value.includes("secret")).find(value=>value.includes("Bearer"));',
     );
-    log(`Redux: ${reduxAsString}`);
+    // log(`Redux: ${reduxAsString}`);
 
     update('Saving  Token');
     const redux = JSON.parse(reduxAsString);
 
     baseHeaders.authorization = 'Bearer ' + redux.secret.trim(); //REMOVE
 
-    log('CREATING AXIOS');
+    // log('CREATING AXIOS');
     _api = axios.create({
       baseURL: 'https://api-prod.buysportscards.com/',
       headers: {
@@ -105,7 +108,7 @@ export const login = async () => {
       },
     });
 
-    log('CREATED AXIOS');
+    // log('CREATED AXIOS');
     finish('Logged into BSC');
   }
 
@@ -928,33 +931,64 @@ export const getBSCVariantTypeFilter = async (searchInfo) =>
 export const getBSCVariantNameFilter = async (searchInfo) =>
   getNextFilter(buildBSCFilters(searchInfo), 'BSC Variant Name', 'variantName');
 
-export async function getBSCCards(setInfo) {
-  const { update, finish } = showSpinner('get-bsc-cards', `Getting BSC Cards for ${setInfo.handle}`);
+export async function clearBSC(year) {
+  const { update, finish } = showSpinner('get-bsc-cards', `Getting BSC Cards for ${year}`);
   const api = await login();
-  update('Getting Listings');
+  update('Fetching Listings');
 
   const response = await api.post(`search/seller/results`, {
-    condition: 'all',
-    myInventory: 'false',
+    filters: { year: [year] },
+    myInventory: 'true',
     page: 0,
-    sellerId: 'cf987f7871',
-    size: 50,
+    size: 5000,
     sort: 'default',
-    ...setInfo.metadata.bsc,
+    productCriteria: { condition: {} },
   });
   const cards = response.data.results;
+  let updated = 0;
   if (cards.length === 0) {
-    log({
-      condition: 'all',
-      myInventory: 'false',
-      page: 1,
-      // sellerId: 'cf987f7871',
-      size: 500,
-      sort: 'default',
-      ...setInfo.metadata.bsc,
+    log(`No cards found for ${year}`);
+  } else {
+    log('Saving');
+
+    const queueResults = [];
+
+    const queue = new Queue({
+      results: queueResults,
+      autostart: true,
+      concurrency: 5,
     });
-    log(response.data);
+    log(`Updating ${cards.length} cards`);
+
+    cards.forEach((currentListing) => {
+      queue.push(async () => {
+        const cardName = `${currentListing.setName} ${currentListing.productName}`;
+        const { finish, error } = showSpinner(`upload-${currentListing.productName}`, `Removing ${cardName}`);
+        let cardResponse;
+        try {
+          cardResponse = await api.get(`seller/card-listing/${currentListing.id}`);
+          if (cardResponse.data.listings.length > 0) {
+            await api.put(`seller/card-listing/${currentListing.id}/product`, {
+              action: 'delete',
+              listing: cardResponse.data.listings[0],
+            });
+            updated++;
+          }
+          finish(`Removed`);
+          return currentListing;
+        } catch (e) {
+          // log(e);
+          if (e.data) {
+            log(e.data);
+          }
+          error(e.message);
+          log(cardResponse?.data);
+        }
+      });
+    });
+    await new Promise((resolve) => queue.addEventListener('end', resolve));
   }
-  finish(`Found ${cards.length} cards`);
+
+  finish(`Updated ${updated} cards`);
   return cards;
 }
