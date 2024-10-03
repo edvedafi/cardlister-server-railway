@@ -211,9 +211,14 @@ export class PuppeteerHelper {
   }
 
   async hasText(locator: ElementOrLocator, text: string): Promise<boolean> {
-    if (typeof locator === 'string' && locator === 'table') {
-      return await this.page.$eval('table', () =>
-        Array.from(document.querySelectorAll('td')).some((td) => td.textContent.includes(text)),
+    if (typeof locator === 'string') {
+      return await this.page.evaluate(
+        (selector: string, text: string) =>
+          Array.from(document.querySelectorAll(selector)).some((td) =>
+            td.textContent?.toLowerCase().includes(text.toLowerCase()),
+          ),
+        locator === 'table' ? 'td' : <string>locator,
+        text,
       );
     } else {
       return (await this.el(locator)).evaluate((el, text) => el.textContent.includes(text), text);
