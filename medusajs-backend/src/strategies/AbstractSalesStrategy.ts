@@ -167,7 +167,9 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
             for (const lineItem of systemOrder.lineItems) {
               try {
                 this.log(`Looking for variant for ${lineItem.sku}`);
-                const variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {});
+                const variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {
+                  region_id: await this.getRegionId(),
+                });
                 if (!variant) {
                   this.log(`Could not find variant for ${lineItem.sku}`);
                   items.push({

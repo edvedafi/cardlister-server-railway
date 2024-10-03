@@ -204,7 +204,7 @@ abstract class AbstractSiteStrategy<
   protected getPrice(variant: ProductVariant): number {
     let price = variant.prices?.find((p) => p.region_id === this.region)?.amount;
     if (!price) {
-      this.log(`Price not found for variant ${variant.sku} in region ${this.region} of the ${variant.prices.length}`); //TODO Need to handle this in a recoverable way
+      this.log(`Price not found for variant ${variant.sku} in region ${this.region} of the ${variant.prices?.length}`); //TODO Need to handle this in a recoverable way
       variant.prices?.forEach((p) => this.log(`Price: ${p.region_id} - ${p.amount}`));
       price = variant.prices?.find((p) => !p.region_id)?.amount;
     }
