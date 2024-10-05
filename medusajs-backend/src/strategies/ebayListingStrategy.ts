@@ -5,12 +5,29 @@ import process from 'node:process';
 import { isNo, isYes, titleCase } from '../utils/data';
 import { EbayOfferDetailsWithKeys, InventoryItem } from 'ebay-api/lib/types';
 import { login as ebayLogin } from '../utils/ebayAPI';
+import { EbayApiError } from 'ebay-api/lib/errors';
 
 type Offer = {
   offerId: string;
   availableQuantity: number;
   status: 'PUBLISHED' | 'UNPUBLISHED';
 };
+
+function handleEbayError(e: Error, nonErrors: number[] = []): string | undefined {
+  if ('meta' in e) {
+    const err: EbayApiError = e as EbayApiError;
+    if (nonErrors.includes(err.errorCode)) {
+      return undefined;
+    } else if ('message' in err.firstError && err.firstError.message) {
+      return `${err.firstError.message}`;
+    } else if (err.firstError) {
+      return JSON.stringify(err.firstError);
+    } else {
+      return err.message;
+    }
+  }
+  return e.message;
+}
 
 class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   static identifier = 'ebay-strategy';
@@ -26,22 +43,37 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     try {
       return (await eBay.sell.inventory.getOffers({ sku })).offers;
     } catch (e) {
-      this.log(`getOffers::error ${e.meta?.Errors?.ErrorCode || e.message}`, e);
+      const message = handleEbayError(e, [25710, 25713]);
+      if (message) {
+        this.log(message, e);
+      }
       return [];
     }
   }
 
   async removeProduct(eBay: eBayApi, product: Product, variant: ProductVariant): Promise<ListAttempt> {
-    const offers: Offer[] = await this.getOffers(eBay, variant.sku);
-    for (let i = 0; i < offers.length; i++) {
-      try {
-        await eBay.sell.inventory.deleteOffer(offers[i].offerId);
-      } catch (e) {
-        return { error: `${e.meta?.Errors?.ErrorCode || e.message}` };
+    let error: ListAttempt | undefined;
+    const hasError = (e: unknown) => {
+      const err = handleEbayError(<Error>e, [25710, 25713]);
+      if (err) {
+        error = { error: err };
       }
+    };
+    let offers: Offer[] = [];
+    try {
+      offers = await this.getOffers(eBay, variant.sku);
+      for (let i = 0; i < offers.length; i++) {
+        try {
+          await eBay.sell.inventory.deleteOffer(offers[i].offerId);
+        } catch (e) {
+          hasError(e);
+        }
+      }
+      await eBay.sell.inventory.deleteInventoryItem(variant.sku);
+    } catch (e) {
+      hasError(e);
     }
-    await eBay.sell.inventory.deleteInventoryItem(variant.sku);
-    return { quantity: offers.length };
+    return error || { quantity: offers.length };
   }
 
   async syncProduct(
@@ -58,13 +90,14 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
       const offer = offers[0];
       if (quantity === offer.availableQuantity) {
         if (offer.status === 'PUBLISHED') {
-          this.log(`No Updates needed for:: ${variant.sku}`);
-          this.log(JSON.stringify(offer, null, 2));
+          // this.log(`No Updates needed for:: ${variant.sku}`);
+          // this.log(JSON.stringify(offer, null, 2));
+          return { skipped: true };
         } else {
           //TODO This should update the offer to ensure it has the latest data
           await eBay.sell.inventory.publishOffer(offer.offerId);
+          return { quantity };
         }
-        return { skipped: true };
       } else {
         this.log(`Updating quantity for ${variant.sku}`);
         await eBay.sell.inventory.updateOffer(offer.offerId, { ...offer, availableQuantity: quantity });

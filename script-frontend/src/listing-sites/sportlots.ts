@@ -141,7 +141,16 @@ const getOptions = async (
       },
     });
   }
-  return await ask(`SportLots ${displayName}`, defaultName, { selectOptions: values });
+
+  values.push({
+    name: 'None',
+    value: {
+      name: 'None',
+      key: 'N/A',
+    },
+  });
+  const selected = await ask(`SportLots ${displayName}`, defaultName, { selectOptions: values });
+  return selected.name === 'None' ? undefined : selected;
 };
 
 export const getSLSport = async (defaultName?: string): Promise<SelectOption> =>
@@ -177,13 +186,15 @@ export async function getSLSet(setInfo: SetInfo): Promise<SelectOption> {
       return { name: setText, value: setNumber };
     });
 
+    allSets.push({ name: 'None', value: 'None' });
+
     let defaultAnswer = `${setInfo.brand.name} ${setInfo.set.name}`;
     if (setInfo.variantName) {
       defaultAnswer = `${defaultAnswer} ${setInfo.variantName.name}`;
     }
     const selected = await ask('SportLots Set', defaultAnswer, { selectOptions: allSets });
     finish();
-    return selected;
+    return 'None' === selected ? undefined : selected;
   } catch (e) {
     error(e);
     throw e;
