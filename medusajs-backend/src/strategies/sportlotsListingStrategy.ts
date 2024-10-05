@@ -13,10 +13,12 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
   }
 
   async removeAllInventory(pup: PuppeteerHelper, category: ProductCategory): Promise<void> {
-    await pup.goto(`inven/dealbin/setdetail.tpl?Set_id=${category.metadata.sportlots}`);
-    const waitForAlert = pup.acceptAlert();
-    await pup.locator('input[value="Delete All Set Inventory"').click();
-    await waitForAlert;
+    if (category.metadata.sportlots) {
+      await pup.goto(`inven/dealbin/setdetail.tpl?Set_id=${category.metadata.sportlots}`);
+      const waitForAlert = pup.acceptAlert();
+      await pup.locator('input[value="Delete All Set Inventory"').click();
+      await waitForAlert;
+    }
   }
 
   async loadAddInventoryScreen(
@@ -65,6 +67,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
     category: ProductCategory,
     advanceCount: (count: number) => Promise<number>,
   ): Promise<SyncResult> {
+    if (!category.metadata.sportlots) return { success: 0 };
     try {
       let count = 0;
       await this.loadAddInventoryScreen(
