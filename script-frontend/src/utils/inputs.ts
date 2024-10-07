@@ -65,7 +65,7 @@ export const getInputDirectory = async () => {
   return input_directory;
 };
 
-export const getFiles = async (inputDirectory: string): Promise<string[]> => {
+export const getFiles = async (inputDirectory: string, requireEven = true): Promise<string[]> => {
   const { finish, error } = showSpinner('inputs', 'Getting Files');
   let files: string[] = [];
   try {
@@ -74,7 +74,7 @@ export const getFiles = async (inputDirectory: string): Promise<string[]> => {
       .toString()
       .split('\n')
       .filter((image) => image !== '');
-    if (files.length % 2 !== 0) {
+    if (requireEven && files.length % 2 !== 0) {
       const ok = await ask(`Odd Number of Files? [${files.length}]`, false);
       if (!ok) {
         error('Odd Number of Files');

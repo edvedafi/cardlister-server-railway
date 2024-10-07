@@ -61,6 +61,6 @@ if ( features?.count == 0 ) {
     // Step 6: Save the new image
     let imageData = newImage.tiffRepresentation!
     let bitmap = NSBitmapImageRep(data: imageData)!
-    let pngData = bitmap.representation(using: NSBitmapImageRep.FileType.png, properties: [:])!
+    let pngData = bitmap.representation(using: NSBitmapImageRep.FileType.jpeg, properties: [:])!
     try! pngData.write(to: outputURL)
 }
