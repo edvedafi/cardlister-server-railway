@@ -14,7 +14,8 @@
     "sales": "tsx src/sales.ts",
     "start": "tsx src/addCards.ts",
     "sync": "tsx src/sync.ts",
-    "fix": "tsx src/fix.ts"
+    "fix": "tsx src/fix.ts",
+    "keepers": "tsx src/keepers.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.6.0",
@@ -54,6 +55,7 @@
     "node-graceful-shutdown": "^1.1.5",
     "open": "^10.1.0",
     "p-retry": "^6.2.0",
+    "pdf-lib": "^1.17.1",
     "prettier": "^3.3.2",
     "queue": "^7.0.0",
     "selenium-webdriver": "^4.23.0",

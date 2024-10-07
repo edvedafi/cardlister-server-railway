@@ -5,6 +5,7 @@ import fs from 'fs-extra';
 import { useSpinners } from '../utils/spinners.ts';
 import chalk from 'chalk';
 import { $ } from 'zx';
+import { PDFDocument } from 'pdf-lib';
 
 const { showSpinner, log } = useSpinners('images', chalk.white);
 
@@ -27,8 +28,12 @@ function getOutputFile(listing, setInfo, imageNumber) {
 }
 
 export const prepareImageFile = async (image, listing, setInfo, imageNumber) => {
-  const { update, error, finish } = showSpinner('crop', 'Preparing Image');
   const { outputLocation, outputFile } = getOutputFile(listing, setInfo, imageNumber);
+  return cropImage(image, listing, outputLocation, outputFile);
+};
+
+export const cropImage = async (image, listing, outputLocation, outputFile, useMaxSize = true) => {
+  const { update, error, finish } = showSpinner('crop', 'Preparing Image');
   let input = image;
   // let rotation = await ask('Rotate', false);
   let rotate;
@@ -65,7 +70,7 @@ export const prepareImageFile = async (image, listing, setInfo, imageNumber) => 
       },
       async () => {
         tempImage = `${tempDirectory}/sharp.extract.jpg`;
-        return await sharp(input).extract(listing.crop).toFile(tempImage);
+        return listing ? await sharp(input).extract(listing.crop).toFile(tempImage) : false;
       },
       async () => {
         tempImage = `${tempDirectory}/sharp.trimp.jpg`;
@@ -88,9 +93,13 @@ export const prepareImageFile = async (image, listing, setInfo, imageNumber) => 
     while (!found && i < cropAttempts.length) {
       try {
         update(`Attempting crop ${i}/${cropAttempts.length}`);
-        await cropAttempts[i]();
-        log(await terminalImage.file(tempImage, { height: 25 }));
-        found = await ask('Did Image render correct?', true);
+        const cropped = await cropAttempts[i]();
+        if (cropped) {
+          log(await terminalImage.file(tempImage, { height: 25 }));
+          found = await ask('Did Image render correct?', true);
+        } else {
+          found = false;
+        }
       } catch (e) {
         log(e);
       }
@@ -99,7 +108,7 @@ export const prepareImageFile = async (image, listing, setInfo, imageNumber) => 
 
     if (found) {
       const buffer = await sharp(tempImage).toBuffer();
-      if (buffer.length > MAX_IMAGE_SIZE) {
+      if (useMaxSize && buffer.length > MAX_IMAGE_SIZE) {
         const compressionRatio = MAX_IMAGE_SIZE / buffer.length;
         const outputQuality = Math.floor(compressionRatio * 100);
         await sharp(buffer).jpeg({ quality: outputQuality }).toFile(outputFile);
@@ -117,3 +126,63 @@ export const prepareImageFile = async (image, listing, setInfo, imageNumber) => 
   finish();
   return outputFile;
 };
+
+const DPI = 600;
+
+export async function buildPDF(images, outputFileName) {
+  const { update, error, finish } = showSpinner('resize', 'Building PDF');
+  let output;
+  try {
+    const pdfDoc = await PDFDocument.create();
+    let page = pdfDoc.addPage([8.5 * DPI, 11 * DPI]); // 8.5" x 11" page
+
+    const resize = async (image) =>
+      await sharp(image)
+        .resize(750, 1050, { fit: 'fill' }) // Resize to 750x1050 pixels
+        .toBuffer();
+
+    const cardWidth = 2.6 * DPI; // 2.5 inches in points
+    const cardHeight = 3.6 * DPI; // 3.5 inches in points
+    const marginX = 0.33 * DPI; // 0.5 inch margin
+    const marginY = 0.16 * DPI;
+
+    let x = marginX;
+    let y = 11 * DPI - marginY - cardHeight;
+
+    for (let i = 0; i < images.length; i++) {
+      update(`Adding Image ${i + 1}/${images.length}`);
+      log(`Adding ${images[i]}`);
+      const resizedImage = await resize(images[i]);
+      const img = await pdfDoc.embedJpg(resizedImage);
+
+      page.drawImage(img, {
+        x,
+        y,
+        width: cardWidth,
+        height: cardHeight,
+      });
+
+      x += cardWidth + marginX;
+      if ((i + 1) % 3 === 0) {
+        x = marginX;
+        y -= cardHeight + marginY;
+      }
+
+      // If we reach the bottom, create a new page
+      if ((i + 1) % 9 === 0 && i !== images.length - 1) {
+        page = pdfDoc.addPage([8.5 * DPI, 11 * DPI]);
+        x = marginX;
+        y = 11 * DPI - marginY - cardHeight;
+      }
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    output = `/tmp/${outputFileName}.pdf`;
+    fs.writeFileSync(output, pdfBytes);
+    finish();
+  } catch (e) {
+    error(e);
+    throw e;
+  }
+  return output;
+}
