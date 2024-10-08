@@ -14,6 +14,7 @@ import {
 import { useSpinners } from '../utils/spinners';
 import type { InventoryItemDTO, MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
 import { getCommonPricing, getPricing } from './pricing';
+import type { ParsedArgs } from 'minimist';
 
 const { log } = useSpinners('card-data', chalk.whiteBright);
 
@@ -204,7 +205,7 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
   return cardName;
 }
 
-export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
+export async function getCardData(setData: SetInfo, imageDefaults: Metadata, args: ParsedArgs) {
   if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
 
   const product = await matchCard(setData, imageDefaults);
@@ -316,6 +317,7 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata) {
     productVariant.prices && productVariant.prices.length > 1 //one is odd but there is always the default 99 cent price
       ? productVariant.prices
       : setData.category?.metadata?.prices,
+    args['skipSafetyCheck'],
   );
   if (productVariant.prices) {
     productVariant.prices = <MoneyAmount[]>prices
