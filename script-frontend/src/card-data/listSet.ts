@@ -34,13 +34,13 @@ const queueImageFiles = new Queue({
   concurrency: 3,
 });
 
-const preProcessPair = async (front: string, back: string, setData: SetInfo) => {
+const preProcessPair = async (front: string, back: string, setData: SetInfo, args: ParsedArgs) => {
   const { update, finish, error } = showSpinner(`singles-preprocess-${front}`, `Pre-Processing ${front}/${back}`);
   try {
     update(`Getting image recognition data`);
     const imageDefaults = await imageRecognition(front, back, setData);
     update(`Queueing next step`);
-    queueGatherData.push(() => processPair(front, back, imageDefaults, setData));
+    queueGatherData.push(() => processPair(front, back, imageDefaults, setData, args));
     finish();
   } catch (e) {
     error(e);
@@ -48,14 +48,20 @@ const preProcessPair = async (front: string, back: string, setData: SetInfo) => 
   }
 };
 
-const processPair = async (front: string, back: string, imageDefaults: Partial<Product>, setData: SetInfo) => {
+const processPair = async (
+  front: string,
+  back: string,
+  imageDefaults: Partial<Product>,
+  setData: SetInfo,
+  args: ParsedArgs,
+) => {
   try {
     log(await terminalImage.file(front, { height: 25 }));
     if (back) {
       log(await terminalImage.file(back, { height: 25 }));
     }
 
-    const { productVariant, quantity } = await getCardData(setData, imageDefaults);
+    const { productVariant, quantity } = await getCardData(setData, imageDefaults, args);
     if (!productVariant.product) throw new Error('Must set Product on the Variant before processing');
 
     const images: ProductImage[] = [];
@@ -204,7 +210,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       if (i < files.length) {
         back = files[i++];
       }
-      queueReadImage.push(() => preProcessPair(front, back, setData));
+      queueReadImage.push(() => preProcessPair(front, back, setData, args));
     }
 
     let hasQueueError = false;

@@ -8,7 +8,7 @@ import { onShutdown } from 'node-graceful-shutdown';
 import { findSet } from './card-data/setData';
 import { processSet } from './card-data/listSet';
 import { getFiles, getInputs } from './utils/inputs';
-import minimist from 'minimist';
+import { parseArgs } from './utils/parseArgs';
 
 configDotenv();
 
@@ -30,15 +30,24 @@ try {
 
   // Set up full run information
   update('Gathering Inputs');
-  const args = minimist(process.argv.slice(2), {
-    boolean: ['s', 'b'],
-    string: ['n'],
-    alias: {
-      s: 'select-bulk-cards',
-      b: 'bulk',
-      n: 'numbers',
+  const args = parseArgs(
+    {
+      boolean: ['s', 'b', 'c'],
+      string: ['n'],
+      alias: {
+        s: 'select-bulk-cards',
+        b: 'bulk',
+        n: 'numbers',
+        c: 'skipSafetyCheck',
+      },
     },
-  });
+    {
+      s: 'Select Bulk Cards',
+      b: 'Bulk Only Run',
+      n: 'Card Numbers to enter quantity \n        ex: --numbers="1,2,3,4,5"\n        ex: --numbers="1-5" \n        ex: --numbers=">5"\n        ex: --numbers="<5"',
+      c: 'Skip Safety Check',
+    },
+  );
 
   if (args['numbers'] || args['select-bulk-cards']) {
     args['bulk'] = true;

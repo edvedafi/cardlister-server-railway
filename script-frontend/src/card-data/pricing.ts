@@ -5,22 +5,24 @@ import { useSpinners } from '../utils/spinners';
 
 const { log } = useSpinners('Pricing', '#85BB65');
 
-export async function getPricing(currentPrices: MoneyAmount[] = []): Promise<MoneyAmount[]> {
+export async function getPricing(currentPrices: MoneyAmount[] = [], skipSafetyCheck = false): Promise<MoneyAmount[]> {
   const currentPrice = async (region: string): Promise<number | undefined> => {
     const regionId = await getRegion(region);
     return currentPrices.find((price) => price.region_id === regionId)?.amount;
   };
   if (currentPrices && currentPrices.length > 1) {
-    log('Current Pricing:');
-    const logPrice = async (region: string) => {
-      log(`  ${region}: ${await currentPrice(region)}`);
-    };
-    await logPrice('ebay');
-    await logPrice('MCP');
-    await logPrice('BSC');
-    await logPrice('SportLots');
-    if (await ask('Use Current Pricing', true)) {
-      return currentPrices;
+    if (!skipSafetyCheck) {
+      log('Current Pricing:');
+      const logPrice = async (region: string) => {
+        log(`  ${region}: ${await currentPrice(region)}`);
+      };
+      await logPrice('ebay');
+      await logPrice('MCP');
+      await logPrice('BSC');
+      await logPrice('SportLots');
+      if (skipSafetyCheck || (await ask('Use Current Pricing', true))) {
+        return currentPrices;
+      }
     }
   } else {
     if (await ask('Use common card pricing', true)) {
