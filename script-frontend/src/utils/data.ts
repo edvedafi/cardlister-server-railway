@@ -2,6 +2,7 @@ import { getCategories, getProduct, getProductVariant, getRootCategory } from '.
 import type { Order, ProductCategory } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
 import type { ChalkInstance } from 'chalk';
+import _ from 'lodash';
 
 const color = chalk.greenBright;
 const { showSpinner, log } = useSpinners('data-utils', color);
@@ -229,18 +230,31 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                 }
               } else {
                 const fuzzy = oldSales.find((sale) => sale.sku === item.metadata?.sku);
-                if (!fuzzy) throw new Error(`Could not find old style match for ${item.title} in oldSales print out`);
-                return {
-                  sport: fuzzy.sport,
-                  year: fuzzy.year,
-                  setName: fuzzy.setName,
-                  parallel: fuzzy.parallel,
-                  insert: fuzzy.insert,
-                  cardNumber: fuzzy.cardNumber,
-                  quantity: item.quantity,
-                  title: item.title,
-                  platform: item.order.metadata?.platform || '???',
-                };
+                if (fuzzy) {
+                  return {
+                    sport: fuzzy.sport,
+                    year: fuzzy.year,
+                    setName: fuzzy.setName,
+                    parallel: fuzzy.parallel,
+                    insert: fuzzy.insert,
+                    cardNumber: fuzzy.cardNumber,
+                    quantity: item.quantity,
+                    title: item.title,
+                    platform: item.order.metadata?.platform || '???',
+                  };
+                } else {
+                  return {
+                    sport: '?',
+                    year: '?',
+                    setName: '?',
+                    parallel: '?',
+                    insert: '?',
+                    cardNumber: '?',
+                    quantity: item.quantity,
+                    title: item.title,
+                    platform: item.order.metadata?.platform || '???',
+                  };
+                }
               }
             } else {
               throw new Error('Item not found');
@@ -259,7 +273,13 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
         return items;
       }, [])
       .reduce((items: DisplayRows, item: DisplayableRow): DisplayRows => {
-        const key = `${item.sport}|${item.year}|${item.setName}|${item.parallel}|${item.insert}`;
+        const key = JSON.stringify({
+          sport: item.sport,
+          year: item.year,
+          setName: item.setName,
+          parallel: item.parallel,
+          insert: item.insert,
+        });
         if (!items[key]) {
           items[key] = [item];
         } else {
@@ -318,26 +338,74 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
     };
 
     update('Setting colors');
-    Object.keys(displayable)
-      .sort()
-      .forEach((key, i) => {
-        if (i > 0) {
-          finalDisplay.push(divider);
-          color = color === chalk.magentaBright ? chalk.greenBright : chalk.magentaBright;
+    _.orderBy(
+      Array.from(Object.keys(displayable).map((key) => JSON.parse(key))),
+      ['sport', 'year', 'setName', 'parallel', 'insert'],
+      ['asc', 'desc', 'desc', 'desc', 'desc'],
+    ).forEach((key, i) => {
+      if (i > 0) {
+        finalDisplay.push(divider);
+        if (key.insert) {
+          if (key.parallel) {
+            color = chalk.redBright;
+          } else {
+            color = chalk.blueBright;
+          }
+        } else if (key.parallel) {
+          color = chalk.greenBright;
+        } else {
+          color = chalk.whiteBright;
         }
 
-        const cards = displayable[key];
-        cards.forEach((card) => {
+        // if (key.sport === '') color = color === chalk.magentaBright ? chalk.greenBright : chalk.magentaBright;
+      }
+
+      const cards = displayable[JSON.stringify(key)];
+      if (cards) {
+        _.orderBy(
+          cards,
+          [
+            (card) => {
+              try {
+                const cardNo = parseInt(card.cardNumber);
+                if (isNaN(cardNo)) {
+                  return card.cardNumber;
+                } else {
+                  return cardNo;
+                }
+              } catch (e) {
+                return card.cardNumber;
+              }
+            },
+          ],
+          ['asc'],
+        ).forEach((card) => {
           Object.keys(card).forEach(
             (cardKey) =>
               // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
               (card[cardKey] =
-                // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
-                cardKey === 'platform' ? orderColor(card.platform)(card.platform) : color(card[cardKey])),
+                cardKey === 'platform'
+                  ? orderColor(card.platform)(card.platform)
+                  : cardKey === 'sport'
+                    ? // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
+                      {
+                        football: chalk.green,
+                        Football: chalk.green,
+                        baseball: chalk.red,
+                        Baseball: chalk.red,
+                        Basketball: chalk.yellow,
+                        basketball: chalk.yellow,
+                        Hockey: chalk.blue,
+                        hockey: chalk.blue,
+                        '?': chalk.white,
+                      }[card.sport](card.sport)
+                    : // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
+                      color(card[cardKey])),
           );
           finalDisplay.push(card);
         });
-      });
+      }
+    });
   } catch (e) {
     error(e);
   }

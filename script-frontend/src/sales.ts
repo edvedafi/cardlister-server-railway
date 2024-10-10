@@ -14,7 +14,6 @@ import { getSingleListingInfo } from './old-scripts/firebase';
 import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/bsc';
 import { shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
-import open from 'open';
 import { removeFromEbay } from './old-scripts/ebay';
 
 $.verbose = false;
@@ -70,7 +69,7 @@ try {
   }
 
   update('Gather Orders');
-  const orders: Order[] = await getOrders();
+  const orders: Order[] = await getOrders(args['days']);
   if (orders.length > 0) {
     update('Process old orders');
 
@@ -127,20 +126,20 @@ try {
 
     update('Build display pull table');
     const output = await buildTableData(orders, oldSales);
-
-    update('Open external sites');
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
-      await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
-    }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
-      await open('https://www.buysportscards.com/sellers/orders');
-    }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
-      await open('https://www.mycardpost.com/edvedafi/orders');
-    }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
-      await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
-    }
+    //
+    // update('Open external sites');
+    // if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
+    //   await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
+    // }
+    // if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
+    //   await open('https://www.buysportscards.com/sellers/orders');
+    // }
+    // if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
+    //   await open('https://www.mycardpost.com/edvedafi/orders');
+    // }
+    // if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
+    //   await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
+    // }
 
     finish(`Processed ${orders.length} orders`);
     console.log(
