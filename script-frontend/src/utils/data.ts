@@ -345,19 +345,18 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
     ).forEach((key, i) => {
       if (i > 0) {
         finalDisplay.push(divider);
-        if (key.insert) {
-          if (key.parallel) {
-            color = chalk.redBright;
-          } else {
-            color = chalk.blueBright;
-          }
-        } else if (key.parallel) {
-          color = chalk.greenBright;
-        } else {
-          color = chalk.whiteBright;
-        }
+      }
 
-        // if (key.sport === '') color = color === chalk.magentaBright ? chalk.greenBright : chalk.magentaBright;
+      if (key.insert) {
+        if (key.parallel) {
+          color = chalk.redBright;
+        } else {
+          color = chalk.blueBright;
+        }
+      } else if (key.parallel) {
+        color = chalk.greenBright;
+      } else {
+        color = chalk.whiteBright;
       }
 
       const cards = displayable[JSON.stringify(key)];

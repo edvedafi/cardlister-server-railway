@@ -72,7 +72,7 @@ async function sync(category: ProductCategory) {
         { name: 'BuySportsCards', value: 'bsc', checked: args.only?.indexOf('bsc') > -1 },
         { name: 'ebay', value: 'ebay', checked: args.only?.indexOf('ebay') > -1 },
         { name: 'MyCardPost', value: 'mcp', checked: args.only?.indexOf('mcp') > -1 },
-        { name: 'MySlabs', value: 'myslab', checked: args.only?.indexOf('myslab') > -1 },
+        { name: 'MySlabs', value: 'myslabs', checked: args.only?.indexOf('myslabs') > -1 },
       ],
     });
     if (answers && answers.length > 0) {
