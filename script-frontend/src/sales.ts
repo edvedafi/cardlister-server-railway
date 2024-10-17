@@ -15,6 +15,7 @@ import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/
 import { shutdownMyCardPost } from './old-scripts/mycardpost';
 import { convertTitleToCard, createGroups } from './old-scripts/uploads';
 import { removeFromEbay } from './old-scripts/ebay';
+import open from 'open';
 
 $.verbose = false;
 
@@ -26,15 +27,15 @@ const args = parseArgs(
     boolean: ['o', 'n', 'r'],
     alias: {
       o: 'skip-old',
-      r: 'skip-old-remove',
-      n: 'skip-new',
+      r: 'remove-old-school',
+      n: 'new-sales',
       d: 'days',
     },
   },
   {
     o: 'Skip all Old Sales',
-    r: 'Skip the Remove step for Old Sales',
-    n: 'No new sales batch processing',
+    r: 'Remove cards for Old School style Sales',
+    n: 'Gather all new sales from platforms before processing',
     d: 'Get all of the orders from the last n days',
   },
 );
@@ -63,7 +64,7 @@ initializeFirebase();
 const { update, error, finish } = showSpinner('top-level', 'Running sales processing');
 
 try {
-  if (!args['skip-new'] && !args['days']) {
+  if (args['new-sales']) {
     update('Get Orders from Platforms');
     await getSales();
   }
@@ -105,7 +106,7 @@ try {
       }
       fs.writeJSONSync('oldSales.json', oldSales);
 
-      if (!args['skip-old-remove']) {
+      if (args['remove-old-school']) {
         const groupedCards = await createGroups({}, oldSales);
         update('Remove listings from sites');
         if (oldSales && oldSales.length > 0) {
@@ -126,20 +127,20 @@ try {
 
     update('Build display pull table');
     const output = await buildTableData(orders, oldSales);
-    //
-    // update('Open external sites');
-    // if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
-    //   await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
-    // }
-    // if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
-    //   await open('https://www.buysportscards.com/sellers/orders');
-    // }
-    // if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
-    //   await open('https://www.mycardpost.com/edvedafi/orders');
-    // }
-    // if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
-    //   await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
-    // }
+
+    update('Open external sites');
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
+      await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
+    }
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
+      await open('https://www.buysportscards.com/sellers/orders');
+    }
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
+      await open('https://www.mycardpost.com/edvedafi/orders');
+    }
+    if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
+      await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
+    }
 
     finish(`Processed ${orders.length} orders`);
     console.log(
