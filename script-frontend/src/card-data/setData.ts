@@ -420,6 +420,7 @@ export async function buildSet(setInfo: SetInfo) {
         builtProducts += nextProducts.length;
         // log('builtProducts', builtProducts);
         cards = findVariations(bscCards, slCards);
+        await ask('Continue');
       }
     } else {
       cards = {
@@ -452,6 +453,10 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
   };
 
   bscCards.forEach((card) => {
+    if (cards.bscBase.find((bscCard) => bscCard.cardNo === card.cardNo)) {
+      card.cardNo = `${card.cardNo}b`;
+    }
+
     if (
       card.playerAttribute.indexOf('VAR') > -1 ||
       card.playerAttribute.indexOf('ERR') > -1 ||
