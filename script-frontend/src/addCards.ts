@@ -9,6 +9,7 @@ import { findSet } from './card-data/setData';
 import { processSet } from './card-data/listSet';
 import { getFiles, getInputs } from './utils/inputs';
 import { parseArgs } from './utils/parseArgs';
+import terminalImage from 'terminal-image';
 
 configDotenv();
 
@@ -20,7 +21,7 @@ const shutdown = async () => {
 
 onShutdown(shutdown);
 
-const { showSpinner } = useSpinners('addCards', chalk.cyan);
+const { showSpinner, log } = useSpinners('addCards', chalk.cyan);
 
 const { update, finish, error } = showSpinner('addCards', 'Adding Cards');
 
@@ -55,14 +56,17 @@ try {
 
   const input_directory = args['bulk'] ? 'input/bulk' : await getInputs(args);
 
-  update('Gathering Set Data');
-  const setData = await findSet();
-
   //gather the list of files that we will process
   let files: string[] = [];
   if (input_directory !== 'input/bulk/') {
     files = await getFiles(input_directory);
   }
+
+  update('Gathering Set Data');
+  if (files && files[0]) {
+    log('  ' + (await terminalImage.file(files[0], { height: 25 })));
+  }
+  const setData = await findSet();
 
   update('Processing Singles');
   await processSet(setData, files, args);

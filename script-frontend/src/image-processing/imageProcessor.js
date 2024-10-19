@@ -65,12 +65,16 @@ export const cropImage = async (image, listing, outputLocation, outputFile, useM
 
     const cropAttempts = [
       async () => {
+        tempImage = `${tempDirectory}/copy.jpg`;
+        return $`cp ${input} ${tempImage}`;
+      },
+      async () => {
         tempImage = `${tempDirectory}/CC.rotate.jpg`;
         return await $`./CardCropper.rotate ${input} ${tempImage}`;
       },
       async () => {
         tempImage = `${tempDirectory}/sharp.extract.jpg`;
-        return listing ? await sharp(input).extract(listing.crop).toFile(tempImage) : false;
+        return listing?.crop?.left ? await sharp(input).extract(listing.crop).toFile(tempImage) : false;
       },
       async () => {
         tempImage = `${tempDirectory}/sharp.trimp.jpg`;
@@ -95,7 +99,7 @@ export const cropImage = async (image, listing, outputLocation, outputFile, useM
         update(`Attempting crop ${i}/${cropAttempts.length}`);
         const cropped = await cropAttempts[i]();
         if (cropped) {
-          log(await terminalImage.file(tempImage, { height: 25 }));
+          log('  ' + (await terminalImage.file(tempImage, { height: 25 })));
           found = await ask('Did Image render correct?', true);
         } else {
           found = false;

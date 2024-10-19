@@ -468,7 +468,11 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
         if (!cards.bscVariations[baseCardNumber]) {
           cards.bscVariations[baseCardNumber] = [];
         }
-        cards.bscVariations[baseCardNumber].push(card);
+        if (cards.bscVariations[baseCardNumber].find((bscCard) => bscCard.cardNo === card.cardNo) === undefined) {
+          card.cardNo = `${baseCardNumber}b`;
+        } else {
+          cards.bscVariations[baseCardNumber].push(card);
+        }
       }
     } else {
       cards.bscBase.push(card);

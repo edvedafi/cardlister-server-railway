@@ -56,9 +56,10 @@ const processPair = async (
   args: ParsedArgs,
 ) => {
   try {
-    log(await terminalImage.file(front, { height: 25 }));
+    log('  ' + (await terminalImage.file(front, { height: 25 })));
     if (back) {
-      log(await terminalImage.file(back, { height: 25 }));
+      log('  ');
+      log('  ' + (await terminalImage.file(back, { height: 25 })));
     }
 
     const { productVariant, quantity } = await getCardData(setData, imageDefaults, args);
