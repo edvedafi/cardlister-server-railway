@@ -8,7 +8,7 @@ const allTeams = {
   basketball: [],
   baseball: [],
   hockey: [],
-  other: [],
+  other: ['USA'],
 };
 
 export const leagues = {
@@ -78,7 +78,7 @@ export let isTeam = (team, sport, year) => {
   // console.log('searching for team', searchKey, sport, teams);
   let foundTeam;
   if (sport) {
-    foundTeam = allTeams[sport.toLowerCase()].find(
+    foundTeam = (allTeams[sport.toLowerCase()] || allTeams.other).find(
       (t) =>
         (searchKey === t.searchTeam || searchKey === t.searchLocation || searchKey === t.searchExact) &&
         t.startYear <= testYear &&
