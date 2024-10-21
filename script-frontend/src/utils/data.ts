@@ -1,7 +1,7 @@
 import { getCategories, getProduct, getProductVariant, getRootCategory } from './medusa';
 import type { Order, ProductCategory } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
-import type { ChalkInstance } from 'chalk';
+import chalk, { type ChalkInstance } from 'chalk';
 import _ from 'lodash';
 
 const color = chalk.greenBright;
@@ -386,18 +386,23 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                 cardKey === 'platform'
                   ? orderColor(card.platform)(card.platform)
                   : cardKey === 'sport'
-                    ? // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
-                      {
-                        football: chalk.green,
-                        Football: chalk.green,
-                        baseball: chalk.red,
-                        Baseball: chalk.red,
-                        Basketball: chalk.yellow,
-                        basketball: chalk.yellow,
-                        Hockey: chalk.blue,
-                        hockey: chalk.blue,
-                        '?': chalk.white,
-                      }[card.sport](card.sport)
+                    ? (
+                        {
+                          football: chalk.green,
+                          Football: chalk.green,
+                          baseball: chalk.red,
+                          Baseball: chalk.red,
+                          Basketball: chalk.yellow,
+                          basketball: chalk.yellow,
+                          Hockey: chalk.blue,
+                          hockey: chalk.blue,
+                          other: chalk.cyanBright,
+                          MulitSport: chalk.cyanBright,
+                          mulitsport: chalk.cyanBright,
+                          MultiSport: chalk.cyanBright,
+                          '?': chalk.white,
+                        }[card.sport] || chalk.cyanBright
+                      )(card.sport)
                     : // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
                       color(card[cardKey])),
           );
