@@ -356,6 +356,7 @@ export async function updateSetDefaults(metadata: Metadata = {}): Promise<Metada
     await update('card_number_prefix');
     await update('features', { isArray: true });
     await update('printRun');
+    await update('autograph', { selectOptions: ['None', 'Label or Sticker', 'On Card'] });
 
     metadata.prices = await getPricing(<MoneyAmount[]>metadata.prices);
 

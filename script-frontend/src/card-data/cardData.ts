@@ -40,7 +40,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     thickness: '20pt',
     bsc: card.id,
     printRun: card.printRun || set.metadata?.printRun,
-    autograph: card.autograph,
+    autograph: card.autograph || set.metadata?.autograph,
     features: card.features || set.metadata?.features || [],
   };
 
@@ -130,10 +130,10 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   if (title.length > maxTitleLength) {
     title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
   }
-  if (title.length > maxTitleLength && card.insert) {
-    insert = add((<string>card.insert).replace(' Refractor', ''));
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
-  }
+  // if (title.length > maxTitleLength && card.insert) {
+  //   insert = add((<string>card.insert).replace(' Refractor', ''));
+  //   title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+  // }
   if (title.length > maxTitleLength && card.insert) {
     insert = add((<string>card.insert).replace('Rookie', 'RC'));
     title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
