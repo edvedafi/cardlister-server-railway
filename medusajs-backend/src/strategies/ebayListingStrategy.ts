@@ -260,7 +260,7 @@ function convertCardToInventory(
       category.metadata.parallel ||
         (category.metadata.insert && !isNo(category.metadata.insert) ? 'Base Insert' : 'Base Set'),
     ],
-    Autographed: booleanText(variant.metadata.autograph),
+    Autographed: variant.metadata.autograph && variant.metadata.autograph !== 'None' ? ['Yes'] : ['No'],
     'Card Name': [variant.metadata?.cardName || card.metadata?.cardName],
     'Card Number': [variant.metadata.cardNumber],
     'Signed By': displayOrNA(variant.metadata.autograph, variant.metadata.player),

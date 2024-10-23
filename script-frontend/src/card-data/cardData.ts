@@ -15,6 +15,7 @@ import { useSpinners } from '../utils/spinners';
 import type { InventoryItemDTO, MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
 import { getCommonPricing, getPricing } from './pricing';
 import type { ParsedArgs } from 'minimist';
+import _ from 'lodash';
 
 const { log } = useSpinners('card-data', chalk.whiteBright);
 
@@ -40,8 +41,8 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     thickness: '20pt',
     bsc: card.id,
     printRun: card.printRun || set.metadata?.printRun,
-    autograph: card.autograph || set.metadata?.autograph,
-    features: card.features || set.metadata?.features || [],
+    autograph: set.metadata?.autograph || card.autograph,
+    features: _.uniq(_.concat([], card.features || [], set.metadata?.features || [])),
   };
 
   if (card.sportlots) {
@@ -60,6 +61,39 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   product.length = 6;
   product.width = 4;
   product.height = 1;
+
+  if (
+    set.metadata?.parallel &&
+    !isNo(set.metadata?.parallel) &&
+    !product.metadata.features.includes('Parallel/Variety')
+  ) {
+    product.metadata.features.push('Parallel/Variety');
+
+    if (
+      set.metadata?.parallel.toLowerCase().indexOf('refractor') > -1 &&
+      !product.metadata.features.includes('Refractor')
+    ) {
+      product.metadata.features.push('Refractor');
+    }
+  }
+
+  if (set.metadata?.insert && !isNo(set.metadata?.insert)) {
+    product.metadata.features.push('Insert');
+  }
+
+  if (product.metadata.printRun && product.metadata.printRun > 0) {
+    product.metadata.features.push('Serial Numbered');
+  }
+
+  if (product.metadata.features.includes('RC') && !product.metadata.features.includes('Rookie')) {
+    product.metadata.features.push('Rookie');
+  }
+
+  if (product.metadata.features.length === 0) {
+    product.metadata.features.push('Base Set');
+  }
+
+  product.metadata.features = _.uniq(product.metadata?.features || []);
 
   return product as Product;
 }
@@ -92,7 +126,12 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   let insert = add(card.insert, 'Insert');
   let parallel = add(card.parallel, 'Parallel');
 
-  const features = add(card.features).replace(' | ', '');
+  const features = add(
+    card.features?.map(
+      (feature) =>
+        !['Insert', 'Parallel/Variety', 'Serial Numbered', 'Base Set', 'Refractor', 'Rookie'].includes(feature),
+    ),
+  ).replace(' | ', ' ');
   const printRun = card.printRun ? ` /${card.printRun}` : '';
   const variation = add(card.variation);
   let setName = card.setName;
