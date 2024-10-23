@@ -11,7 +11,9 @@ const { showSpinner } = useSpinners('trim', chalk.cyan);
 export async function getInputs(args: ParsedArgs) {
   const { finish } = showSpinner('inputs', 'Getting Input Information');
   let zipFile: string | undefined = undefined;
-  if (args.lastZipFile) {
+  if (args.lastZipFile && args._.length > 0) {
+    zipFile = `/Users/jburich/Downloads/Photos-001\ \(${args._[0]}\).zip`;
+  } else if (args.lastZipFile) {
     //find the most recent file in ~/Downloads
     zipFile = (await $`ls -t ~/Downloads/*.zip | head -n 1`).text().trim();
   } else if (args._.length > 0) {
