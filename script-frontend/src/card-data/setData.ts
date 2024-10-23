@@ -263,10 +263,25 @@ export async function findSet(
         update('New Variant Name');
         const isInsert = setInfo.variantType?.name === 'Insert';
         let isParallel = setInfo.variantType?.name === 'Parallel';
+        let insertName: string | undefined = undefined;
+        let parallelName: string | undefined = undefined;
 
         const bscVariantName: BSCFilterResponse = await getBSCVariantNameFilter(setInfo);
         if (isInsert && !isParallel) {
           isParallel = await ask('Is this a parallel of an insert?', false);
+        }
+        if (isInsert && !isParallel) {
+          insertName = bscVariantName.name;
+        } else if (isInsert && isParallel) {
+          const refractor = bscVariantName.name.indexOf('Refractor');
+          if (refractor > -1) {
+            insertName = bscVariantName.name.slice(0, refractor).trim();
+            parallelName = bscVariantName.name.slice(refractor).trim();
+          }
+          insertName = bscVariantName.name.substring(0, bscVariantName.name.lastIndexOf(' ')).trim();
+          parallelName = bscVariantName.name.substring(bscVariantName.name.lastIndexOf(' ')).trim();
+          insertName = await ask('Insert Name', insertName);
+          parallelName = await ask('Parallel Name', parallelName);
         }
         let variantName: string;
         if (onlySportlots) {
@@ -286,16 +301,16 @@ export async function findSet(
               manufacture: setInfo.brand.name,
               year: setInfo.year.name,
               setName: setInfo.set.name,
-              insert: isInsert ? variantName : null,
-              parallel: isParallel ? variantName : null,
+              insert: insertName,
+              parallel: parallelName,
             })
           ).bin,
           sport: setInfo.sport?.name,
           brand: setInfo.brand.name,
           year: setInfo.year.name,
           setName: setInfo.set.name,
-          insert: isInsert ? bscVariantName.name : null,
-          parallel: isParallel ? bscVariantName.name : null,
+          insert: insertName,
+          parallel: parallelName,
           ...(await updateSetDefaults()),
         };
 
@@ -317,10 +332,7 @@ export async function findSet(
         updates.insert_xs = await ask('XS Insert Name?', setInfo.variantName?.metadata?.insert);
       }
       if (setInfo.variantName?.metadata?.parallel && !setInfo.variantName?.metadata?.parallel_xs) {
-        const xs_parallel = await ask('XS Parallel Name?', setInfo.variantName?.metadata?.parallel);
-        if (xs_parallel && xs_parallel !== setInfo.variantName?.metadata?.parallel) {
-          updates.parallel_xs = xs_parallel;
-        }
+        updates.parallel_xs = await ask('XS Parallel Name?', setInfo.variantName?.metadata?.parallel);
       }
       if (Object.keys(updates).length > 0 || description || !setInfo.variantName?.is_active) {
         setInfo.variantName = await setCategoryActive(setInfo.variantName.id, description, {
@@ -580,13 +592,14 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
             const product = await buildProductFromBSCCard(card, category);
             const variationsBSC = inputCards.bscVariations[card.cardNo];
             const variationsSL = inputCards.slVariations[card.cardNo];
-            // log(`Product Metadata: ${JSON.stringify(product.metadata)}`);
             const variations: Variation[] = [
               {
                 title: product.title,
                 sku: product.metadata?.sku,
                 metadata: {
                   ...product.metadata,
+                  features: product.metadata?.features,
+                  description: `${product.description} <br><br><ul>${product.metadata?.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`,
                   isBase: true,
                 },
               },
@@ -617,8 +630,8 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 }
 
                 const titles = await getTitles({ ...metadata, ...category.metadata });
-                metadata.description = `${titles.longTitle} ${variation.playerAttributeDesc}`;
-                metadata.features = _.uniq(metadata.features);
+                metadata.features = _.uniq(metadata.features || []);
+                metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`;
 
                 variations.push({
                   title: titles.title,
@@ -652,7 +665,8 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 );
 
                 const titles = await getTitles({ ...metadata, ...category.metadata });
-                metadata.description = titles.longTitle;
+                metadata.features = _.uniq(metadata.features || []);
+                metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`;
                 variations.push({
                   title: titles.title,
                   sku: `${category.metadata?.bin}|${metadata.cardNumber}`,
