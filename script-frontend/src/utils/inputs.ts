@@ -10,23 +10,36 @@ const { showSpinner } = useSpinners('trim', chalk.cyan);
 
 export async function getInputs(args: ParsedArgs) {
   const { finish } = showSpinner('inputs', 'Getting Input Information');
-  if (args._.length > 0) {
-    const zipFile: string = args._[0];
+  let zipFile: string | undefined = undefined;
+  if (args.lastZipFile) {
+    //find the most recent file in ~/Downloads
+    zipFile = (await $`ls -t ~/Downloads/*.zip | head -n 1`).text().trim();
+  } else if (args._.length > 0) {
+    zipFile = args._[0];
+  }
+
+  if (zipFile) {
+    console.log('zipFile', zipFile, zipFile.endsWith('.zip'));
     if (zipFile.endsWith('.zip')) {
+      console.log('got zipfile');
       const zipDir = zipFile
         ?.split('/')
         ?.pop()
         ?.split('.')[0]
         .replace(/[\s()]/g, '_');
+      console.log('zipDir', zipDir);
       const dir = `input/${zipDir}/`;
+      console.log('dir', dir);
       await ensureDir(dir);
       await unzip(zipFile, dir);
       finish(`Input Directory: ${dir}`);
       return dir;
     } else if (zipFile.indexOf('input') > -1) {
+      console.log('got input');
       finish(`Input Directory: ${zipFile}`);
       return zipFile;
     } else {
+      console.log('just a directory');
       finish(`Input Directory: input/${zipFile}/`);
       return `input/${zipFile}/`;
     }

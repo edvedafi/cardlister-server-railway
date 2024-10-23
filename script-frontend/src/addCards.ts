@@ -33,13 +33,14 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'c'],
+      boolean: ['s', 'b', 'c', 'z'],
       string: ['n'],
       alias: {
         s: 'select-bulk-cards',
         b: 'bulk',
         n: 'numbers',
         c: 'skipSafetyCheck',
+        z: 'lastZipFile',
       },
     },
     {
@@ -47,6 +48,7 @@ try {
       b: 'Bulk Only Run',
       n: 'Card Numbers to enter quantity \n        ex: --numbers="1,2,3,4,5"\n        ex: --numbers="1-5" \n        ex: --numbers=">5"\n        ex: --numbers="<5"',
       c: 'Skip Safety Check',
+      z: 'Process the most recent zip file in the users Downloads directory',
     },
   );
 

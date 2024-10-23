@@ -282,7 +282,10 @@ export async function findSet(
           parallelName = bscVariantName.name.substring(bscVariantName.name.lastIndexOf(' ')).trim();
           insertName = await ask('Insert Name', insertName);
           parallelName = await ask('Parallel Name', parallelName);
+        } else {
+          parallelName = bscVariantName.name;
         }
+        
         let variantName: string;
         if (onlySportlots) {
           variantName = await ask('Series 2 Variant Name', bscVariantName.name);
