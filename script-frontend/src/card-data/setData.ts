@@ -540,12 +540,15 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
   const products: CardProduct[] = [];
   try {
     update('Building Products');
-    const slCardOptions: AskSelectOption[] = inputCards.slBase.map(
-      (card): AskSelectOption => ({
-        value: card.title,
-        name: `${card.cardNumber} - ${card.title}`,
-      }),
-    );
+    const slCardOptions: AskSelectOption[] = [
+      { name: 'None', value: 'None' },
+      ...inputCards.slBase.map(
+        (card): AskSelectOption => ({
+          value: card.title,
+          name: `${card.cardNumber} - ${card.title}`,
+        }),
+      ),
+    ];
 
     interface TempCard extends Card {
       sportlots?: string;
