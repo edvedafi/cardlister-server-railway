@@ -146,23 +146,47 @@ export async function createProduct(product: Product, variations: Variation[] = 
     categories: [{ id: product.categories?.[0].id || '' }],
     is_giftcard: false,
     discountable: true,
-    variants: variations.map((variation) => ({
-      title: variation.title,
-      manage_inventory: true,
-      prices: [{ currency_code: 'usd', amount: 99 }],
-      sku: variation.sku,
-    })),
+    variants: variations
+      .filter((v) => v.metadata?.isBase)
+      .map((variation) => ({
+        title: variation.title,
+        manage_inventory: true,
+        prices: [{ currency_code: 'usd', amount: 99 }],
+        sku: variation.sku,
+      })),
   };
   if (product.metadata?.features) {
     payload.metadata.features = Array.isArray(product.metadata.features)
       ? product.metadata.features
       : [product.metadata.features];
   }
-  const response = await medusa.admin.products.create(payload);
+
+  let response;
+  try {
+    response = await medusa.admin.products.create(payload);
+  } catch (error) {
+    console.log('Error creating product', error);
+    const r = await medusa.admin.products.list({
+      limit: 10000,
+      fields: 'metadata,variants.metadata',
+      expand: 'variants',
+    });
+    const skus = r.products.flatMap((p) => p.variants.map((v) => v.sku));
+    variations.forEach((v) => {
+      if (!skus.includes(v.sku)) {
+        console.log('Missing SKU', v.sku);
+      } else {
+        console.log('Found SKU', JSON.stringify(v, null, 2));
+      }
+    });
+    throw new Error('Failed to create product');
+  }
+  // await ask('Product Created: Press Enter to Continue');
   for (const variant of response.product.variants) {
     await medusa.admin.products.updateVariant(response.product.id, variant.id, {
       metadata: variations.find((v) => v.sku === variant.sku)?.metadata,
     });
+    // await ask(`Variant ${variant.sku} Created: Press Enter to Continue`);
   }
   // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
@@ -527,20 +551,6 @@ export async function deleteCardsFromSet(category: ProductCategory) {
 }
 
 export async function getNextBin() {
-  const bins: number[] = [];
-  const checkCategory = async (parent: string) => {
-    const children = await getCategories(parent);
-    for (const category of children) {
-      if (category.metadata && category.metadata.bin) {
-        const newBin = parseInt(category.metadata?.bin);
-        bins.push(newBin);
-      }
-      await checkCategory(category.id);
-    }
-  };
-  await checkCategory(await getRootCategory());
-  let bin = 1;
-  while (bins.includes(bin)) {
-    bin++;
-  }
+  const response = await medusa.admin.custom.get('bin');
+  return response.nextBin;
 }

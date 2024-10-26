@@ -17,13 +17,13 @@ import {
   createCategoryActive,
   createProduct,
   getCategories,
+  getNextBin,
   getProductCardNumbers,
   getRootCategory,
   setCategoryActive,
   updateCategory,
   type Variation,
 } from '../utils/medusa.js';
-import { getGroup } from '../listing-sites/firebase.js';
 import Queue from 'queue';
 import { type Card } from '../models/bsc';
 import { type SLCard } from '../models/cards';
@@ -213,14 +213,15 @@ export async function findSet(
         const metadata: Metadata = {
           bsc: bscVariantType.filter,
           sportlots: await getSLSet(setInfo as SetInfo),
-          bin: (
-            await getGroup({
-              sport: setInfo.sport?.name,
-              manufacture: setInfo.brand.name,
-              year: setInfo.year.name,
-              setName: setInfo.set.name,
-            })
-          ).bin,
+          bin: await getNextBin(),
+          // bin: (
+          //   await getGroup({
+          //     sport: setInfo.sport?.name,
+          //     manufacture: setInfo.brand.name,
+          //     year: setInfo.year.name,
+          //     setName: setInfo.set.name,
+          //   })
+          // ).bin,
           isInsert: false,
           isParallel: false,
           sport: setInfo.sport?.name,
@@ -285,7 +286,7 @@ export async function findSet(
         } else {
           parallelName = bscVariantName.name;
         }
-        
+
         let variantName: string;
         if (onlySportlots) {
           variantName = await ask('Series 2 Variant Name', bscVariantName.name);
@@ -298,16 +299,7 @@ export async function findSet(
           bsc: bscVariantName.filter,
           isInsert,
           isParallel,
-          bin: (
-            await getGroup({
-              sport: setInfo.sport?.name,
-              manufacture: setInfo.brand.name,
-              year: setInfo.year.name,
-              setName: setInfo.set.name,
-              insert: insertName,
-              parallel: parallelName,
-            })
-          ).bin,
+          bin: await getNextBin(),
           sport: setInfo.sport?.name,
           brand: setInfo.brand.name,
           year: setInfo.year.name,
