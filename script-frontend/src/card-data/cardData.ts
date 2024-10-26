@@ -100,7 +100,13 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
 
 const add = (info?: unknown, modifier?: string): string => {
   if (Array.isArray(info)) {
-    info = info.join(' | ');
+    if (info.length === 1) {
+      info = ' ' + info[0];
+    } else if (info.length === 0) {
+      return '';
+    } else if (info.length > 1) {
+      info = ' ' + info.join(' | ');
+    }
   }
   if (info === undefined || info === null || info === '' || isNo(<string>info)) {
     return '';
@@ -127,7 +133,7 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   let parallel = add(card.parallel, 'Parallel');
 
   const features = add(
-    card.features?.map(
+    card.features?.filter(
       (feature) =>
         !['Insert', 'Parallel/Variety', 'Serial Numbered', 'Base Set', 'Refractor', 'Rookie'].includes(feature),
     ),
