@@ -133,12 +133,16 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
     }
     if (products.length === 0) throw new Error(`No products found for ${args.numbers}`);
     products = _.sortBy(products, (p) => {
-      const asInt = parseInt(p.metadata?.cardNumber);
+      let asInt = parseInt(p.metadata?.cardNumber);
       if (isNaN(asInt)) {
-        return p.metadata?.cardNumber;
-      } else {
-        return asInt;
+        if (setData.metadata?.card_number_prefix) {
+          asInt = parseInt(p.metadata?.cardNumber.replace(setData.metadata?.card_number_prefix, ''));
+        }
+        if (isNaN(asInt)) {
+          return p.metadata?.cardNumber;
+        }
       }
+      return asInt;
     });
     if (args['select-bulk-cards']) {
       type Option = { product: Product; variant: ProductVariant };
