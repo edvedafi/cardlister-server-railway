@@ -139,35 +139,35 @@ export async function getTitles(card: Metadata): Promise<Titles> {
     ),
   ).replace(' | ', ' ');
   const printRun = card.printRun ? ` /${card.printRun}` : '';
-  const variation = add(card.variation);
+  const variation = add(card.variationName);
   let setName = card.setName;
   const teamDisplay = add(card.teams);
   const graded = isYes(<string>card.graded) ? ` ${card.grader} ${card.grade} ${psaGrades[<number>card.grade]}` : '';
 
-  titles.longTitle = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+  titles.longTitle = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   let title = titles.longTitle;
   if (title.length > maxTitleLength && ['Panini', 'Leaf'].includes(<string>card.brand)) {
     setName = card.setName;
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   }
   // if (title.length > maxTitleLength) {
   //   teamDisplay = card.team.map((team) => team.team).join(' | ');
-  //   title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+  //   title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   // }
   // if (title.length > maxTitleLength) {
   //   teamDisplay = card.team.map((team) => team.team).join(' ');
-  //   title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+  //   title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   // }
   if (title.length > maxTitleLength) {
     insert = add(card.insert);
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   }
   if (title.length > maxTitleLength) {
     parallel = add(card.parallel);
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   }
   if (title.length > maxTitleLength) {
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${teamDisplay}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
   }
   if (title.length > maxTitleLength) {
     title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${features}${printRun}${graded}`;
@@ -197,7 +197,7 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   if (title.length > maxTitleLength) {
     title = await ask(`Title`, titles.longTitle, { maxLength: maxTitleLength });
   }
-  titles.title = title;
+  titles.title = title.replace('  ', ' ');
 
   return titles as Titles;
 }
