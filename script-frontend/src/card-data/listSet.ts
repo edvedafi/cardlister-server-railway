@@ -14,6 +14,7 @@ import type { InventoryItemDTO, Product, ProductVariant } from '@medusajs/client
 import { buildSet } from './setData';
 import _ from 'lodash';
 import type { ParsedArgs } from 'minimist';
+import { getInputs } from '../utils/inputs';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
@@ -164,7 +165,15 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
         const variants = _.sortBy(product.variants, 'metadata.cardNumber');
         for (let j = 0; j < variants.length; j++) {
           const variant = variants[j];
-          const createListing = await ask(variant.title, variant.inventory_quantity || undefined);
+          let title = variant.title.trim();
+          // console.log(`Processing ${title} isBase: ${variant.metadata?.isBase} variants: ${variants.length}`);
+          if (variant.metadata?.isBase && variants.length > 1) {
+            title = `Has Variations:\n   ${variants
+              .filter((v) => !v.metadata?.isBase)
+              .map((v) => v.metadata?.variationName)
+              .join('\n   ')}\n${chalk.green('?')} ${title}`;
+          }
+          const createListing = await ask(title, variant.inventory_quantity || undefined);
           if (createListing > 0) {
             saving.push(saveBulk(product, variant, createListing));
           }
@@ -203,6 +212,14 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     if (setData.products.length === 0) {
       await buildSet(setData);
       setData.products = await getProducts(setData.category.id);
+    }
+
+    if (args.countCardsFirst) {
+      const { finish } = showSpinner('count-cards', `Counting Cards`);
+      await processBulk(setData, args);
+      await ask('Count Collection Complete! Press Enter to continue');
+      files = await getInputs(args);
+      finish();
     }
 
     while (i < files.length - 1) {
@@ -263,13 +280,15 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       errorSpinner(hasQueueError);
     } else {
       if (args['select-bulk-cards']) {
-        //do some special stuff
+        log('select-bulk-cards is not yet implemented');
       }
-      const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
-      if (addBulk) {
-        updateSpinner(`Process Bulk`);
-        setData.products = await getProducts(setData.category.id);
-        await processBulk(setData, args);
+      if (!args.countCardsFirst) {
+        const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
+        if (addBulk) {
+          updateSpinner(`Process Bulk`);
+          setData.products = await getProducts(setData.category.id);
+          await processBulk(setData, args);
+        }
       }
       updateSpinner(`Kickoff Set Processing`);
       await startSync(setData.category.id);

@@ -147,7 +147,7 @@ export async function createProduct(product: Product, variations: Variation[] = 
     is_giftcard: false,
     discountable: true,
     variants: variations
-      .filter((v) => v.metadata?.isBase)
+      // .filter((v) => v.metadata?.isBase)
       .map((variation) => ({
         title: variation.title,
         manage_inventory: true,

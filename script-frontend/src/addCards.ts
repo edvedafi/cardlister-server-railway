@@ -33,21 +33,22 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'c', 'z'],
+      boolean: ['s', 'b', 'u', 'z', 'c'],
       string: ['n'],
       alias: {
         s: 'select-bulk-cards',
         b: 'bulk',
         n: 'numbers',
-        c: 'skipSafetyCheck',
+        u: 'skipSafetyCheck',
         z: 'lastZipFile',
+        c: 'countCardsFirst',
       },
     },
     {
       s: 'Select Bulk Cards',
       b: 'Bulk Only Run',
       n: 'Card Numbers to enter quantity \n        ex: --numbers="1,2,3,4,5"\n        ex: --numbers="1-5" \n        ex: --numbers=">5"\n        ex: --numbers="<5"',
-      c: 'Skip Safety Check',
+      u: 'Skip Safety Check',
       z: 'Process the most recent zip file in the users Downloads directory',
     },
   );
@@ -56,7 +57,7 @@ try {
     args['bulk'] = true;
   }
 
-  const input_directory = args['bulk'] ? 'input/bulk' : await getInputs(args);
+  const input_directory = args['bulk'] || args['countCardsFirst'] ? 'input/bulk' : await getInputs(args);
 
   //gather the list of files that we will process
   let files: string[] = [];
