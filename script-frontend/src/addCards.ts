@@ -50,6 +50,7 @@ try {
       n: 'Card Numbers to enter quantity \n        ex: --numbers="1,2,3,4,5"\n        ex: --numbers="1-5" \n        ex: --numbers=">5"\n        ex: --numbers="<5"',
       u: 'Skip Safety Check',
       z: 'Process the most recent zip file in the users Downloads directory',
+      c: 'Enter Counts of cards first and then process the zip file of images',
     },
   );
 
