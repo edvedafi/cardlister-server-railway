@@ -8,7 +8,11 @@ const { log } = useSpinners('Pricing', '#85BB65');
 export async function getPricing(currentPrices: MoneyAmount[] = [], skipSafetyCheck = false): Promise<MoneyAmount[]> {
   const currentPrice = async (region: string): Promise<number | undefined> => {
     const regionId = await getRegion(region);
-    return currentPrices.find((price) => price.region_id === regionId)?.amount;
+    const amount: number | string | undefined = currentPrices.find((price) => price.region_id === regionId)?.amount;
+    // @ts-expect-error sometimes the backend returns a string for some crazy reason
+    if (amount && amount !== 'undefined') {
+      return amount;
+    }
   };
   if (currentPrices && currentPrices.length > 1) {
     if (!skipSafetyCheck) {
@@ -33,7 +37,11 @@ export async function getPricing(currentPrices: MoneyAmount[] = [], skipSafetyCh
   }
   const prices: MoneyAmount[] = [];
   const getPrice = async (region: string, defaultPrice: number, minPrice: number): Promise<number> => {
-    let price = await ask(`${region} price`, (await currentPrice(region)) || defaultPrice);
+    let startingPrice = (await currentPrice(region)) || defaultPrice;
+    if (!startingPrice) {
+      startingPrice = defaultPrice;
+    }
+    let price = await ask(`${region} price`, startingPrice);
     while (price.toString().indexOf('.') > -1) {
       price = await ask(`${region} price should not have a decimal, did you mean: `, price.toString().replace('.', ''));
     }

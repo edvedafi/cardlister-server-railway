@@ -15,21 +15,23 @@ class BinService extends TransactionBaseService {
   }
 
   public async getNextBin(): Promise<string> {
-    const [categories, count] = await this.productCategoryService.listAndCount({ include_descendants_tree: true });
-    console.log('# categories: ', count);
-    console.log('# categories: ', categories.filter((category) => category.metadata?.bin).length);
-    console.log('# categories No metadata: ', categories.filter((category) => category.metadata).length);
-    console.log(
-      'Categories pcat_01JB1QJVNJ6QCB31W10HHNQKFP: ',
-      categories.filter((category) => category.id === 'pcat_01JB1QJVNJ6QCB31W10HHNQKFP'),
-    );
+    // const [categories, count] = await this.productCategoryService.listAndCount({
+    //   include_descendants_tree: true,
+    //   q: 'parent_category_id=null',
+    // });
+    // const categories = await this.productCategoryService.retrieveByHandle('root');
+    // console.log('# categories count: ', count);
+    // console.log('# categories bins: ', categories.filter((category) => category.metadata?.bin).length);
+    // console.log('# deadBins: ', categories.filter((category) => category.metadata?.deadBins).length);
+    // console.log('# categories metadata: ', categories.filter((category) => category.metadata).length);
+
     let maxBin = 1;
 
     const bins: number[] = [];
     const addBins = (category: ProductCategory) => {
       let bin: number | undefined;
-      if (category.id === 'pcat_01JB1QJVNJ6QCB31W10HHNQKFP') {
-        console.log("Found IT : category.id === 'pcat_01JB1QJVNJ6QCB31W10HHNQKFP'");
+      if (category.metadata?.bin || category.metadata?.deadBins) {
+        console.log('category: ', category.handle, ':', category.metadata?.bin, ':', category.metadata?.deadBins);
       }
       if (category.metadata?.bin) {
         if (typeof category.metadata?.bin === 'string') {
@@ -41,11 +43,23 @@ class BinService extends TransactionBaseService {
       if (bin && !bins.includes(bin)) {
         bins.push(bin);
       }
+      if (category.metadata?.deadBins) {
+        console.log('deadBins: ', category.metadata?.deadBins);
+        (<string>category.metadata?.deadBins)
+          .split(',')
+          .map((deadBin) => parseInt(deadBin.trim()))
+          .forEach((deadBin) => {
+            if (!bins.includes(deadBin)) {
+              bins.push(deadBin);
+            }
+          });
+      }
       if (category.category_children) {
         category.category_children.forEach((child: ProductCategory) => addBins(child));
       }
     };
-    categories.forEach((category) => addBins(category));
+    addBins(await this.productCategoryService.retrieveByHandle('root'));
+    // categories.forEach((category) => addBins(category));
     // const bins = categories
     //   .filter((category) => category.metadata?.bin)
     //   .map((category) =>
