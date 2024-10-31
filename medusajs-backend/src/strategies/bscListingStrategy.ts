@@ -78,6 +78,14 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
         const quantity = await this.getQuantity({ variant });
 
         if (quantity !== listing.availableQuantity || (listing.sellerSku && listing.sellerSku !== variant.sku)) {
+          const price = this.getPrice(variant);
+          if (!price) {
+            throw new Error(`Price not found for ${variant.sku}`);
+          } else if (price < 0.25) {
+            throw new Error(`Price too low for ${variant.sku}`);
+          } else if (price > 999) {
+            throw new Error(`Price too high for ${variant.sku}`);
+          }
           const newListing: BscCard = {
             ...listing,
             availableQuantity: quantity,

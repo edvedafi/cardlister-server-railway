@@ -280,9 +280,11 @@ export async function findSet(
             parallelName = bscVariantName.name.slice(refractor).trim();
           }
           insertName = bscVariantName.name.substring(0, bscVariantName.name.lastIndexOf(' ')).trim();
-          parallelName = bscVariantName.name.substring(bscVariantName.name.lastIndexOf(' ')).trim();
           insertName = await ask('Insert Name', insertName);
-          parallelName = await ask('Parallel Name', parallelName);
+          if (insertName) {
+            parallelName = bscVariantName.name.replace(insertName, '').trim();
+            parallelName = await ask('Parallel Name', parallelName);
+          }
         } else {
           parallelName = bscVariantName.name;
         }
