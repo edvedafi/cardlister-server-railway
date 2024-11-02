@@ -32,7 +32,14 @@ export const prepareImageFile = async (image, listing, setInfo, imageNumber) => 
   return cropImage(image, listing, outputLocation, outputFile);
 };
 
-export const cropImage = async (image, listing, outputLocation, outputFile, useMaxSize = true) => {
+export const cropImage = async (
+  image,
+  listing,
+  outputLocation,
+  outputFile,
+  useMaxSize = true,
+  useImageFirst = false,
+) => {
   const { update, error, finish } = showSpinner('crop', 'Preparing Image');
   let input = image;
   // let rotation = await ask('Rotate', false);
@@ -65,10 +72,6 @@ export const cropImage = async (image, listing, outputLocation, outputFile, useM
 
     const cropAttempts = [
       async () => {
-        tempImage = `${tempDirectory}/copy.jpg`;
-        return $`cp ${input} ${tempImage}`;
-      },
-      async () => {
         tempImage = `${tempDirectory}/CC.rotate.jpg`;
         return await $`./CardCropper.rotate ${input} ${tempImage}`;
       },
@@ -87,11 +90,17 @@ export const cropImage = async (image, listing, outputLocation, outputFile, useM
       async () => {
         tempImage = `${tempDirectory}/manual.jpg`;
         const openCommand = await $`cp ${input} ${tempImage}; open -Wn ${tempImage}`;
-        // const openCommand = $`open -Wn ${tempImage}`;
+        // eslint-disable-next-line no-undef
         process.on('SIGINT', () => openCommand?.kill());
         return openCommand;
       },
     ];
+    if (useImageFirst) {
+      cropAttempts.unshift(async () => {
+        tempImage = `${tempDirectory}/copy.jpg`;
+        return $`cp ${input} ${tempImage}`;
+      });
+    }
     let found = false;
     let i = 0;
     while (!found && i < cropAttempts.length) {
