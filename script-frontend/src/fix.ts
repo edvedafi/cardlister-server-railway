@@ -4,22 +4,25 @@ import { useSpinners } from './utils/spinners';
 import { clearBSC, shutdownBuySportsCards } from './old-scripts/bsc';
 import { parseArgs } from './utils/parseArgs';
 import { findSet } from './card-data/setData';
-import { fixVariants } from './utils/medusa';
+import { fixVariants, getProducts } from './utils/medusa';
+import { setAllPricesToCommons } from './card-data/cardData';
 
 const args = parseArgs(
   {
     string: ['y'],
-    boolean: ['b', 'p'],
+    boolean: ['b', 'i', 'c'],
     alias: {
       y: 'year',
       b: 'bsc',
-      p: 'product',
+      i: 'images',
+      c: 'commons',
     },
   },
   {
     year: 'Year',
-    product: 'Fix images for all products',
+    images: 'Fix images for all products',
     bsc: 'Remove all cards from year onBuySportsCards',
+    commons: 'Set an entire set to common card pricing',
   },
 );
 
@@ -51,11 +54,21 @@ const shutdown = async () => {
 
 const { update, finish, error } = showSpinner('top-level', 'Running Fixes');
 try {
-  if (args.p) {
-    update('Products');
+  if (args.images) {
+    update('Product Images');
     const set = await findSet({ allowParent: true });
     update(set.category.name);
     await fixVariants(set.category.id);
+  }
+  if (args.commons) {
+    update('Commons');
+    const set = await findSet({ allowParent: true });
+    update(set.category.name);
+    update('Getting Products');
+    const products = await getProducts(set.category.id);
+    update('Setting Prices');
+    await setAllPricesToCommons(products);
+    update('Price set complete');
   }
   if (args.b) {
     update(`BuySportsCards [${args.y}]`);

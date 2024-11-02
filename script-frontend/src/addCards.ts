@@ -33,7 +33,7 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'u', 'z', 'c'],
+      boolean: ['s', 'b', 'u', 'z', 'c', 'a'],
       string: ['n'],
       alias: {
         s: 'select-bulk-cards',
@@ -42,6 +42,7 @@ try {
         u: 'skipSafetyCheck',
         z: 'lastZipFile',
         c: 'countCardsFirst',
+        a: 'allBase',
       },
     },
     {
@@ -51,6 +52,7 @@ try {
       u: 'Skip Safety Check',
       z: 'Process the most recent zip file in the users Downloads directory',
       c: 'Enter Counts of cards first and then process the zip file of images',
+      a: 'All Cards are base pricing so skip the pricing questions',
     },
   );
 

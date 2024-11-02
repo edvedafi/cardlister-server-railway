@@ -5,7 +5,13 @@ import { useSpinners } from '../utils/spinners';
 
 const { log } = useSpinners('Pricing', '#85BB65');
 
-export async function getPricing(currentPrices: MoneyAmount[] = [], skipSafetyCheck = false): Promise<MoneyAmount[]> {
+export async function getPricing(
+  currentPrices: MoneyAmount[] = [],
+  skipSafetyCheck = false,
+  allBase = false,
+): Promise<MoneyAmount[]> {
+  if (allBase) return await getBasePricing();
+
   const currentPrice = async (region: string): Promise<number | undefined> => {
     const regionId = await getRegion(region);
     const amount: number | string | undefined = currentPrices.find((price) => price.region_id === regionId)?.amount;
