@@ -14,7 +14,7 @@ import type { InventoryItemDTO, Product, ProductVariant } from '@medusajs/client
 import { buildSet } from './setData';
 import _ from 'lodash';
 import type { ParsedArgs } from 'minimist';
-import { getInputs } from '../utils/inputs';
+import { getFiles, getInputs } from '../utils/inputs';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
@@ -222,7 +222,10 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       const { finish } = showSpinner('count-cards', `Counting Cards`);
       await processBulk(setData, args);
       await ask('Count Collection Complete! Press Enter to continue');
-      files = await getInputs(args);
+      const input_directory = await getInputs(args);
+      if (input_directory !== 'input/bulk/') {
+        files = await getFiles(input_directory);
+      }
       finish();
     }
 

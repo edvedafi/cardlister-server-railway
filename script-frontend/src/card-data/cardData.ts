@@ -363,20 +363,19 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
       ? productVariant.prices
       : setData.category?.metadata?.prices,
     args['skipSafetyCheck'],
+    args['allBase'],
   );
   if (productVariant.prices) {
     productVariant.prices = <MoneyAmount[]>prices
       .map((price: MoneyAmount): MoneyAmount | undefined => {
         const existingPrice = productVariant.prices?.find((p) => p.region_id === price.region_id);
         if (existingPrice) {
-          if (existingPrice.amount !== price.amount) {
-            return {
-              id: existingPrice.id,
-              amount: price.amount,
-              currency_code: existingPrice.currency_code,
-              region_id: existingPrice.region_id,
-            } as MoneyAmount;
-          }
+          return {
+            id: existingPrice.id,
+            amount: price.amount || existingPrice.amount,
+            currency_code: existingPrice.currency_code,
+            region_id: existingPrice.region_id,
+          } as MoneyAmount;
         } else {
           return price;
         }
@@ -464,4 +463,15 @@ export async function saveBulk(
     await updateInventory(listing, quantity);
   }
   return listing;
+}
+
+export async function setAllPricesToCommons(products: Product[] = []) {
+  const prices = await getCommonPricing();
+  for (const product of products) {
+    if (product.variants) {
+      for (const variant of product.variants) {
+        await updatePrices(product.id, variant.id, prices);
+      }
+    }
+  }
 }
