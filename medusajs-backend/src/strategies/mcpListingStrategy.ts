@@ -39,8 +39,13 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
     await pup.goto('edvedafi?tab=shop');
     await pup.page.evaluate(async (sku) => {
       (<HTMLInputElement>document.querySelector('input[type="text"][placeholder="Search Cards"]')).value = sku;
-      await new Promise((r) => setTimeout(r, 500));
-      const deleteButton = document.querySelectorAll('a[onclick^="deleteItem"]');
+
+      let deleteButton = document.querySelectorAll('a[onclick^="deleteItem"]');
+      if (deleteButton.length > 1) {
+        console.log(`Found ${deleteButton.length} delete buttons`);
+        await new Promise((r) => setTimeout(r, 3000));
+        deleteButton = document.querySelectorAll('a[onclick^="deleteItem"]');
+      }
       deleteButton.forEach((el: HTMLButtonElement) => {
         el.click();
         (<HTMLButtonElement>document.querySelector('#delete-btn')).click();
@@ -65,17 +70,15 @@ class McpListingStrategy extends AbstractListingStrategy<PuppeteerHelper> {
 
     const siteCount = parseInt((await pup.getText('h2.card-count')).replace(/[^0-9]/g, ''));
     if (siteCount === 1) return { skipped: true };
-    if (siteCount > 1) await this.removeProduct(pup, product, productVariant);
 
-    // pup.page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
-    await pup.screenshot('before-add-card');
+    // await pup.screenshot('before-add-card');
     await pup.locatorText('button', 'Add Card').click();
 
     // const form = await pup.$('form[@action="https://mycardpost.com/add-card"]');
     await pup.page.waitForSelector('form[action="https://mycardpost.com/add-card"]', { timeout: 30000, visible: true });
     await pup.uploadImageBase64(<string>productVariant.metadata.frontImage, 'front_image');
     await pup.uploadImageBase64(<string>productVariant.metadata.backImage, 'back_image');
-    await pup.screenshot('images-uploaded');
+    // await pup.screenshot('images-uploaded');
     // console.log(`setting name to ${productVariant.title} [${productVariant.sku}]`);
 
     const features: string[] = (productVariant.metadata.features as string[])?.map((f) => f.toLowerCase()) || [];
