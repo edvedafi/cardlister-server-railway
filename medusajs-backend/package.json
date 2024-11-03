@@ -52,6 +52,7 @@
     "dotenv": "16.4.5",
     "ebay-api": "9.1.1",
     "express": "4.19.2",
+    "firebase-admin": "^12.7.0",
     "jszip": "3.10.1",
     "medusa-file-cloudinary": "1.0.2",
     "medusa-fulfillment-manual": "1.1.41",

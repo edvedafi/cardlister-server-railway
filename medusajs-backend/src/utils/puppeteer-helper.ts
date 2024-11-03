@@ -1,6 +1,9 @@
 import puppeteer, { Browser, ElementHandle, Page } from 'puppeteer';
 import { downloadFile } from './data';
 import axios from 'axios';
+import { getStorage } from './firebase';
+import fs from 'fs-extra';
+import console from 'node:console';
 
 export type ElementOrLocator =
   | string
@@ -31,6 +34,8 @@ export class PuppeteerHelper {
       browser = await puppeteer.launch({ defaultViewport: { height: 1080, width: 1920 } });
     }
     this.page = await browser.newPage();
+
+    this.page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
     this.baseUrl = baseURL;
 
     this.logoutConnection = () => {
@@ -47,9 +52,17 @@ export class PuppeteerHelper {
   }
 
   async screenshot(name?: string) {
-    if (process.env.NODE_ENV === 'development') {
-      await this.page.screenshot({ path: `debug/screenshot-${name ? `${name}-` : ''}${this.i++}.png` });
-    }
+    // if (process.env.NODE_ENV === 'development') {
+    const file = `screenshot-${name ? `${name}-` : ''}${this.i++}.png`;
+    console.log(`Taking screenshot: ${file}`);
+    await this.page.screenshot({ path: file, fullPage: true });
+    console.log(`Screenshot taken: ${file}`);
+    const resp = await getStorage()
+      .bucket()
+      .upload(file, { destination: `debug/${file}` });
+    console.log(`Screenshot uploaded to ${resp[0].metadata.mediaLink}`);
+    fs.removeSync(file);
+    // }
   }
 
   async home() {
