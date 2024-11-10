@@ -1,20 +1,25 @@
 import { Logger, ProductCategoryService, TransactionBaseService } from '@medusajs/medusa';
 import { SyncRequest } from '../models/sync-request';
+import BinService from './bin';
+import { CategoryMap } from '../models/category-map';
 
 type InjectedDependencies = {
   // manager: EntityManager;
   productCategoryService: ProductCategoryService;
+  binService: BinService;
   logger: Logger;
 };
 
-class BatchCategory extends TransactionBaseService {
+class BatchCategoryService extends TransactionBaseService {
   protected readonly productCategoryService: ProductCategoryService;
+  protected readonly binService: BinService;
   protected readonly logger: Logger;
 
-  constructor({ productCategoryService, logger }: InjectedDependencies) {
+  constructor({ productCategoryService, binService, logger }: InjectedDependencies) {
     // eslint-disable-next-line prefer-rest-params
     super(arguments[0]);
     this.productCategoryService = productCategoryService;
+    this.binService = binService;
     this.logger = logger;
   }
 
@@ -46,15 +51,7 @@ class BatchCategory extends TransactionBaseService {
       await processCategory(request.category);
     }
 
-    //TODO Currently brute force is ok, need to move this to the service so it can be queried instead
-    const [allCategories] = await this.productCategoryService.listAndCount({});
-    type CategoryMap = { [key: string]: string };
-    const categoryMap: CategoryMap = allCategories.reduce<CategoryMap>((acc: CategoryMap, c): CategoryMap => {
-      if (c.metadata.bin) {
-        acc[c.metadata.bin.toString()] = c.id;
-      }
-      return acc;
-    }, {});
+    const categoryMap: CategoryMap = await this.binService.getAllBins();
 
     const processBin = async (binId: string) => {
       update(`Processing Bin: ${binId}`);
@@ -87,4 +84,4 @@ class BatchCategory extends TransactionBaseService {
   }
 }
 
-export default BatchCategory;
+export default BatchCategoryService;

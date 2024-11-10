@@ -1,20 +1,20 @@
 import { BatchJob, BatchJobService, Logger, ProductCategoryService, TransactionBaseService } from '@medusajs/medusa';
 import { EntityManager } from 'typeorm';
 import { SyncRequest } from '../models/sync-request';
-import BatchCategory from './batchCategory';
+import BatchCategoryService from './batchCategory';
 
 type InjectedDependencies = {
   manager: EntityManager;
   batchJobService: BatchJobService;
   productCategoryService: ProductCategoryService;
-  batchCategoryService: BatchCategory;
+  batchCategoryService: BatchCategoryService;
   logger: Logger;
 };
 
 class FixService extends TransactionBaseService {
   protected readonly productCategoryService: ProductCategoryService;
   protected readonly batchJobService: BatchJobService;
-  protected readonly batchCategoryService: BatchCategory;
+  protected readonly batchCategoryService: BatchCategoryService;
   protected readonly logger: Logger;
 
   constructor({ batchJobService, productCategoryService, batchCategoryService, logger }: InjectedDependencies) {
