@@ -67,7 +67,7 @@ const processPair = async (
     if (!productVariant.product) throw new Error('Must set Product on the Variant before processing');
 
     const images: ProductImage[] = [];
-    const frontImage = await prepareImageFile(front, productVariant, setData, 1);
+    const frontImage = await prepareImageFile(front, productVariant, setData, 1, args.i);
     if (frontImage) {
       images.push({
         file: frontImage,
@@ -75,7 +75,7 @@ const processPair = async (
       });
     }
     if (back) {
-      const backImage = await prepareImageFile(back, productVariant, setData, 2);
+      const backImage = await prepareImageFile(back, productVariant, setData, 2, args.i);
       if (backImage) {
         images.push({
           file: backImage,
