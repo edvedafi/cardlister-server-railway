@@ -99,6 +99,8 @@ abstract class AbstractListingStrategy<
           category = await this.categoryService_.retrieve(categoryId, {
             relations: ['products', 'products.variants', 'products.variants.prices', 'products.images'],
           });
+
+          this.log(`Staring Sync of Set: ${category.description}`);
           productList = category.products;
         } catch (e) {
           this.log(

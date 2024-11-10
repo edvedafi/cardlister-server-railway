@@ -17,6 +17,7 @@ import {
 import SyncService from '../services/sync';
 import { InventoryItemService, InventoryService, ReservationItemService } from '@medusajs/inventory/dist/services';
 import { PuppeteerHelper } from '../utils/puppeteer-helper';
+import BinService from '../services/bin';
 
 type InjectedDependencies = {
   transactionManager: EntityManager;
@@ -30,6 +31,7 @@ type InjectedDependencies = {
   inventoryItemService: InventoryItemService;
   lineItemService: LineItemService;
   shippingOptionService: ShippingOptionService;
+  binService: BinService;
   listModules: () => string[];
 };
 
@@ -71,6 +73,7 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
   private readonly inventoryService: InventoryService;
   private readonly lineItemService: LineItemService;
   private readonly shippingOptionService: ShippingOptionService;
+  protected readonly binService: BinService;
   private shippingOption: string;
 
   // private readonly reservationItemService: ReservationItemService;
@@ -92,6 +95,7 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
       // this.inventoryItemService = __container__.inventoryItemService;
       this.lineItemService = __container__.lineItemService;
       this.shippingOptionService = __container__.shippingOptionService;
+      this.binService = __container__.binService;
     } catch (e) {
       this.log(`${(<typeof SaleStrategy>this.constructor).identifier}::constructor::error`, e);
     }

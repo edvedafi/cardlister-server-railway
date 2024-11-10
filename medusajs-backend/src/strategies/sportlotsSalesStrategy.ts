@@ -1,7 +1,8 @@
 import SaleStrategy, { SystemOrder } from './AbstractSalesStrategy';
 import { PuppeteerHelper } from '../utils/puppeteer-helper';
 import { login as slLogin } from '../utils/sportlots';
-import { Product, ProductCategory, ProductVariant } from '@medusajs/medusa';
+import { Product, ProductVariant } from '@medusajs/medusa';
+import { CategoryMap } from '../models/category-map';
 
 abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
   static identifier = 'sportlots-sales-strategy';
@@ -70,6 +71,7 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
       // this.log(`Found ${rawOrders.length} ${orderType} orders`);
       // this.log(JSON.stringify(rawOrders, null, 2));
       // rawOrders = [];
+      const categories: CategoryMap = await this.binService.getAllBins();
       for (let orderNumber = 0; orderNumber < rawOrders.length; orderNumber++) {
         const rawOrder = rawOrders[orderNumber];
         const order: SystemOrder = {
@@ -87,13 +89,12 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
               relations: ['product', 'product.variants'],
             });
           } catch (e) {
-            this.log(`Could not find product variant for SKU: ${lineItem.sku}`);
+            this.log(`Could not find product variant for SKU: ${lineItem.sku} (${e.message})`);
           }
           if (!variant && lineItem.bin) {
-            const categories = await this.getCategories();
-            const category = categories.find((c) => c?.metadata?.bin === lineItem.bin);
-            if (category) {
-              const products = await this.getProducts(category.id);
+            const categoryId = categories[lineItem.bin];
+            if (categoryId) {
+              const products = await this.getProducts(categoryId);
               const product = products.find((p) => p.metadata.cardNumber === lineItem.cardNumber);
               if (product) {
                 variant = product?.variants.find((v) => v.metadata.sportlots === lineItem.title);
@@ -131,16 +132,6 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
     // this.log('Found Orders:');
     // this.log(JSON.stringify(orders, null, 2));
     return orders;
-  }
-
-  private productCategories: ProductCategory[];
-
-  private async getCategories(): Promise<ProductCategory[]> {
-    if (!this.productCategories) {
-      const [categories] = await this.categoryService_.listAndCount({});
-      this.productCategories = categories;
-    }
-    return this.productCategories;
   }
 
   private productsByCategory: { [key: string]: Product[] } = {};
