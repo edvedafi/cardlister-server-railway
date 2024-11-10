@@ -27,9 +27,9 @@ function getOutputFile(listing, setInfo, imageNumber) {
   return { outputLocation, outputFile };
 }
 
-export const prepareImageFile = async (image, listing, setInfo, imageNumber) => {
+export const prepareImageFile = async (image, listing, setInfo, imageNumber, useImageFirst = false) => {
   const { outputLocation, outputFile } = getOutputFile(listing, setInfo, imageNumber);
-  return cropImage(image, listing, outputLocation, outputFile);
+  return cropImage(image, listing, outputLocation, outputFile, true, useImageFirst);
 };
 
 export const cropImage = async (

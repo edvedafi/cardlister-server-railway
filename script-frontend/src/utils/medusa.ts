@@ -336,10 +336,32 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
   );
 }
 
-export async function getAllBatchJobs(): Promise<BatchJob[]> {
-  const response = await medusa.admin.batchJobs.list({ limit: 1000, offset: 0 });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-  return response.batch_jobs.filter((job) => !['canceled', 'completed', 'failed'].includes(job.status));
+export async function getAllBatchJobs(logStatus = true): Promise<BatchJob[]> {
+  let spinners;
+  if (logStatus) {
+    spinners = showSpinner('jobs', 'Getting Batch Jobs');
+  }
+  const jobs: BatchJob[] = [];
+  const limit = 1000;
+  let offset = 0;
+  let count = 1;
+  if (spinners) {
+    spinners.update('First 1000');
+  }
+  while (count > offset) {
+    const response = await medusa.admin.batchJobs.list({ limit, offset });
+    // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+    jobs.push(...response.batch_jobs.filter((job) => !['canceled', 'completed', 'failed'].includes(job.status)));
+    count = response.count;
+    offset += limit;
+    if (spinners) {
+      spinners.update(`${offset}/${count}`);
+    }
+  }
+  if (spinners) {
+    spinners.finish(`${offset}/${count}`);
+  }
+  return jobs;
 }
 
 export async function cancelSync(batchId: string) {
