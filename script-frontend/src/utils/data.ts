@@ -341,7 +341,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
     _.orderBy(
       Array.from(Object.keys(displayable).map((key) => JSON.parse(key))),
       ['sport', 'year', 'setName', 'parallel', 'insert'],
-      ['asc', 'desc', 'desc', 'desc', 'desc'],
+      ['asc', 'desc', 'asc', 'asc', 'asc'],
     ).forEach((key, i) => {
       if (i > 0) {
         finalDisplay.push(divider);

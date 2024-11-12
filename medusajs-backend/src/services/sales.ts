@@ -1,4 +1,4 @@
-import { BatchJob, BatchJobService, TransactionBaseService } from '@medusajs/medusa';
+import { BatchJob, BatchJobService, BatchJobStatus, TransactionBaseService } from '@medusajs/medusa';
 import { SalesBatchRequest } from '../models/sales-batch-request';
 
 type InjectedDependencies = {
@@ -16,65 +16,46 @@ class SalesService extends TransactionBaseService {
 
   public async getSales(request: SalesBatchRequest): Promise<BatchJob[]> {
     const responses: BatchJob[] = [];
+
+    const startSync = async (type: string) => {
+      const [activeBatchesResponse] = await this.batchJobService.listAndCount({
+        type: [type],
+      });
+      if (
+        !activeBatchesResponse.find(
+          (job) => ![BatchJobStatus.FAILED, BatchJobStatus.CANCELED, BatchJobStatus.COMPLETED].includes(job.status),
+        )
+      ) {
+        responses.push(
+          await this.batchJobService.create({
+            type,
+            dry_run: false,
+            created_by: request.user,
+            context: {},
+          }),
+        );
+      } else {
+        console.log('Already running', type);
+      }
+    };
+
     if (!request.only || request.only.includes('ebay')) {
-      responses.push(
-        await this.batchJobService.create({
-          type: 'ebay-sales-sync',
-          dry_run: false,
-          created_by: request.user,
-          context: {},
-        }),
-      );
+      await startSync('ebay-sales-sync');
     }
     if (!request.only || request.only.includes('bsc')) {
-      responses.push(
-        await this.batchJobService.create({
-          type: 'bsc-sales-sync',
-          dry_run: false,
-          created_by: request.user,
-          context: {},
-        }),
-      );
+      await startSync('bsc-sales-sync');
     }
     if (!request.only || request.only.includes('sportlots')) {
-      responses.push(
-        await this.batchJobService.create({
-          type: 'sportlots-sales-sync',
-          dry_run: false,
-          created_by: request.user,
-          context: {},
-        }),
-      );
+      await startSync('sportlots-sales-sync');
     }
     if (!request.only || request.only.includes('mcp')) {
-      responses.push(
-        await this.batchJobService.create({
-          type: 'mcp-sales-sync',
-          dry_run: false,
-          created_by: request.user,
-          context: {},
-        }),
-      );
+      await startSync('mcp-sales-sync');
     }
     if (!request.only || request.only.includes('myslabs')) {
-      responses.push(
-        await this.batchJobService.create({
-          type: 'myslabs-sales-sync',
-          dry_run: false,
-          created_by: request.user,
-          context: {},
-        }),
-      );
+      await startSync('myslabs-sales-sync');
     }
     if (request.only && request.only.includes('test')) {
-      responses.push(
-        await this.batchJobService.create({
-          type: 'test-sales-sync',
-          dry_run: false,
-          created_by: request.user,
-          context: {},
-        }),
-      );
+      await startSync('test-sales-sync');
     }
 
     return responses;

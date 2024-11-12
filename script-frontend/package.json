@@ -9,7 +9,7 @@
   "license": "MIT",
   "scripts": {
     "compile": "swiftc src/image-processing/CardCropper.swift; swiftc src/image-processing/CardCropper.rotate.swift",
-    "cleanUpBatch": "tsx src/cleanUpBatch.ts",
+    "batch": "tsx src/cleanUpBatch.ts",
     "generateKey": "tsx src/generateMedusaToken.ts",
     "sales": "tsx src/sales.ts",
     "start": "tsx src/addCards.ts",
