@@ -29,13 +29,13 @@ class SyncService extends TransactionBaseService {
   public async sync(request: SyncRequest): Promise<BatchJob[]> {
     // noinspection JSVoidFunctionReturnValueUsed
     const activityId = this.logger.activity(`Running Sync on ${JSON.stringify(request)}`);
-    const update = (message: string) => this.logger.progress(activityId, `SYNC - ${message}`);
+    // const update = (message: string) => this.logger.progress(activityId, `SYNC - ${message}`);
 
     const responses: BatchJob[] = [];
     const categories = await this.batchCategoryService.getCategories(request);
     for (const category of categories) {
       if (process.env.NODE_ENV === 'development' && !request.only) {
-        update('Running TEST Sync because we are in development mode');
+        // update('Running TEST Sync because we are in development mode');
         responses.push(
           await this.batchJobService.create({
             type: 'test-sync',
@@ -46,7 +46,7 @@ class SyncService extends TransactionBaseService {
         );
       } else {
         if (!request.only || request.only.includes('sportlots')) {
-          update('Starting Sportlots Sync');
+          // update('Starting Sportlots Sync');
           responses.push(
             await this.batchJobService.create({
               type: 'sportlots-sync',
@@ -58,7 +58,7 @@ class SyncService extends TransactionBaseService {
         }
 
         if (!request.only || request.only.includes('bsc')) {
-          update('Starting BSC Sync');
+          // update('Starting BSC Sync');
           responses.push(
             await this.batchJobService.create({
               type: 'bsc-sync',
@@ -70,7 +70,7 @@ class SyncService extends TransactionBaseService {
         }
 
         if (!request.only || request.only.includes('ebay')) {
-          update('Starting Ebay Sync');
+          // update('Starting Ebay Sync');
           responses.push(
             await this.batchJobService.create({
               type: 'ebay-sync',
@@ -81,8 +81,9 @@ class SyncService extends TransactionBaseService {
           );
         }
 
-        if (!request.only || request.only.includes('mcp')) {
-          update('Starting MCP Sync');
+        //temporarily only process MCP when it is specifically chosen as it takes forever
+        if (request.only && request.only.includes('mcp')) {
+          // update('Starting MCP Sync');
           responses.push(
             await this.batchJobService.create({
               type: 'mcp-sync',
@@ -94,7 +95,7 @@ class SyncService extends TransactionBaseService {
         }
 
         if (!request.only || request.only.includes('myslabs')) {
-          update('Starting MySlabs Sync');
+          // update('Starting MySlabs Sync');
           responses.push(
             await this.batchJobService.create({
               type: 'myslabs-sync',
@@ -106,7 +107,7 @@ class SyncService extends TransactionBaseService {
         }
 
         if (request.only && request.only.includes('test')) {
-          update('Starting TEST Sync');
+          // update('Starting TEST Sync');
           responses.push(
             await this.batchJobService.create({
               type: 'test-sync',

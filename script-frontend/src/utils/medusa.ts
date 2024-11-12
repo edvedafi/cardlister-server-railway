@@ -342,11 +342,11 @@ export async function getAllBatchJobs(logStatus = true): Promise<BatchJob[]> {
     spinners = showSpinner('jobs', 'Getting Batch Jobs');
   }
   const jobs: BatchJob[] = [];
-  const limit = 1000;
+  const limit = 10000;
   let offset = 0;
   let count = 1;
   if (spinners) {
-    spinners.update('First 1000');
+    spinners.update(`First ${limit}`);
   }
   while (count > offset) {
     const response = await medusa.admin.batchJobs.list({ limit, offset });
