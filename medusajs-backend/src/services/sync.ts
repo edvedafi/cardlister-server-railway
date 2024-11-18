@@ -81,8 +81,7 @@ class SyncService extends TransactionBaseService {
           );
         }
 
-        //temporarily only process MCP when it is specifically chosen as it takes forever
-        if (request.only && request.only.includes('mcp')) {
+        if (!request.only || request.only.includes('mcp')) {
           // update('Starting MCP Sync');
           responses.push(
             await this.batchJobService.create({

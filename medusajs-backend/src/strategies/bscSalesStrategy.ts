@@ -138,7 +138,10 @@ abstract class BSCSalesStrategy extends SaleStrategy<AxiosInstance> {
   static listingSite = 'BSC';
 
   async login(): Promise<AxiosInstance> {
-    return bscLogin(await this.loginPuppeteer('https://www.buysportscards.com'), this.loginAxios);
+    const puppeteer = await this.loginPuppeteer('https://www.buysportscards.com');
+    const connection = await bscLogin(puppeteer, this.loginAxios);
+    puppeteer.close();
+    return connection;
   }
 
   async getOrders(api: AxiosInstance): Promise<SystemOrder[]> {
