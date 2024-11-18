@@ -120,7 +120,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
           count = await advanceCount(count);
         }
 
-        await pup.screenshot('add-inventory');
+        // await pup.screenshot('add-inventory');
         await pup.locator('input[value="Inventory Cards"').click();
         await pup.locator('h2.message').wait();
         const banner = await pup.getText('h2.message');

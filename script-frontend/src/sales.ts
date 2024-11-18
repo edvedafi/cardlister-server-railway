@@ -10,10 +10,9 @@ import { parseArgs } from './utils/parseArgs';
 // @ts-expect-error - no types
 import chalkTable from 'chalk-table';
 import { buildTableData, type OldSale } from './utils/data';
-import { getSingleListingInfo } from './old-scripts/firebase';
 import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/bsc';
 import { shutdownMyCardPost } from './old-scripts/mycardpost';
-import { convertTitleToCard, createGroups } from './old-scripts/uploads';
+import { createGroups } from './old-scripts/uploads';
 import { removeFromEbay } from './old-scripts/ebay';
 import open from 'open';
 
@@ -91,16 +90,17 @@ try {
           if (variant) {
             item.variant = variant;
           } else {
-            const cardFromTitle = convertTitleToCard(item.title);
-            const fuzzy = await getSingleListingInfo(cardFromTitle);
-            if (fuzzy) {
-              fuzzy.quantity = item.quantity;
-              fuzzy.sku = item.metadata?.sku;
-              fuzzy.platform = order.metadata?.platform;
-              oldSales.push(fuzzy);
-            } else {
-              throw new Error(`Could not find old style match for ${item.title}`);
-            }
+            console.error(`Could not find variant for ${item.title}`);
+            // const cardFromTitle = convertTitleToCard(item.title);
+            // const fuzzy = await getSingleListingInfo(cardFromTitle);
+            // if (fuzzy) {
+            //   fuzzy.quantity = item.quantity;
+            //   fuzzy.sku = item.metadata?.sku;
+            //   fuzzy.platform = order.metadata?.platform;
+            //   oldSales.push(fuzzy);
+            // } else {
+            //   throw new Error(`Could not find old style match for ${item.title}`);
+            // }
           }
         }
       }

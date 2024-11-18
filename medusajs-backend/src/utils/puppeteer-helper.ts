@@ -52,17 +52,22 @@ export class PuppeteerHelper {
   }
 
   async screenshot(name?: string) {
-    // if (process.env.NODE_ENV === 'development') {
     const file = `screenshot-${name ? `${name}-` : ''}${this.i++}.png`;
-    console.log(`Taking screenshot: ${file}`);
-    await this.page.screenshot({ path: file, fullPage: true });
-    console.log(`Screenshot taken: ${file}`);
-    const resp = await getStorage()
-      .bucket()
-      .upload(file, { destination: `debug/${file}` });
-    console.log(`Screenshot uploaded to ${resp[0].metadata.mediaLink}`);
-    fs.removeSync(file);
-    // }
+    if (process.env.NODE_ENV === 'development') {
+      await this.page.screenshot({ path: `debug/${file}`, fullPage: true });
+    } else {
+      // console.log(`Taking screenshot: ${file}`);
+      await this.page.screenshot({ path: file, fullPage: true });
+      // console.log(`Screenshot taken: ${file}`);
+      //in production, upload the screenshot to firebase
+      const resp = await getStorage()
+        .bucket()
+        .upload(file, { destination: `debug/${file}` });
+      console.log(
+        `Screenshot uploaded to https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/debug%2F${file}`,
+      );
+      fs.removeSync(file);
+    }
   }
 
   async home() {
@@ -103,6 +108,13 @@ export class PuppeteerHelper {
     } else {
       await this.page.select(selector, value);
     }
+  }
+
+  async getCookie(name: string) {
+    const cookies = await this.page.cookies();
+    cookies.forEach((cookie) => console.log(cookie.name, ' = ', cookie.value));
+    return cookies.find((cookie) => cookie.name === name)?.value;
+    // return (await this.page.cookies())[name];
   }
 
   async submit() {
@@ -291,18 +303,18 @@ export class PuppeteerHelper {
 
   async uploadImage(imageName: string, id: string): Promise<void> {
     const tmpFile = '/tmp/' + imageName;
-    console.log(
-      `Uploading: https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${imageName}?alt=media`,
-    );
+    // console.log(
+    //   `Uploading: https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${imageName}?alt=media`,
+    // );
     try {
       await downloadFile(
         `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${imageName}?alt=media`,
         tmpFile,
       );
-      console.log(`Downloaded: ${tmpFile}`);
+      // console.log(`Downloaded: ${tmpFile}`);
       const inputUploadHandle = this.page.locator(`input[type="file"][name="${id}"]`);
       await (await inputUploadHandle.waitHandle()).uploadFile(tmpFile);
-      await this.screenshot('upload-' + imageName);
+      // await this.screenshot('upload-' + imageName);
     } catch (e) {
       await this.screenshot('upload-error');
       throw new Error(`Error uploading image ${imageName} to ${id}: ${e.message}`);

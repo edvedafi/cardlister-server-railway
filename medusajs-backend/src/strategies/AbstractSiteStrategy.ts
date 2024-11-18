@@ -16,6 +16,8 @@ import axios, { AxiosInstance } from 'axios';
 import axiosRetry from 'axios-retry';
 import eBayApi from 'ebay-api';
 import { PuppeteerHelper } from '../utils/puppeteer-helper';
+import { CookieJar } from 'tough-cookie';
+import { wrapper } from 'axios-cookiejar-support';
 
 type InjectedDependencies = {
   batchJobService: BatchJobService;
@@ -128,8 +130,14 @@ abstract class AbstractSiteStrategy<
     }
   }
 
-  protected loginAxios(baseURL: string, headers: { [key: string]: string }): AxiosInstance {
-    const api = axios.create({
+  protected loginAxios(
+    baseURL: string,
+    headers: {
+      [key: string]: string;
+    },
+    useCookieJar = false,
+  ): AxiosInstance {
+    const options = {
       baseURL: baseURL,
       headers: {
         accept: 'application/json, text/plain, */*',
@@ -145,19 +153,34 @@ abstract class AbstractSiteStrategy<
         'Sec-Fetch-Site': 'same-site',
         ...headers,
       },
-    });
+    };
+    let api: AxiosInstance;
+    if (useCookieJar) {
+      const jar = new CookieJar(); // Create a cookie jar
+      api = wrapper(axios.create({ ...options, jar, withCredentials: true })); // W
+    } else {
+      api = axios.create(options);
+    }
 
     axiosRetry(api, { retries: 5, retryDelay: axiosRetry.exponentialDelay });
     return api;
   }
 
   protected async logout(connection: T): Promise<void> {
-    if (connection && 'close' in connection) {
-      connection.close();
+    try {
+      if (connection && 'close' in connection) {
+        connection.close();
+      }
+    } catch (e) {
+      this.log('Error logging out (connection.close)', e);
     }
 
-    if (connection && 'deleteSession' in connection && typeof connection.deleteSession === 'function') {
-      await connection.deleteSession();
+    try {
+      if (connection && 'deleteSession' in connection && typeof connection.deleteSession === 'function') {
+        await connection.deleteSession();
+      }
+    } catch (e) {
+      this.log('Error logging out (connection.deleteSession)', e);
     }
   }
 
