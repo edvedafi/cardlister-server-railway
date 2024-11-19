@@ -12,21 +12,26 @@ dotenv.config();
 const args = parseArgs(
   {
     boolean: ['w', 'p'],
+    string: ['d'],
     alias: {
       w: 'watch',
       p: 'print',
+      d: 'delay',
     },
   },
   {
     w: 'Watch the Count',
     p: 'Print all open jobs',
+    d: 'Delay between checks',
   },
 );
 
 const { log } = useSpinners('Sync', chalk.cyanBright);
+log(args);
 
 try {
   const jobs = await getAllBatchJobs();
+  log(`Found ${jobs.length} jobs`);
   if (args.print) {
     jobs.forEach((job) => {
       log(`Job ${job.id} - ${job.created_at}: ${job.type} => ${JSON.stringify(job.context)} ${job.status}`);
@@ -36,7 +41,7 @@ try {
   while (args.watch) {
     const current = await getAllBatchJobs(!args.watch);
     console.log(` ${current.length} / ${start}`);
-    await sleep(5000);
+    await sleep(args.delay ? parseInt(args.delay) : 5000);
   }
   if (jobs.length > 0) {
     const shouldCancel = await ask(`Cancel all ${jobs.length} jobs?`, false);
