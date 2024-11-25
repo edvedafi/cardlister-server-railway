@@ -430,7 +430,6 @@ export async function buildSet(setInfo: SetInfo) {
         builtProducts += nextProducts.length;
         // log('builtProducts', builtProducts);
         cards = findVariations(bscCards, slCards);
-        await ask('Continue');
       }
     } else {
       cards = {
@@ -483,11 +482,10 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
         if (!cards.bscVariations[baseCardNumber]) {
           cards.bscVariations[baseCardNumber] = [];
         }
-        if (cards.bscVariations[baseCardNumber].find((bscCard) => bscCard.cardNo === card.cardNo) === undefined) {
+        if (cards.bscVariations[baseCardNumber].find((bscCard) => bscCard.cardNo === card.cardNo)) {
           card.cardNo = `${baseCardNumber}b`;
-        } else {
-          cards.bscVariations[baseCardNumber].push(card);
         }
+        cards.bscVariations[baseCardNumber].push(card);
       }
     } else {
       cards.bscBase.push(card);
@@ -518,6 +516,19 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
     );
     // log('Extra Cards in SL: ', extraSL.map((card) => card.cardNumber));
   }
+  // log(
+  //   `Variations in BSC: ${Object.keys(cards.bscVariations).length} Variations in SL: ${Object.keys(cards.slVariations).length}`,
+  // );
+  // log(`BSC Variations: ${Object.keys(cards.bscVariations)}`);
+  // log(
+  //   `BSC First Variations: |${Object.keys(cards.bscVariations)[0]}| type ${typeof Object.keys(cards.bscVariations)[0]}`,
+  // );
+  // log(`BSC Var 1: ${cards.bscVariations[1]}`);
+  // log(`BSC Var '1': ${cards.bscVariations['1']}`);
+  // log(`BSC Var stupid: ${cards.bscVariations[Object.keys(cards.bscVariations)[0]]}`);
+  // log(`BSC Base CardNo: ${cards.bscBase[0].cardNo} type: ${typeof cards.bscBase[0].cardNo}`);
+  // log(cards.bscVariations);
+
   return cards;
 }
 
