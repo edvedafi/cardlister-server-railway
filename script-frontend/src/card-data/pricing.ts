@@ -10,17 +10,27 @@ export async function getPricing(
   skipSafetyCheck = false,
   allBase = false,
 ): Promise<MoneyAmount[]> {
-  if (allBase) return await getBasePricing();
+  const basePrices = await getBasePricing();
+  if (allBase) return basePrices;
+  let startingPrices = [...currentPrices];
 
   const currentPrice = async (region: string): Promise<number | undefined> => {
     const regionId = await getRegion(region);
-    const amount: number | string | undefined = currentPrices.find((price) => price.region_id === regionId)?.amount;
+    let money = startingPrices.find((price) => price.region_id === regionId);
+    if (!money) {
+      money = basePrices.find((price) => price.region_id === regionId);
+      if (money) {
+        startingPrices.push(money);
+      }
+    }
+
+    const amount: number | string | undefined = money?.amount;
     // @ts-expect-error sometimes the backend returns a string for some crazy reason
     if (amount && amount !== 'undefined') {
       return amount;
     }
   };
-  if (currentPrices && currentPrices.length > 1) {
+  if (startingPrices && startingPrices.length > 1) {
     if (!skipSafetyCheck) {
       log('Current Pricing:');
       const logPrice = async (region: string) => {
@@ -31,14 +41,14 @@ export async function getPricing(
       await logPrice('BSC');
       await logPrice('SportLots');
       if (skipSafetyCheck || (await ask('Use Current Pricing', true))) {
-        return currentPrices;
+        return startingPrices;
       }
     }
   } else {
     if (await ask('Use common card pricing', true)) {
       return await getBasePricing();
     } else {
-      currentPrices = await getBasePricing();
+      startingPrices = await getBasePricing();
     }
   }
   const prices: MoneyAmount[] = [];
