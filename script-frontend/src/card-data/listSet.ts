@@ -301,7 +301,9 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         }
       }
       updateSpinner(`Kickoff Set Processing`);
-      await startSync(setData.category.id);
+      if (!args['no-sync']) {
+        await startSync(setData.category.id);
+      }
     }
     finishSpinner('Completed Set Processing');
   } catch (error) {

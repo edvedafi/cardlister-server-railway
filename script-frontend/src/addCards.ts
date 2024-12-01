@@ -33,7 +33,7 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v'],
+      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o'],
       string: ['n'],
       alias: {
         s: 'select-bulk-cards',
@@ -45,6 +45,7 @@ try {
         a: 'allBase',
         i: 'images',
         v: 'inventory',
+        o: 'no-sync',
       },
     },
     {
@@ -57,6 +58,7 @@ try {
       a: 'All Cards are base pricing so skip the pricing questions',
       i: 'Attempt to use the image as is first',
       v: 'Inventory Mode: Will only show cards with a quantity greater than 0',
+      o: 'No Sync run after updating',
     },
   );
 
