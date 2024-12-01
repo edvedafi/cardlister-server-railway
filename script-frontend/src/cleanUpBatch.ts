@@ -27,7 +27,6 @@ const args = parseArgs(
 );
 
 const { log } = useSpinners('Sync', chalk.cyanBright);
-log(args);
 
 try {
   const jobs = await getAllBatchJobs();

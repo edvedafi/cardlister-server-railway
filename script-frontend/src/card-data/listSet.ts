@@ -35,6 +35,8 @@ const queueImageFiles = new Queue({
   concurrency: 3,
 });
 
+let hasUpdated = false;
+
 const preProcessPair = async (front: string, back: string, setData: SetInfo, args: ParsedArgs) => {
   const { update, finish, error } = showSpinner(`singles-preprocess-${front}`, `Pre-Processing ${front}/${back}`);
   try {
@@ -158,6 +160,7 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
           const selectedOption: Option = <Option>selected;
           const createListing = await ask(selectedOption.variant.title, selectedOption.variant.inventory_quantity || 1);
           if (createListing > 0) {
+            hasUpdated = true;
             saving.push(saveBulk(selectedOption.product, selectedOption.variant, createListing));
           }
         }
@@ -181,6 +184,7 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
             const createListing = await ask(title, variant.inventory_quantity || undefined);
             if (createListing && createListing !== variant.inventory_quantity) {
               // log(`Creating ${createListing} listings for ${variant.title}`);
+              hasUpdated = true;
               saving.push(saveBulk(product, variant, createListing));
             }
           }
@@ -301,7 +305,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         }
       }
       updateSpinner(`Kickoff Set Processing`);
-      if (!args['no-sync']) {
+      if (!args['no-sync'] && (!args['inventory'] || hasUpdated)) {
         await startSync(setData.category.id);
       }
     }

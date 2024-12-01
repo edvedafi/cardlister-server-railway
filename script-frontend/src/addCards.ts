@@ -62,7 +62,7 @@ try {
     },
   );
 
-  if (args['numbers'] || args['select-bulk-cards']) {
+  if (args['numbers'] || args['select-bulk-cards'] || args['inventory']) {
     args['bulk'] = true;
   }
 
