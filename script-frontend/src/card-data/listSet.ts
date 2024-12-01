@@ -180,7 +180,7 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
             }
             const createListing = await ask(title, variant.inventory_quantity || undefined);
             if (createListing && createListing !== variant.inventory_quantity) {
-              log(`Creating ${createListing} listings for ${variant.title}`);
+              // log(`Creating ${createListing} listings for ${variant.title}`);
               saving.push(saveBulk(product, variant, createListing));
             }
           }
