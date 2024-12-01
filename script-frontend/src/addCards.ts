@@ -33,7 +33,7 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i'],
+      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v'],
       string: ['n'],
       alias: {
         s: 'select-bulk-cards',
@@ -44,6 +44,7 @@ try {
         c: 'countCardsFirst',
         a: 'allBase',
         i: 'images',
+        v: 'inventory',
       },
     },
     {
@@ -55,6 +56,7 @@ try {
       c: 'Enter Counts of cards first and then process the zip file of images',
       a: 'All Cards are base pricing so skip the pricing questions',
       i: 'Attempt to use the image as is first',
+      v: 'Inventory Mode: Will only show cards with a quantity greater than 0',
     },
   );
 

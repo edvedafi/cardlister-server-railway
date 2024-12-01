@@ -168,18 +168,21 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
         if (!product.variants) throw new Error('Product has no variants');
         const variants = _.sortBy(product.variants, 'metadata.cardNumber');
         for (let j = 0; j < variants.length; j++) {
-          const variant = variants[j];
-          let title = variant.title.trim();
-          // console.log(`Processing ${title} isBase: ${variant.metadata?.isBase} variants: ${variants.length}`);
-          if (variant.metadata?.isBase && variants.length > 1) {
-            title = `Has Variations:\n   ${variants
-              .filter((v) => !v.metadata?.isBase)
-              .map((v) => v.metadata?.variationName)
-              .join('\n   ')}\n${chalk.green('?')} ${title}`;
-          }
-          const createListing = await ask(title, variant.inventory_quantity || undefined);
-          if (createListing > 0) {
-            saving.push(saveBulk(product, variant, createListing));
+          if (!args['inventory'] || variants[j].inventory_quantity > 0) {
+            const variant = variants[j];
+            let title = variant.title.trim();
+            // console.log(`Processing ${title} isBase: ${variant.metadata?.isBase} variants: ${variants.length}`);
+            if (variant.metadata?.isBase && variants.length > 1) {
+              title = `Has Variations:\n   ${variants
+                .filter((v) => !v.metadata?.isBase)
+                .map((v) => v.metadata?.variationName)
+                .join('\n   ')}\n${chalk.green('?')} ${title}`;
+            }
+            const createListing = await ask(title, variant.inventory_quantity || undefined);
+            if (createListing && createListing !== variant.inventory_quantity) {
+              log(`Creating ${createListing} listings for ${variant.title}`);
+              saving.push(saveBulk(product, variant, createListing));
+            }
           }
         }
       }
