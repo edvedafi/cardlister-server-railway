@@ -207,6 +207,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
   } = showSpinner('list-set', `Processing Images`);
   const count = files.length || 0 / 2;
   let current = 0;
+  hasUpdated = false;
   queueReadImage.addEventListener('success', () => {
     current++;
     updateSpinner(`${current}/${count}`);

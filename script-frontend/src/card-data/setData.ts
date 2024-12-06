@@ -38,9 +38,11 @@ export async function findSet(
   {
     allowParent,
     onlySportlots,
+    parentName,
   }: {
     allowParent?: boolean;
     onlySportlots?: boolean;
+    parentName?: string;
   } = {
     allowParent: false,
     onlySportlots: false,
@@ -48,14 +50,12 @@ export async function findSet(
 ): Promise<SetInfo> {
   const { update, finish, error } = showSpinner('findSet', 'Finding Set');
   const setInfo: Partial<SetInfo> = { handle: '', metadata: {} };
-  const skipBSC = !onlySportlots;
-  const skipSL = false;
 
   const askNew = async (display: string, options: AskSelectOption[]) => {
     const selectOptions = options.sort((a, b) => a.name.localeCompare(b.name));
     selectOptions.push({ value: 'New', name: 'New' });
     if (allowParent) {
-      selectOptions.push({ value: 'Parent', name: 'Parent' });
+      selectOptions.push({ value: 'Parent', name: parentName || 'Parent' });
     }
     const response = await ask(display, undefined, { selectOptions: selectOptions });
     if (response === 'New') {

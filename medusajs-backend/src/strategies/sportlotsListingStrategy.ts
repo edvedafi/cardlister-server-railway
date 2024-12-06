@@ -41,7 +41,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
         }[sport.toLowerCase()],
       );
       await pup.locator('input[name="dbin"]').fill(`${bin}`);
-      await pup.locator('input[type="radio"][name="pricing"][value="NEW"]').click();
+      await pup.locator('input[type="radio"][name="dentry"][value="NEW"]').click();
       await pup.locator('input[value="Next"]').click();
     } catch (e) {
       await pup.screenshot('load-inventory-error');
