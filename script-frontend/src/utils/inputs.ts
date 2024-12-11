@@ -12,12 +12,40 @@ export async function getInputs(args: ParsedArgs) {
   const { finish } = showSpinner('inputs', 'Getting Input Information');
   let zipFile: string | undefined = undefined;
   if (args.lastZipFile && args._.length > 0) {
+    console.log('using last zip file: ' + args._[0]);
     // eslint-disable-next-line no-useless-escape
     zipFile = `/Users/jburich/Downloads/Photos-001\ \(${args._[0]}\).zip`;
   } else if (args.lastZipFile) {
     //find the most recent file in ~/Downloads
-    zipFile = (await $`ls -t ~/Downloads/*.zip | head -n 1`).text().trim();
+    try {
+      const directory = '/Users/jburich/Downloads';
+      // Read the directory contents
+      const files = await fs.readdir(directory);
+
+      // Filter for .zip files
+      const zipFiles = files.filter((file) => path.extname(file).toLowerCase() === '.zip');
+
+      if (zipFiles.length === 0) {
+        throw new Error('No .zip files found in the directory');
+      }
+
+      // Map files to their stats
+      const fileStats = await Promise.all(
+        zipFiles.map(async (file) => {
+          const filePath = path.join(directory, file);
+          const stats = await fs.stat(filePath);
+          return { file: filePath, mtime: stats.mtime };
+        }),
+      );
+
+      // Find the file with the latest modification time
+      const mostRecent = fileStats.reduce((latest, current) => (current.mtime > latest.mtime ? current : latest));
+      zipFile = mostRecent.file;
+    } catch (error) {
+      console.error('Error:', error);
+    }
   } else if (args._.length > 0) {
+    console.log('using zip file: ' + args._[0]);
     zipFile = args._[0];
   }
 
