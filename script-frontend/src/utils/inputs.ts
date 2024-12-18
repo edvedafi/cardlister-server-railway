@@ -121,8 +121,7 @@ export const getFiles = async (inputDirectory: string, requireEven = true): Prom
     if (requireEven && files.length % 2 !== 0) {
       const ok = await ask(`Odd Number of Files? [${files.length}]`, false);
       if (!ok) {
-        error('Odd Number of Files');
-        process.exit(1);
+        await getFiles(inputDirectory, requireEven);
       }
     }
     finish(`Found ${files.length} Files`);
