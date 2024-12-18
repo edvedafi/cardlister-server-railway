@@ -11,8 +11,8 @@ const { showSpinner } = useSpinners('firebase', '#ffc107');
 export default function initializeFirebase() {
   const { update, finish } = showSpinner('firebase', 'Firebase');
   update('Configuring');
-  // @ts-ignore - no idea why this is throwing an error, because it's correct
-  const hofDBJSON = JSON.parse(readFileSync('./hofdb-2038e-firebase-adminsdk-jllij-4025146e4e.json'));
+  // @ts-expect-error - no idea why this is throwing an error, because it's correct
+  const hofDBJSON = JSON.parse(readFileSync('./hofdb-2038e-firebase-adminsdk-jllij-1a5e17046b.json'));
   const firebaseConfig = {
     credential: cert(hofDBJSON),
     apiKey: process.env.FIREBASE_API_KEY,
