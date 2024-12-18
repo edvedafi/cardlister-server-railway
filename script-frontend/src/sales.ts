@@ -1,7 +1,5 @@
 import dotenv from 'dotenv';
 import 'zx/globals';
-import { shutdownSportLots } from './listing-sites/sportlots';
-import { removeFromSportLots, shutdownSportLots as oldShutdownSportLots } from './old-scripts/sportlots';
 import { useSpinners } from './utils/spinners';
 import initializeFirebase from './utils/firebase';
 import { completeOrder, getOrders, getProductVariant, getSales } from './utils/medusa';
@@ -10,10 +8,6 @@ import { parseArgs } from './utils/parseArgs';
 // @ts-expect-error - no types
 import chalkTable from 'chalk-table';
 import { buildTableData, type OldSale } from './utils/data';
-import { removeFromBuySportsCards, shutdownBuySportsCards } from './old-scripts/bsc';
-import { shutdownMyCardPost } from './old-scripts/mycardpost';
-import { createGroups } from './old-scripts/uploads';
-import { removeFromEbay } from './old-scripts/ebay';
 import open from 'open';
 
 $.verbose = false;
@@ -25,8 +19,8 @@ const args = parseArgs(
     string: ['d'],
     boolean: ['o', 'n', 'r'],
     alias: {
-      o: 'skip-old',
-      r: 'remove-old-school',
+      // o: 'skip-old',
+      // r: 'remove-old-school',
       n: 'new-sales',
       d: 'days',
     },
@@ -40,24 +34,6 @@ const args = parseArgs(
 );
 
 const { showSpinner } = useSpinners('Sync', chalk.cyanBright);
-
-let isShuttingDown = false;
-const shutdown = async () => {
-  if (!isShuttingDown) {
-    isShuttingDown = true;
-    await Promise.all([shutdownSportLots(), oldShutdownSportLots(), shutdownBuySportsCards(), shutdownMyCardPost()]);
-  }
-};
-
-['SIGINT', 'SIGTERM', 'SIGQUIT'].forEach((signal) =>
-  process.on(
-    signal,
-    async () =>
-      await shutdown().then(() => {
-        process.exit();
-      }),
-  ),
-);
 
 initializeFirebase();
 const { update, error, finish } = showSpinner('top-level', 'Running sales processing');
@@ -101,20 +77,6 @@ try {
             // } else {
             //   throw new Error(`Could not find old style match for ${item.title}`);
             // }
-          }
-        }
-      }
-      fs.writeJSONSync('oldSales.json', oldSales);
-
-      if (args['remove-old-school']) {
-        const groupedCards = await createGroups({}, oldSales);
-        update('Remove listings from sites');
-        if (oldSales && oldSales.length > 0) {
-          await removeFromEbay(oldSales);
-          // await removeFromMyCardPost(oldSales);
-          if (groupedCards && Object.keys(groupedCards).length > 0) {
-            await removeFromSportLots(groupedCards);
-            await removeFromBuySportsCards(groupedCards);
           }
         }
       }
@@ -163,10 +125,4 @@ try {
   }
 } catch (e) {
   error(e);
-} finally {
-  if (fs.existsSync('oldSales.json')) {
-    fs.removeSync('oldSales.json');
-  }
-  await shutdown();
-  process.exit();
 }

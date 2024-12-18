@@ -48,6 +48,7 @@
     "chalk-table": "^1.0.2",
     "decompress": "^4.2.1",
     "dotenv": "^16.4.5",
+    "ebay-api": "^9.1.1",
     "figures": "^6.1.0",
     "firebase-admin": "^12.2.0",
     "form-data": "^4.0.0",
