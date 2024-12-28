@@ -42,7 +42,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     bsc: card.id,
     printRun: card.printRun || set.metadata?.printRun,
     autograph: set.metadata?.autograph || card.autograph,
-    features: _.uniq(_.concat([], card.features || [], set.metadata?.features || [])),
+    features: _.uniq(_.concat([], card.features || [], set.metadata?.features || [], card.playerAttribute || [], card.playerAttributeDesc || [])),
   };
 
   if (card.sportlots) {
@@ -93,7 +93,10 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     product.metadata.features.push('Base Set');
   }
 
-  product.metadata.features = _.uniq(product.metadata?.features || []);
+  const featureMap: {[key: string]: string} = {
+    FBC: 'First Bowman',
+  }
+  product.metadata.features = _.uniq(product.metadata?.features.map((feature: string)=> featureMap[feature] || feature) || []);
 
   return product as Product;
 }

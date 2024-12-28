@@ -147,7 +147,7 @@ type DisplayRows = {
 
 export type OldSale = DisplayableRow & { sku: string; platform: string };
 
-export async function buildTableData(orders: Order[], oldSales: OldSale[]): Promise<DisplayableRow[]> {
+export async function buildTableData(orders: Order[], oldSales: OldSale[], sku?: string): Promise<DisplayableRow[]> {
   const { finish, error, update } = showSpinner('buildTableData', 'Building table data');
   const finalDisplay: DisplayableRow[] = [];
 
@@ -168,7 +168,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
       await Promise.all(
         orders
           .flatMap((order: Order) => order.items?.map((item) => ({ ...item, order })))
-          .filter((item) => item)
+          .filter((item) => item && (!sku || item.variant?.sku === sku))
           .map(async (item): Promise<DisplayableRow> => {
             if (item) {
               let variant = item.variant;
@@ -264,7 +264,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
     )
       .filter((item) => item)
       .reduce((items: DisplayableRow[], item: DisplayableRow): DisplayableRow[] => {
-        const existing = items.find((i) => i.title === item.title);
+        const existing = items.find((i) => `${i.title}${i.platform}` === `${item.title}${item.platform}`);
         if (!existing) {
           items.push(item);
         } else {
@@ -381,7 +381,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
         ).forEach((card) => {
           Object.keys(card).forEach(
             (cardKey) =>
-              // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
+              // @ts-expect-error - Crazy reflective type code that I have no idea what the types are, and it's ok to not know
               (card[cardKey] =
                 cardKey === 'platform'
                   ? orderColor(card.platform)(card.platform)
@@ -403,7 +403,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[]): Prom
                           '?': chalk.white,
                         }[card.sport] || chalk.cyanBright
                       )(card.sport)
-                    : // @ts-expect-error - Crazy reflective type code that I have no idea what the types are and its ok to not know
+                    : // @ts-expect-error - Crazy reflective type code that I have no idea what the types are, and it's ok to not know
                       color(card[cardKey])),
           );
           finalDisplay.push(card);
