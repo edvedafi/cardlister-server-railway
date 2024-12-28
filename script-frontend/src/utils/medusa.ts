@@ -2,6 +2,7 @@ import Medusa from '@medusajs/medusa-js';
 import dotenv from 'dotenv';
 import type { Metadata } from '../models/setInfo';
 import type {
+  AdminProductsListRes,
   BatchJob,
   DecoratedInventoryItemDTO,
   InventoryItemDTO,
@@ -59,7 +60,6 @@ export async function createCategory(
     parent_category_id: parent_category_id,
     metadata,
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
@@ -79,7 +79,6 @@ export async function createCategoryActive(
     parent_category_id: parent_category_id,
     metadata,
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
@@ -94,13 +93,11 @@ export async function setCategoryActive(
     is_internal: false,
     metadata: metadataUpdates,
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
 export async function updateCategory(id: string, metadataUpdates: Metadata): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.update(id, { metadata: metadataUpdates });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category || {};
 }
 
@@ -115,13 +112,11 @@ export async function getCategories(parent_category_id: string): Promise<Product
     include_descendants_tree: false,
     // fields: 'name',
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_categories;
 }
 
 export async function getCategory(id: string): Promise<ProductCategory> {
   const response = await medusa.admin.productCategories.retrieve(id);
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product_category;
 }
 
@@ -166,12 +161,12 @@ export async function createProduct(product: Product, variations: Variation[] = 
     response = await medusa.admin.products.create(payload);
   } catch (error) {
     console.log('Error creating product', error);
-    const r = await medusa.admin.products.list({
+    const r: AdminProductsListRes = await medusa.admin.products.list({
       limit: 10000,
       fields: 'metadata,variants.metadata',
       expand: 'variants',
     });
-    const skus = r.products.flatMap((p) => p.variants.map((v) => v.sku));
+    const skus = r.products.flatMap((p: Product) => p.variants?.map((v: ProductVariant) => v.sku));
     variations.forEach((v) => {
       if (!skus.includes(v.sku)) {
         console.log('Missing SKU', v.sku);
@@ -188,7 +183,6 @@ export async function createProduct(product: Product, variations: Variation[] = 
     });
     // await ask(`Variant ${variant.sku} Created: Press Enter to Continue`);
   }
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
@@ -198,7 +192,6 @@ export async function updateProductImages(product: { id: string; images: string[
       (image) => `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${image}?alt=media`,
     ),
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
@@ -208,7 +201,6 @@ export async function addOptions(product: Product): Promise<Product> {
     title: 'Type',
   });
   finish();
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
@@ -220,12 +212,7 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
   if (productVariant.prices.length > 0) {
     try {
       response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
-        // @ts-expect-error fighting the medusa-js types
-        // prices: productVariant.prices.map((price: MoneyAmount) =>
-        //   typeof price.amount === 'string' ? { ...price, amount: parseInt(price.amount) } : price,
-        // ),
         prices: productVariant.prices,
-        // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
         metadata: productVariant.metadata,
       });
     } catch (e) {
@@ -243,10 +230,10 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
     response = productVariant;
   }
 
-  if (!response.product)
+  if (!response.product) {
     throw new Error(`Failed to update product variant ${productVariant.id} for product ${productVariant.product.id}`);
+  }
 
-  // @ts-expect-error cannot figure out how to type case this correctly
   return response.product;
 }
 
@@ -258,8 +245,7 @@ export async function getProductCardNumbers(category: string): Promise<string[]>
     limit: 1000,
   });
   return response.products
-    ? // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-      response.products.flatMap((product: Product | PricedProduct) =>
+    ? response.products.flatMap((product: Product | PricedProduct) =>
         product.variants?.map((v: ProductVariant) => v.metadata?.cardNumber),
       )
     : [];
@@ -312,7 +298,6 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
         update(job.status);
         await new Promise((resolve) => setTimeout(resolve, 5000));
         const res = await medusa.admin.batchJobs.retrieve(job.id);
-        // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
         job = res.batch_job;
         if (job.status === 'processing') {
           update(`${job.status} ${job.result?.advancement_count}/${job.result?.count}`);
@@ -336,7 +321,7 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
   );
 }
 
-export async function getAllBatchJobs(logStatus = true): Promise<BatchJob[]> {
+export async function getAllBatchJobs(logStatus = true, filter = true, onlySales = false): Promise<BatchJob[]> {
   let spinners;
   if (logStatus) {
     spinners = showSpinner('jobs', 'Getting Batch Jobs');
@@ -350,8 +335,16 @@ export async function getAllBatchJobs(logStatus = true): Promise<BatchJob[]> {
   }
   while (count > offset) {
     const response = await medusa.admin.batchJobs.list({ limit, offset });
-    // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-    jobs.push(...response.batch_jobs.filter((job) => !['canceled', 'completed', 'failed'].includes(job.status)));
+    if (filter) {
+      jobs.push(
+        ...response.batch_jobs.filter(
+          (job: BatchJob) =>
+            (!onlySales || job.type.indexOf('sale') > -1) && !['canceled', 'completed', 'failed'].includes(job.status),
+        ),
+      );
+    } else {
+      jobs.push(...response.batch_jobs);
+    }
     count = response.count;
     offset += limit;
     if (spinners) {
@@ -372,13 +365,11 @@ export async function cancelSync(batchId: string) {
 
 export async function getProduct(id: string): Promise<Product> {
   const response = await medusa.admin.products.retrieve(id);
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
 export async function getProductVariant(variantId: string): Promise<PricedVariant> {
   const response = await medusa.admin.variants.retrieve(variantId);
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.variant;
 }
 
@@ -392,7 +383,6 @@ export async function getProductVariantBySKU(sku: string): Promise<PricedVariant
 
     while (!response || response.variants.length === limit) {
       response = await medusa.admin.variants.list({ offset, limit });
-      // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
       response.variants.forEach((variant: PricedVariant) => {
         if (variant.sku) {
           variantCache[variant.sku] = variant;
@@ -418,7 +408,6 @@ export async function getStockLocationId(): Promise<string> {
 export async function getInventory(productVariant: ProductVariant): Promise<DecoratedInventoryItemDTO> {
   if (!productVariant.sku) throw new Error('Product variant does not have a SKU');
   const response = await medusa.admin.inventoryItems.list({ sku: productVariant.sku });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   let inventoryItem: DecoratedInventoryItemDTO = response.inventory_items?.[0];
 
   if (!inventoryItem) {
@@ -426,7 +415,6 @@ export async function getInventory(productVariant: ProductVariant): Promise<Deco
       variant_id: productVariant.id,
       sku: productVariant.sku,
     });
-    // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
     inventoryItem = createResponse.inventory_item;
   }
 
@@ -462,17 +450,14 @@ export async function updateInventory(
         stocked_quantity: typeof quantity === 'number' ? quantity : parseInt(quantity),
       },
     );
-    // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
     return response.inventory_item;
   }
 }
 
 export async function updatePrices(productId: string, variantId: string, prices: MoneyAmount[]): Promise<Product> {
   const response = await medusa.admin.products.updateVariant(productId, variantId, {
-    // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
     prices: prices,
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.product;
 }
 
@@ -481,32 +466,56 @@ export async function getProducts(category: string): Promise<Product[]> {
     category_id: [category],
     limit: 1000,
   });
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
   return response.products;
 }
 
-export async function getOrders(lastNdays?: string): Promise<Order[]> {
-  let response;
+export interface OrderParams {
+  lastNdays?: string;
+  sku?: string;
+}
+export async function getOrders({ lastNdays, sku }: OrderParams): Promise<Order[]> {
+  const { update, finish } = showSpinner('orders', 'Fetching Orders');
+  let orders: Order[] = [];
   if (lastNdays && parseInt(lastNdays) > 0) {
     const today = new Date();
     const pastDate = new Date(today);
     pastDate.setDate(today.getDate() - parseInt(lastNdays));
-    response = await medusa.admin.orders.list({
+    update(`Getting Orders for the last ${lastNdays} days`);
+    const response = await medusa.admin.orders.list({
       created_at: { gt: pastDate },
       limit: 100,
       offset: 0,
       expand: 'items,items.variant',
     });
+    orders = response.orders;
+  } else if (sku) {
+    update(`Getting Orders for SKU ${sku}`);
+    const limit: number = 100;
+    let offset: number = 0;
+    let count: number = 1;
+    while (count > offset) {
+      update(`SKU: [${sku}]${offset > 0 ? ` ${offset}/${count}` : ''}`);
+      const response = await medusa.admin.orders.list({
+        limit,
+        offset,
+        expand: 'items,items.variant',
+      });
+      count = response.count;
+      offset += limit;
+      orders.push(...response.orders.filter((order: Order) => order.items?.some((item) => item.variant?.sku === sku)));
+    }
   } else {
-    response = await medusa.admin.orders.list({
+    update('Getting All pending Orders');
+    const response = await medusa.admin.orders.list({
       status: ['pending'],
       limit: 100,
       offset: 0,
       expand: 'items,items.variant',
     });
+    orders = response.orders;
   }
-  // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
-  return response.orders;
+  finish();
+  return orders;
 }
 
 export async function completeOrder(order: Order): Promise<void> {

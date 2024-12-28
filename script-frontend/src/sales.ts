@@ -16,13 +16,12 @@ dotenv.config();
 
 const args = parseArgs(
   {
-    string: ['d'],
+    string: ['d', 's'],
     boolean: ['o', 'n', 'r'],
     alias: {
-      // o: 'skip-old',
-      // r: 'remove-old-school',
       n: 'new-sales',
       d: 'days',
+      s: 'sku',
     },
   },
   {
@@ -30,6 +29,7 @@ const args = parseArgs(
     r: 'Remove cards for Old School style Sales',
     n: 'Gather all new sales from platforms before processing',
     d: 'Get all of the orders from the last n days',
+    s: 'Display all sales of a SKU',
   },
 );
 
@@ -45,7 +45,7 @@ try {
   }
 
   update('Gather Orders');
-  const orders: Order[] = await getOrders(args['days']);
+  const orders: Order[] = await getOrders({ lastNdays: args['days'], sku: args['sku'] });
   if (orders.length > 0) {
     update('Process old orders');
 
@@ -88,20 +88,22 @@ try {
     }
 
     update('Build display pull table');
-    const output = await buildTableData(orders, oldSales);
+    const output = await buildTableData(orders, oldSales, args['sku']);
 
-    update('Open external sites');
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
-      await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a');
-    }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
-      await open('https://www.buysportscards.com/sellers/orders');
-    }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
-      await open('https://www.mycardpost.com/edvedafi/orders');
-    }
-    if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
-      await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT');
+    if (!args['sku']) {
+      update('Open external sites');
+      if (orders.find((sale) => sale.metadata?.platform.indexOf('SportLots - ') > -1)) {
+        await open('https://sportlots.com/inven/dealbin/dealacct.tpl?ordertype=1a', { app: { name: 'firefox' } });
+      }
+      if (orders.find((sale) => sale.metadata?.platform.indexOf('BSC - ') > -1)) {
+        await open('https://www.buysportscards.com/sellers/orders', { app: { name: 'firefox' } });
+      }
+      if (orders.find((sale) => sale.metadata?.platform.indexOf('MCP - ') > -1)) {
+        await open('https://www.mycardpost.com/edvedafi/orders', { app: { name: 'firefox' } });
+      }
+      if (orders.find((sale) => sale.metadata?.platform.indexOf('ebay - ') > -1)) {
+        await open('https://www.ebay.com/sh/ord?filter=status:AWAITING_SHIPMENT', { app: { name: 'firefox' } });
+      }
     }
 
     finish(`Processed ${orders.length} orders`);

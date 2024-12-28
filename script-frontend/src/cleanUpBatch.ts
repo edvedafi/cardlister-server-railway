@@ -11,30 +11,46 @@ $.verbose = false;
 dotenv.config();
 const args = parseArgs(
   {
-    boolean: ['w', 'p'],
+    boolean: ['w', 'p', 's', 'g'],
     string: ['d'],
     alias: {
       w: 'watch',
       p: 'print',
       d: 'delay',
+      g: 'group',
+      s: 'sales',
     },
   },
   {
     w: 'Watch the Count',
     p: 'Print all open jobs',
     d: 'Delay between checks',
+    g: 'Group output for display by status',
+    s: 'Only return sales jobs',
   },
 );
 
 const { log } = useSpinners('Sync', chalk.cyanBright);
 
 try {
-  const jobs = await getAllBatchJobs();
+  const jobs = await getAllBatchJobs(true, !args.status, args.sales);
   log(`Found ${jobs.length} jobs`);
   if (args.print) {
     jobs.forEach((job) => {
       log(`Job ${job.id} - ${job.created_at}: ${job.type} => ${JSON.stringify(job.context)} ${job.status}`);
     });
+  }
+  if (args.status) {
+    const byStatus: { [key: string]: number } = jobs.reduce((acc: { [key: string]: number }, job) => {
+      if (!acc[job.status]) {
+        acc[job.status] = 0;
+      }
+      acc[job.status] += 1;
+      return acc;
+    }, {});
+    for (const [key, value] of Object.entries(byStatus)) {
+      log(`${key}: ${value}`);
+    }
   }
   const start = jobs.length;
   while (args.watch) {

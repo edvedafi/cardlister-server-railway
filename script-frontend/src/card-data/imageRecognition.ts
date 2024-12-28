@@ -34,7 +34,13 @@ type SearchableData = {
 };
 
 async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
-  const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
+  // const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const update = (text: string)=>{};
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const error = (text: string)=>{};
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const finish = (text: string)=>{};
 
   let defaults: Partial<ImageRecognitionResults> = {
     sport: setData.metadata?.sport,
@@ -487,6 +493,10 @@ const runFirstPass = async (
 
       if (block.word === 'RC') {
         results.features = addFeature(results.features, 'RC');
+      }
+
+      if (block.word === '1st Bowman') {
+        results.features = addFeature(results.features, 'FBC');
       }
 
       let teamTest: { display: string; sport: string } | undefined;
