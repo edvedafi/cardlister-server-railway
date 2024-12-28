@@ -45,17 +45,17 @@ class SyncService extends TransactionBaseService {
           }),
         );
       } else {
-        // if (!request.only || request.only.includes('sportlots')) {
-        //   // update('Starting Sportlots Sync');
-        //   responses.push(
-        //     await this.batchJobService.create({
-        //       type: 'sportlots-sync',
-        //       context: { category_id: category },
-        //       dry_run: false,
-        //       created_by: request.user,
-        //     }),
-        //   );
-        // }
+        if (!request.only || request.only.includes('sportlots')) {
+          // update('Starting Sportlots Sync');
+          responses.push(
+            await this.batchJobService.create({
+              type: 'sportlots-sync',
+              context: { category_id: category },
+              dry_run: false,
+              created_by: request.user,
+            }),
+          );
+        }
 
         if (!request.only || request.only.includes('bsc')) {
           // update('Starting BSC Sync');
