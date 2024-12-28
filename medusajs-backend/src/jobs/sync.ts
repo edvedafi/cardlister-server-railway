@@ -15,6 +15,6 @@ export default async function handler({ container }: ScheduledJobArgs) {
 
 export const config: ScheduledJobConfig = {
   name: 'sync-all',
-  //run at midnight
-  schedule: '0 0 * * *',
+  //run at 6 am
+  schedule: '0 3 * * *',
 };
