@@ -65,52 +65,59 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
     const listings = response.data.results;
     let count = 0;
 
-    for (const listing of listings) {
-      let product: Product | undefined;
-      let variant: ProductVariant | undefined;
-      if (listing.card.playerAttribute.indexOf('VAR') > -1) {
-        product = products.find((product) => {
-          variant = product.variants.find((variant) => `${variant.metadata.cardNumber}` === `${listing.card.cardNo}`);
-          return variant;
-        });
-      } else {
-        product = products.find((product) => `${product.metadata.cardNumber}` === `${listing.card.cardNo}`);
-        variant = product?.variants.find((variant) => variant.metadata.isBase);
-      }
-      if (product && variant) {
-        const quantity = await this.getQuantity({ variant });
-
-        if (quantity !== listing.availableQuantity || (listing.sellerSku && listing.sellerSku !== variant.sku)) {
-          const price = this.getPrice(variant);
-          if (!price) {
-            throw new Error(`Price not found for ${variant.sku}`);
-          } else if (price < 0.25) {
-            throw new Error(`Price too low for ${variant.sku}`);
-          } else if (price > 999) {
-            throw new Error(`Price too high for ${variant.sku}`);
-          }
-          const newListing: BscCard = {
-            ...listing,
-            availableQuantity: quantity,
-            price: this.getPrice(variant),
-            sellerSku: variant.sku,
-          };
-
-          if (
-            variant.metadata.frontImage &&
-            (!listing.sellerImgFront || listing.sellerImgFront.indexOf('Default') > -1)
-          ) {
-            newListing.sellerImgFront = await this.postImage(api, <string>variant.metadata.frontImage);
-          }
-          if (variant.metadata.backImage && (!listing.sellerImgBack || listing.sellerImgBack.indexOf('Default') > -1)) {
-            newListing.sellerImgBack = await this.postImage(api, <string>variant.metadata.backImage);
-          }
-          updates.push(newListing);
+    if (listings && listings.length > 0) {
+      for (const listing of listings) {
+        let product: Product | undefined;
+        let variant: ProductVariant | undefined;
+        if (listing.card.playerAttribute.indexOf('VAR') > -1) {
+          product = products.find((product) => {
+            variant = product.variants.find((variant) => `${variant.metadata.cardNumber}` === `${listing.card.cardNo}`);
+            return variant;
+          });
+        } else {
+          product = products.find((product) => `${product.metadata.cardNumber}` === `${listing.card.cardNo}`);
+          variant = product?.variants.find((variant) => variant.metadata.isBase);
         }
-      } else {
-        this.log('product not found for: ', listing.card.cardNo); //TODO need to log this somewhere actionable
+        if (product && variant) {
+          const quantity = await this.getQuantity({ variant });
+
+          if (quantity !== listing.availableQuantity || (listing.sellerSku && listing.sellerSku !== variant.sku)) {
+            const price = this.getPrice(variant);
+            if (!price) {
+              throw new Error(`Price not found for ${variant.sku}`);
+            } else if (price < 0.25) {
+              throw new Error(`Price too low for ${variant.sku}`);
+            } else if (price > 999) {
+              throw new Error(`Price too high for ${variant.sku}`);
+            }
+            const newListing: BscCard = {
+              ...listing,
+              availableQuantity: quantity,
+              price: this.getPrice(variant),
+              sellerSku: variant.sku,
+            };
+
+            if (
+              variant.metadata.frontImage &&
+              (!listing.sellerImgFront || listing.sellerImgFront.indexOf('Default') > -1)
+            ) {
+              newListing.sellerImgFront = await this.postImage(api, <string>variant.metadata.frontImage);
+            }
+            if (
+              variant.metadata.backImage &&
+              (!listing.sellerImgBack || listing.sellerImgBack.indexOf('Default') > -1)
+            ) {
+              newListing.sellerImgBack = await this.postImage(api, <string>variant.metadata.backImage);
+            }
+            updates.push(newListing);
+          }
+        } else {
+          this.log('product not found for: ', listing.card.cardNo); //TODO need to log this somewhere actionable
+        }
+        count = await advanceCount(count);
       }
-      count = await advanceCount(count);
+    } else {
+      return { success: 0, error: ['No listings found'] };
     }
 
     if (updates.length > 0) {
@@ -119,7 +126,7 @@ class BscListingStrategy extends AbstractListingStrategy<AxiosInstance> {
         listings: updates,
       });
       if (results.result !== 'Saved!') {
-        throw new Error(results);
+        return { success: 0, error: [results.result] };
       }
     }
     return { success: updates.length };

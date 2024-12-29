@@ -124,6 +124,18 @@ abstract class AbstractListingStrategy<
           this.finishProgress(`${result.success} cards added; ${result.error} errors`);
         } catch (e) {
           this.progress(e.message, e);
+          await this.batchJobService_.withTransaction(transactionManager).update(batchJobId, {
+            result: {
+              advancement_count: result.success,
+              errors: result.error
+                ? result.error.map((e) => ({
+                    message: 'Error syncing products',
+                    code: 'ERR',
+                    err: e,
+                  }))
+                : [{ message: e.message, code: 'ERR', err: e }],
+            },
+          });
           throw e;
         } finally {
           await this.logout(connection);
@@ -141,6 +153,7 @@ abstract class AbstractListingStrategy<
         });
       } catch (e) {
         this.log(`:processJob::error ${e.message}`, e);
+        await this.batchJobService_.withTransaction(transactionManager).setFailed(batchJobId);
         throw e;
       }
     });
