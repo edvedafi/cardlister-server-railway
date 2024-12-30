@@ -417,9 +417,9 @@ const createOfferForCard = (
 
 const booleanText = (val: string | boolean | unknown): [string] => [isYes(val) ? 'Yes' : 'No'];
 
-const displayOrNA = (testValue: string | boolean | unknown, displayValue: unknown = testValue): [string] => {
+const displayOrNA = (testValue: string | boolean | unknown, displayValue: unknown = testValue): string[] => {
   if (Array.isArray(displayValue) && displayValue.length > 0) {
-    return displayValue.map(titleCase) as [string];
+    return displayValue.map(titleCase).filter((v) => v.trim().length > 0);
   } else {
     return [testValue && !isNo(testValue.toString()) ? titleCase(displayValue.toString()) : 'N/A'];
   }
