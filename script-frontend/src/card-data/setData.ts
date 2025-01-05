@@ -462,7 +462,10 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
   };
 
   bscCards.forEach((card) => {
-    if (cards.bscBase.find((bscCard) => bscCard.cardNo === card.cardNo)) {
+    if (
+      cards.bscBase.find((bscCard) => bscCard.cardNo === card.cardNo) ||
+      cards.bscVariations[card.cardNo]?.find((bscCard) => bscCard.cardNo === card.cardNo)
+    ) {
       card.cardNo = `${card.cardNo}b`;
     }
 
