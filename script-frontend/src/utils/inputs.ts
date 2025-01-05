@@ -129,5 +129,6 @@ export const getFiles = async (inputDirectory: string, requireEven = true): Prom
     files = [];
     error(`No Files Found`);
   }
-  return files;
+
+  return files.sort();
 };
