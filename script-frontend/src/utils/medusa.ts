@@ -17,6 +17,7 @@ import type {
 import { useSpinners } from './spinners';
 import chalk from 'chalk';
 import axios, { type AxiosError } from 'axios';
+import _ from 'lodash';
 
 const { showSpinner, log } = useSpinners('Medusa', chalk.greenBright);
 
@@ -151,9 +152,7 @@ export async function createProduct(product: Product, variations: Variation[] = 
       })),
   };
   if (product.metadata?.features) {
-    payload.metadata.features = Array.isArray(product.metadata.features)
-      ? product.metadata.features
-      : [product.metadata.features];
+    payload.metadata.features = _.uniq(product.metadata.features).filter((f) => f);
   }
 
   let response;
@@ -223,8 +222,14 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
       Error: ${message}`;
     }
   } else if (productVariant.metadata) {
+    let cleanFeatures: string[] = _.uniq(productVariant.metadata.features).filter((feature) => feature) as string[];
+    if (!cleanFeatures) {
+      cleanFeatures = ['Base Set'];
+    } else if (cleanFeatures.length === 0) {
+      cleanFeatures.push('Base Set');
+    }
     response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
-      metadata: productVariant.metadata,
+      metadata: cleanFeatures,
     });
   } else {
     response = productVariant;
@@ -233,6 +238,17 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
   if (!response.product) {
     throw new Error(`Failed to update product variant ${productVariant.id} for product ${productVariant.product.id}`);
   }
+
+  return response.product;
+}
+export async function updateProductVariantMetadata(
+  variant: string,
+  product: string,
+  metadata: Metadata,
+): Promise<Product> {
+  const response = await medusa.admin.products.updateVariant(product, variant, {
+    metadata: metadata,
+  });
 
   return response.product;
 }

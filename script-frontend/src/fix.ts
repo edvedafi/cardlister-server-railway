@@ -1,21 +1,23 @@
 import dotenv from 'dotenv';
 import 'zx/globals';
-import { useSpinners } from './utils/spinners';
+import { type UpdateSpinner, useSpinners } from './utils/spinners';
 import { clearBSC, shutdownBuySportsCards } from './old-scripts/bsc';
 import { parseArgs } from './utils/parseArgs';
 import { findSet } from './card-data/setData';
-import { fixVariants, getProducts } from './utils/medusa';
-import { setAllPricesToCommons } from './card-data/cardData';
+import { fixVariants, getProducts, updateCategory } from './utils/medusa';
+import { cleanFeatures, setAllPricesToCommons } from './card-data/cardData';
+import type { Product, ProductCategory } from '@medusajs/client-types';
 
 const args = parseArgs(
   {
     string: ['y'],
-    boolean: ['b', 'i', 'c'],
+    boolean: ['b', 'i', 'c', 'f'],
     alias: {
       y: 'year',
       b: 'bsc',
       i: 'images',
       c: 'commons',
+      f: 'features',
     },
   },
   {
@@ -23,6 +25,7 @@ const args = parseArgs(
     images: 'Fix images for all products',
     bsc: 'Remove all cards from year onBuySportsCards',
     commons: 'Set an entire set to common card pricing',
+    features: 'Ensure features is a proper array on all products',
   },
 );
 
@@ -30,7 +33,8 @@ $.verbose = false;
 
 dotenv.config();
 
-const { showSpinner, log } = useSpinners('Sync', chalk.cyanBright);
+const { showSpinner } = useSpinners('Sync', chalk.cyanBright);
+const { update, finish, error } = showSpinner('top-level', 'Running Fixes');
 
 let isShuttingDown = false;
 const shutdown = async () => {
@@ -50,9 +54,22 @@ const shutdown = async () => {
   ),
 );
 
-// initializeFirebase();
+const processByCategory = (work: (products: Product[]) => Promise<void>) => {
+  const processCategory = async (category: ProductCategory) => {
+    update(`Cleaning ${category.name}`);
+    if (category.category_children.length > 0) {
+      for (const child of category.category_children) {
+        await processCategory(child);
+      }
+    } else {
+      const products = await getProducts(category.id);
+      update(category.name);
+      await work(products);
+    }
+  };
+  return processCategory;
+};
 
-const { update, finish, error } = showSpinner('top-level', 'Running Fixes');
 try {
   if (args.images) {
     update('Product Images');
@@ -82,10 +99,16 @@ try {
       await clearBSC(args.y);
     }
   }
-  finish();
+  if (args.features) {
+    update('Cleaning Features');
+    const processor = processByCategory(cleanFeatures);
+    const set = await findSet({ allowParent: true });
+    await processor(set.category);
+  }
 } catch (e) {
   error(e);
 } finally {
+  finish();
   await shutdown();
-  // process.exit();
+  process.exit();
 }

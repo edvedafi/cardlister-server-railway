@@ -36,11 +36,11 @@ type SearchableData = {
 async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
   // const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const update = (text: string)=>{};
+  const update = (text: string) => {};
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const error = (text: string)=>{};
+  const error = (text: string) => {};
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const finish = (text: string)=>{};
+  const finish = (text: string) => {};
 
   let defaults: Partial<ImageRecognitionResults> = {
     sport: setData.metadata?.sport,
@@ -588,14 +588,13 @@ const fuzzyMatch = async (
   return results;
 };
 
-const addFeature = (features: string | undefined, feature: string): string => {
+const addFeature = (features: string[] | undefined, feature: string): string[] => {
   if (!features) {
-    return feature;
-  } else if (features.indexOf(feature) > -1) {
-    return features;
-  } else {
-    return `${features} | ${feature}`;
+    return [feature];
+  } else if (!features.includes(feature)) {
+    return [...features, feature];
   }
+  return features;
 };
 
 export const paniniMatch = async (

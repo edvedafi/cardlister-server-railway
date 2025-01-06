@@ -33,7 +33,7 @@ export interface Card {
   playerAttributeDesc: string;
   id: string;
   sportlots?: string;
-  features?: string;
+  features?: string[];
   printRun?: string;
   autograph?: string;
   insert?: string;
