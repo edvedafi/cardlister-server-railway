@@ -21,7 +21,7 @@ function getOutputFile(listing, setInfo, imageNumber) {
   if (category.parallel) {
     outputLocation = `${outputLocation}/${category.parallel}`;
   }
-  const outputFile = `${outputLocation}/${listing.product.metadata.cardNumber}-${listing.product.metadata.player.reduce(
+  const outputFile = `${outputLocation}/${listing.metadata.cardNumber}-${listing.product.metadata.player.reduce(
     (names, name) => `${names}-${name.toLowerCase().replace(/\s/g, '-')}`,
   )}-${imageNumber}.jpg`;
   return { outputLocation, outputFile };
