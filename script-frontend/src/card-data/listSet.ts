@@ -99,7 +99,7 @@ const processUploads = async (productVariant: ProductVariant, imageInfo: Product
   const images = await Promise.all(
     imageInfo.map(async (image, i) => {
       if (!productVariant.product) throw 'Must set Product on the Variant before processing uploads';
-      const uploadedFileName: string = `${productVariant.product.handle}${i + 1}.jpg`;
+      const uploadedFileName: string = `${productVariant.title.replaceAll(' ', '-').replaceAll('#', '')}${i + 1}.jpg`;
       await processImageFile(image.file, uploadedFileName);
       return uploadedFileName;
     }),
