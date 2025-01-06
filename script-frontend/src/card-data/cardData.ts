@@ -10,6 +10,7 @@ import {
   updatePrices,
   updateProductImages,
   updateProductVariant,
+  updateProductVariantMetadata,
 } from '../utils/medusa';
 import { useSpinners } from '../utils/spinners';
 import type { InventoryItemDTO, MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
@@ -17,7 +18,7 @@ import { getCommonPricing, getPricing } from './pricing';
 import type { ParsedArgs } from 'minimist';
 import _ from 'lodash';
 
-const { log } = useSpinners('card-data', chalk.whiteBright);
+const { log, showSpinner } = useSpinners('card-data', chalk.whiteBright);
 
 export async function buildProductFromBSCCard(card: Card, set: Category): Promise<Product> {
   const product: Partial<Product> = {
@@ -42,7 +43,15 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     bsc: card.id,
     printRun: card.printRun || set.metadata?.printRun,
     autograph: set.metadata?.autograph || card.autograph,
-    features: _.uniq(_.concat([], card.features || [], set.metadata?.features || [], card.playerAttribute || [], card.playerAttributeDesc || [])),
+    features: _.uniq(
+      _.concat(
+        [],
+        card.features || [],
+        set.metadata?.features || [],
+        card.playerAttribute || [],
+        card.playerAttributeDesc || [],
+      ),
+    ),
   };
 
   if (card.sportlots) {
@@ -93,10 +102,13 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     product.metadata.features.push('Base Set');
   }
 
-  const featureMap: {[key: string]: string} = {
+  const featureMap: { [key: string]: string } = {
     FBC: 'First Bowman',
-  }
-  product.metadata.features = _.uniq(product.metadata?.features.map((feature: string)=> featureMap[feature] || feature) || []);
+    VAR: 'Variation',
+  };
+  product.metadata.features = _.uniq(
+    product.metadata?.features.map((feature: string) => featureMap[feature] || feature) || [],
+  )?.filter((feature) => feature);
 
   return product as Product;
 }
@@ -302,9 +314,6 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
   updatePVMetadata('features');
   if (!productVariant.metadata) productVariant.metadata = {};
   if (!productVariant.metadata.features) productVariant.metadata.features = [];
-  if (typeof productVariant.metadata.features === 'string') {
-    productVariant.metadata.features = productVariant.metadata.features.split('|');
-  }
   if (
     setData.metadata?.parallel &&
     !isNo(setData.metadata?.parallel) &&
@@ -336,6 +345,8 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
     productVariant.metadata.features.push('Base Set');
   }
 
+  productVariant.metadata.features = _.uniq(productVariant.metadata.features).filter((feature) => feature);
+
   log(productVariant.metadata);
   if (await ask('Update Card Details?', false)) {
     if (!productVariant.metadata) productVariant.metadata = {};
@@ -353,9 +364,9 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
     productVariant.metadata.autograph = await ask('Autograph', productVariant.metadata.autograph);
     productVariant.metadata.thickness = await ask('Thickness', productVariant.metadata.thickness);
 
-    const featureResult = await ask('Features', productVariant.metadata.features.join(' | '));
+    const featureResult = await ask('Features', productVariant.metadata.features);
     if (featureResult && featureResult.length > 0) {
-      productVariant.metadata.features = featureResult.split('|').map((feature: string) => feature.trim());
+      productVariant.metadata.features = featureResult;
     } else {
       productVariant.metadata.features = ['Base Set'];
     }
@@ -474,6 +485,33 @@ export async function setAllPricesToCommons(products: Product[] = []) {
     if (product.variants) {
       for (const variant of product.variants) {
         await updatePrices(product.id, variant.id, prices);
+      }
+    }
+  }
+}
+
+export async function cleanFeatures(products: Product[] = []) {
+  for (const product of products) {
+    if (product.variants) {
+      for (const variant of product.variants) {
+        if (!variant.metadata) variant.metadata = {};
+        if (!variant.metadata.features) variant.metadata.features = [];
+        let cleanFeatures: string[] = _.uniq(variant.metadata.features).filter((feature) => feature) as string[];
+        if (!cleanFeatures) {
+          cleanFeatures = ['Base Set'];
+        } else if (cleanFeatures.length === 0) {
+          cleanFeatures.push('Base Set');
+        }
+
+        if (cleanFeatures.length !== variant.metadata.features.length) {
+          variant.metadata.features = cleanFeatures;
+          variant.product = product;
+          await updateProductVariantMetadata(variant.id, product.id, {
+            ...variant.metadata,
+            features: cleanFeatures,
+          });
+          console.log(variant.sku, ': Updated to ', cleanFeatures);
+        }
       }
     }
   }

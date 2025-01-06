@@ -621,7 +621,7 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata: {
                   ...product.metadata,
                   features: product.metadata?.features,
-                  description: `${product.description} <br><br><ul>${product.metadata?.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`,
+                  description: `${product.description} <br><br><ul>${product.metadata?.features.map((feature: string) => `<li>${feature.trim()}</li>`).join('')}</ul>`,
                   isBase: true,
                 },
               },
@@ -640,9 +640,6 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata.bsc = card.id;
                 metadata.sku = `${category.metadata?.bin}|${variation.cardNo}`;
                 if (metadata.features) {
-                  if (!metadata.features.push) {
-                    metadata.features = metadata.features.split('|');
-                  }
                   metadata.features = [...metadata.features, 'Variation'];
                 } else {
                   metadata.features = ['Variation'];
@@ -651,8 +648,8 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                   metadata.sportlots = slVariation.title;
                 }
 
+                metadata.features = _.uniq(metadata.features || []).filter((feature) => feature);
                 const titles = await getTitles({ ...metadata, ...category.metadata });
-                metadata.features = _.uniq(metadata.features || []);
                 metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`;
 
                 variations.push({
@@ -672,9 +669,6 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
                 metadata.sku = `${category.metadata?.bin}|${metadata.cardNumber}`;
                 if (metadata.features) {
-                  if (!metadata.features.push) {
-                    metadata.features = metadata.features.split('|');
-                  }
                   metadata.features = [...metadata.features, 'Variation'];
                 } else {
                   metadata.features = ['Variation'];
@@ -682,13 +676,10 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata.sportlots = slVariation.title;
 
                 //remove duplicates from metadata.features
-                metadata.features = metadata.features.filter(
-                  (item: string, index: number) => metadata.features.indexOf(item) === index,
-                );
+                metadata.features = _.uniq(metadata.features || []).filter((feature) => feature);
 
                 const titles = await getTitles({ ...metadata, ...category.metadata });
-                metadata.features = _.uniq(metadata.features || []);
-                metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`;
+                metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature.trim()}</li>`).join('')}</ul>`;
                 variations.push({
                   title: titles.title,
                   sku: `${category.metadata?.bin}|${metadata.cardNumber}`,
