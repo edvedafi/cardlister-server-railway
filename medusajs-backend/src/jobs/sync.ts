@@ -12,9 +12,9 @@ export default async function handler({ container }: ScheduledJobArgs) {
     category: root.id,
   });
 }
-
-export const config: ScheduledJobConfig = {
-  name: 'sync-all',
-  //run at 6 am
-  schedule: '0 3 * * *',
-};
+//
+// export const config: ScheduledJobConfig = {
+//   name: 'sync-all',
+//   //run at 6 am
+//   schedule: '0 3 * * *',
+// };
