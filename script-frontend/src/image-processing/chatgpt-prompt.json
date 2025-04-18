@@ -1,0 +1,4 @@
+{
+  "prompt": "You are an expert in Sports cards. Please return only the image files the text should be only the json, nothing more. The json file should contain the card information in the following properties imageFile, player, setName, cardNumber, team, insert, parallel, base, and an indicator of whether this is the front of back of a card",
+  "model": "gpt-4o"
+}
