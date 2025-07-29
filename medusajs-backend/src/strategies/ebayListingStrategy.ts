@@ -39,7 +39,7 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     return ebayLogin();
   }
 
-  async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
+async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
     try {
       return (await eBay.sell.inventory.getOffers({ sku })).offers;
     } catch (e) {
@@ -84,43 +84,171 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     quantity: number,
     price: number,
   ): Promise<ListAttempt> {
+    // ebay doesn't allow | in sku anymore but all other sites prefer it
+    variant.sku = variant.sku.replace('|', '_');
+    this.log(`Syncing product ${variant.sku}`);
+    await this.ensureLocationExists(eBay);
+
+    // this.log('Getting offers...');
     const offers: Offer[] = await this.getOffers(eBay, variant.sku);
+    // this.log(`Got ${offers.length} offers`);
 
     if (offers.length > 0) {
-      const offer = offers[0];
-      if (quantity === offer.availableQuantity) {
-        if (offer.status === 'PUBLISHED') {
-          // this.log(`No Updates needed for:: ${variant.sku}`);
-          // this.log(JSON.stringify(offer, null, 2));
-          return { skipped: true };
-        } else {
-          //TODO This should update the offer to ensure it has the latest data
-          await eBay.sell.inventory.publishOffer(offer.offerId);
-          return { quantity };
-        }
+      this.log(`Found ${offers.length} offers for ${variant.sku}`);
+      // this.log(JSON.stringify(offers, null, 2));
+
+      // delete all of the offers
+      for (const offer of offers) {
+        // this.log(`Deleting offer ${offer.offerId}...`);
+        await eBay.sell.inventory.deleteOffer(offer.offerId);
+        this.log(`Deleted offer ${offer.offerId}`);
+      } 
+    }
+    
+    // create the new inventory item
+    this.log('Creating inventory item...');
+    const ebayInventoryItem: InventoryItem = convertCardToInventory(product, variant, category, quantity);
+    // this.log('Inventory item data:');
+    // this.log(JSON.stringify(ebayInventoryItem, null, 2));
+    
+    await eBay.sell.inventory.createOrReplaceInventoryItem(variant.sku, ebayInventoryItem);
+
+    // Wait for inventory item to be processed
+    // this.log('Waiting for inventory item to be processed...');
+    // await new Promise(resolve => setTimeout(resolve, 3000));
+    this.log('Inventory item created successfully');
+    
+    // Verify inventory item was created
+    // this.log('Verifying inventory item...');
+    // const createdInventoryItem = await eBay.sell.inventory.getInventoryItem(variant.sku);
+    // this.log('Created inventory item:');
+    // this.log(JSON.stringify(createdInventoryItem, null, 2));
+
+    // Verify availability configuration
+    // this.log('Verifying availability configuration...');
+    // if (!createdInventoryItem.availability?.shipToLocationAvailability?.availabilityDistributions?.length) {
+    //   throw new Error('No availability distributions found in inventory item');
+    // }
+    
+    // const availabilityDistributions = createdInventoryItem.availability.shipToLocationAvailability.availabilityDistributions;
+    // this.log(`Found ${availabilityDistributions.length} availability distributions:`);
+    // this.log(JSON.stringify(availabilityDistributions, null, 2));
+    
+    // Check if the CardLister location is properly configured
+    // const cardListerDistribution = availabilityDistributions.find(dist => dist.merchantLocationKey === 'CardLister');
+    // if (!cardListerDistribution) {
+    //   throw new Error('CardLister location not found in availability distributions');
+    // }
+    
+    // this.log('CardLister availability distribution:');
+    // this.log(JSON.stringify(cardListerDistribution, null, 2));
+
+    // Query available locations to verify CardLister is active
+    // this.log('Querying available locations...');
+    try {
+      const locations = await eBay.sell.inventory.getInventoryLocations();
+      const cardListerLocation = locations.locations?.find(loc => loc.merchantLocationKey === 'CardLister');
+      
+      if (!cardListerLocation) {
+        throw new Error('CardLister location not found in available locations');
+      }
+      
+      // this.log('CardLister location status:');
+      // this.log(JSON.stringify(cardListerLocation, null, 2));
+      
+      if (cardListerLocation.merchantLocationStatus !== 'ENABLED') {
+        throw new Error(`CardLister location is not enabled. Status: ${cardListerLocation.merchantLocationStatus}`);
+      }
+    } catch (e) {
+      this.log('Error querying locations:');
+      this.log(JSON.stringify(e, null, 2));
+      throw e;
+    }
+
+    // create the new offer
+    this.log('Creating offer...');
+    const newOffer = createOfferForCard(product, variant, category, quantity, price);
+    // this.log('Offer data:');
+    // this.log(JSON.stringify(newOffer, null, 2));
+    
+    const { offerId } = await eBay.sell.inventory.createOffer(newOffer);
+    this.log(`Offer created with ID: ${offerId}`);
+
+    // Verify the offer was created correctly
+    // this.log('Verifying offer configuration...');
+    // const createdOffer = await eBay.sell.inventory.getOffer(offerId);
+    // this.log('Created offer:');
+    // this.log(JSON.stringify(createdOffer, null, 2));
+    
+    // // Check if the offer references the correct inventory item
+    // if (createdOffer.sku !== variant.sku) {
+    //   throw new Error(`Offer SKU mismatch. Expected: ${variant.sku}, Got: ${createdOffer.sku}`);
+    // }
+    
+    // // Check if the offer references the correct location
+    // if (createdOffer.merchantLocationKey !== 'CardLister') {
+    //   throw new Error(`Offer location mismatch. Expected: CardLister, Got: ${createdOffer.merchantLocationKey}`);
+    // }
+    
+    // this.log('Offer verification passed - all references are correct');
+
+    // publish the offer
+    this.log('Publishing offer...');
+    let offerResult;
+    try {
+      offerResult = await eBay.sell.inventory.publishOffer(offerId);
+      this.log('Offer published successfully');
+
+        // await eBay.sell.inventory.deleteOffer(offerId);
+        // this.log('Offer deleted successfully');
+        // await eBay.sell.inventory.deleteInventoryItem(variant.sku);
+        // this.log('Inventory item deleted successfully');
+    } catch (e) {
+      this.log('Error publishing offer:');
+      this.log(JSON.stringify(e, null, 2));
+      if(offerResult) {
+        this.log('Offer published successfully');
+        this.log(JSON.stringify(offerResult, null, 2));
       } else {
-        this.log(`Updating quantity for ${variant.sku}`);
-        await eBay.sell.inventory.updateOffer(offer.offerId, { ...offer, availableQuantity: quantity });
-        return { quantity };
+        this.log('No response from publishOffer');
       }
-    } else {
-      this.log(`Creating new offer for ${variant.sku}`);
-      const ebayInventoryItem: InventoryItem = convertCardToInventory(product, variant, category, quantity);
-      await eBay.sell.inventory.createOrReplaceInventoryItem(variant.sku, ebayInventoryItem);
-      const offer = createOfferForCard(product, variant, category, quantity, price);
-      let offerId: string;
-      try {
-        const response = await eBay.sell.inventory.createOffer(offer);
-        offerId = response.offerId;
-      } catch (e) {
-        const error = e.meta?.res?.data.errors[0];
-        if (error?.errorId === 25002) {
-          offerId = error.parameters[0].value;
-          await eBay.sell.inventory.updateOffer(offerId, offer);
-        }
+      throw e;
+    }
+
+    return { quantity };
+  }
+
+  private async ensureLocationExists (eBay: eBayApi): Promise<void> {
+    try {
+      await eBay.sell.inventory.getInventoryLocation('CardLister');
+    } catch (e) {
+      if (e.meta?.errorId === 25804) {
+        // Location doesn't exist, create it
+        await eBay.sell.inventory.createInventoryLocation('CardLister', {
+          location: {
+            address: {
+              addressLine1: '3458 Edinburgh Rd',
+              city: 'Green Bay',
+              country: 'US',
+              postalCode: '54311',
+              stateOrProvince: 'WI',
+            },
+          },
+          locationWebUrl: 'www.edvedafi.com',
+          merchantLocationStatus: 'ENABLED',
+          name: 'CardLister',
+        });
+      } else {
+        throw e;
       }
-      await eBay.sell.inventory.publishOffer(offerId);
-      return { quantity };
+    }
+
+    try {
+      const locations = await eBay.sell.inventory.getInventoryLocations();
+      this.log('Available merchant locations:');
+      this.log(JSON.stringify(locations, null, 2));
+    } catch (e) {
+      this.log('Error getting merchant locations:', e);
     }
   }
 }
@@ -133,33 +261,79 @@ function convertCardToInventory(
 ): InventoryItem {
   if (!variant.metadata) variant.metadata = {};
 
+  // const inventoryItem: InventoryItem =
+  // {
+  //   "sku": variant.sku,
+  //   "availability": {
+  //     "shipToLocationAvailability": {
+  //       "availabilityDistributions": [
+  //         {
+  //           "merchantLocationKey": "CardLister",
+  //           "quantity": 1,
+  //           "fulfillmentTime": {
+  //             "value": 1,
+  //             "unit": "DAY"
+  //           }
+  //         }
+  //       ],
+  //       "quantity": 1
+  //     }
+  //   },
+  //   "condition": "USED_VERY_GOOD",
+  //   "conditionDescriptors": [
+  //     {
+  //       "name": "40001",
+  //       "values": ["400011"]
+  //     }
+  //   ],
+  //   "product": {
+  //     "title": "2025 Topps Chrome Pink Refractor #105 Nolan Gorman",
+  //     "description": "2025 Topps Chrome Pink Refractor #105 Nolan Gorman. St. Louis Cardinals. Ships securely in a top loader with tracking.",
+  //     "imageUrls": [
+  //       "https://yourdomain.com/images/2025GormanFront.jpg"
+  //     ],
+  //     // @ts-expect-error Ebay's API is incorrectly typed for sports cards
+  //     "aspects": {
+  //       "Sport": ["Baseball"],
+  //       "Player/Athlete": ["Nolan Gorman"],
+  //       "Team": ["St. Louis Cardinals"],
+  //       "Manufacturer": ["Topps"],
+  //       "Year Manufactured": ["2025"],
+  //       "Parallel/Variety": ["Pink Refractor"],
+  //       "Card Condition": ["Very Good"]
+  //     }
+  //   },
+  //   "packageWeightAndSize": {
+  //     "dimensions": {
+  //       "length": 6,
+  //       "width": 4,
+  //       "height": 1,
+  //       "unit": "INCH"
+  //     },
+  //     "weight": {
+  //       "value": 1,
+  //       "unit": "OUNCE"
+  //     },
+  //     "packageType": "LETTER"
+  //   }
+  // };
   const inventoryItem: InventoryItem = {
-    availability: {
-      // pickupAtLocationAvailability: [
-      //   {
-      //     availabilityType: 'IN_STOCK',
-      //     fulfillmentTime: {
-      //       unit: 'BUSINESS_DAY',
-      //       value: '1',
-      //     },
-      //     merchantLocationKey: 'CardLister',
-      //     quantity: card.quantity,
-      //   },
-      // ],
-      shipToLocationAvailability: {
-        availabilityDistributions: [
-          {
-            fulfillmentTime: {
-              unit: 'BUSINESS_DAY', //'TimeDurationUnitEnum : [YEAR,MONTH,DAY,HOUR,CALENDAR_DAY,BUSINESS_DAY,MINUTE,SECOND,MILLISECOND]',
-              value: 1,
-            },
-            merchantLocationKey: 'default',
-            quantity: 1,
-          },
-        ],
-        quantity: quantity,
-      },
-    },
+
+    "availability": {
+    "shipToLocationAvailability": {
+      "availabilityDistributions": [
+        {
+          "merchantLocationKey": "CardLister",
+          "quantity": quantity,
+          "fulfillmentTime": {
+            "value": 1,
+            "unit": "DAY"
+          }
+        }
+      ],
+        "quantity": quantity
+    }
+  },
     condition: variant.metadata.grade ? 'LIKE_NEW' : 'USED_VERY_GOOD', // could be "2750 :4000" instead?
     //'ConditionEnum : [NEW,LIKE_NEW,NEW_OTHER,NEW_WITH_DEFECTS,MANUFACTURER_REFURBISHED,CERTIFIED_REFURBISHED,EXCELLENT_REFURBISHED,VERY_GOOD_REFURBISHED,GOOD_REFURBISHED,SELLER_REFURBISHED,USED_EXCELLENT,USED_VERY_GOOD,USED_GOOD,USED_ACCEPTABLE,FOR_PARTS_OR_NOT_WORKING]',
     // conditionDescription: 'string',
@@ -285,6 +459,26 @@ const createOfferForCard = (
   quantity: number,
   price: number,
 ): EbayOfferDetailsWithKeys => ({
+  // "sku": variant.sku,
+  // "marketplaceId": "EBAY_US",
+  // "format": "FIXED_PRICE",
+  // "availableQuantity": 1,
+  // "categoryId": "261328",
+  // "merchantLocationKey": "CardLister",
+  // "listingDescription": "2025 Topps Chrome Pink Refractor #105 Nolan Gorman. St. Louis Cardinals. Ships in top loader with tracking.",
+  // "listingPolicies": {
+  //   "fulfillmentPolicyId": "122729485024",
+  //   "paymentPolicyId": "173080971024",
+  //   "returnPolicyId": "143996946024"
+  // },
+  // "pricingSummary": {
+  //   "price": {
+  //     "value": "9999.99",
+  //     "currency": "USD"
+  //   }
+  // },
+  // "listingDuration": "GTC"
+
   availableQuantity: quantity,
   categoryId: '261328',
   // "charity": {

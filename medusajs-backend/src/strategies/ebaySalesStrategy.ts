@@ -60,7 +60,7 @@ abstract class EbaySalesStrategy extends SaleStrategy<eBayApi> {
         title: li.title,
         unit_price: parseInt(li.total.value.replace('.', '').replace('$', '').trim()),
         quantity: li.quantity,
-        sku: li.sku,
+        sku: li.sku.replace('_', '|'),
       })),
     }));
   }
