@@ -1,0 +1,1130 @@
+{
+    "total": 22,
+    "fulfillmentPolicies": [
+      {
+        "name": "Large Flat Rate",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSPriorityMailLargeFlatRateBox",
+                "shippingCost": {
+                  "value": "19.95",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "19.95",
+                  "currency": "USD"
+                },
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "181405024",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "32758261024"
+      },
+      {
+        "name": "Medium Flat Rate",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSPriorityFlatRateBox",
+                "shippingCost": {
+                  "value": "14.35",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "14.35",
+                  "currency": "USD"
+                },
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "34856356024"
+      },
+      {
+        "name": "Free",
+        "description": "FREE!",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSStandardPost",
+                "shippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "freeShipping": true,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "36039240024"
+      },
+      {
+        "name": "Small Flat Rate",
+        "description": "Small Flat Rate Box",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSPriorityMailSmallFlatRateBox",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "38879691024"
+      },
+      {
+        "name": "international",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 0,
+          "unit": "DAY"
+        },
+        "shipToLocations": {
+          "regionIncluded": [
+            {
+              "regionName": "Worldwide"
+            }
+          ]
+        },
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSMedia",
+                "shippingCost": {
+                  "value": "3.99",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "3.99",
+                  "currency": "USD"
+                },
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          },
+          {
+            "optionType": "INTERNATIONAL",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "UPS",
+                "shippingServiceCode": "UPSWorldwideSaver",
+                "shippingCost": {
+                  "value": "12.75",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "12.75",
+                  "currency": "USD"
+                },
+                "freeShipping": false,
+                "shipToLocations": {
+                  "regionIncluded": [
+                    {
+                      "regionName": "Worldwide"
+                    }
+                  ]
+                },
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "58570286024"
+      },
+      {
+        "name": "PWE_or_BMWT",
+        "description": "Domestic: Calculated: Standard services($5.19).",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "eBay Send",
+                "shippingServiceCode": "US_eBayStandardEnvelope",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 3,
+                "shippingCarrierCode": "GENERIC",
+                "shippingServiceCode": "Pickup",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": true
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "122729485024"
+      },
+      {
+        "name": "Priority Mail",
+        "description": "Domestic: Calculated: Expedited services($8.30).",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSPriority",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "122729791024"
+      },
+      {
+        "name": "Media Mail",
+        "description": "Media Only",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSMedia",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "138761287024"
+      },
+      {
+        "name": "Economy",
+        "description": "Domestic: Calculated: Economy servicesExpedited services.",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "FedEx",
+                "shippingServiceCode": "FedExHomeDelivery",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 3,
+                "shippingCarrierCode": "UPS",
+                "shippingServiceCode": "UPSGround",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "138816052024"
+      },
+      {
+        "name": "BMWT",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "439716024",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "183378412024"
+      },
+      {
+        "name": "Free PWE",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "eBay Send",
+                "shippingServiceCode": "US_eBayStandardEnvelope",
+                "shippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "freeShipping": true,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClass",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "187332761024"
+      },
+      {
+        "name": "PWE or BMWT Copy",
+        "description": "Domestic: Calculated: Standard services($5.19).",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "eBay Send",
+                "shippingServiceCode": "US_eBayStandardEnvelope",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClass",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "203181946024"
+      },
+      {
+        "name": "Economy Copy (2)",
+        "description": "Domestic: Calculated: Economy servicesExpedited services.",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "216316468024"
+      },
+      {
+        "name": "Flat: USPSParcel free, 1 business day 515ffd7c2fff000",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "shippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "freeShipping": true,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "220308500024"
+      },
+      {
+        "name": "$5 for All",
+        "description": "Flat rate that combines everything together",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {
+          "regionIncluded": [
+            {
+              "regionName": "Worldwide"
+            }
+          ]
+        },
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "shippingCost": {
+                  "value": "5.0",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "181405024",
+            "shippingPromotionOffered": false
+          },
+          {
+            "optionType": "INTERNATIONAL",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClassMailInternational",
+                "freeShipping": false,
+                "shipToLocations": {
+                  "regionIncluded": [
+                    {
+                      "regionName": "Worldwide"
+                    }
+                  ]
+                },
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "439716024",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "220368342024"
+      },
+      {
+        "name": "HOF Lots",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {
+          "regionIncluded": [
+            {
+              "regionName": "Worldwide"
+            }
+          ]
+        },
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "FLAT_RATE",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "shippingCost": {
+                  "value": "4.0",
+                  "currency": "USD"
+                },
+                "additionalShippingCost": {
+                  "value": "0.0",
+                  "currency": "USD"
+                },
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "shippingDiscountProfileId": "181405024",
+            "shippingPromotionOffered": true
+          },
+          {
+            "optionType": "INTERNATIONAL",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClassMailInternationalParcel",
+                "freeShipping": false,
+                "shipToLocations": {
+                  "regionIncluded": [
+                    {
+                      "regionName": "Worldwide"
+                    }
+                  ]
+                },
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "2.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "220644399024"
+      },
+      {
+        "name": "BMWT Copy",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClass",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": true
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "222801844024"
+      },
+      {
+        "name": "BMWT Copy (2)",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSPriority",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "439716024",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "222802266024"
+      },
+      {
+        "name": "PWE_or_BMWT Copy",
+        "description": "Domestic: Calculated: Standard services($5.19).",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "eBay Send",
+                "shippingServiceCode": "US_eBayStandardEnvelope",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClass",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": true
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "228291174024"
+      },
+      {
+        "name": "Calculated: US_eBayStandardEnvelope , 1 busine (243523087024)",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "eBay Send",
+                "shippingServiceCode": "US_eBayStandardEnvelope",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSParcel",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": true
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "243523087024"
+      },
+      {
+        "name": "Economy Copy",
+        "description": "Domestic: Calculated: Economy servicesExpedited services.",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 1,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSStandardPost",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              },
+              {
+                "sortOrder": 2,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSPriority",
+                "freeShipping": false,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "216316448024"
+      },
+      {
+        "name": "Mascot - Calculated, USPS First Class, Domestic",
+        "description": "Domestic, Calculated, Standard services.",
+        "marketplaceId": "EBAY_US",
+        "categoryTypes": [
+          {
+            "name": "ALL_EXCLUDING_MOTORS_VEHICLES",
+            "default": false
+          }
+        ],
+        "handlingTime": {
+          "value": 3,
+          "unit": "DAY"
+        },
+        "shipToLocations": {},
+        "shippingOptions": [
+          {
+            "optionType": "DOMESTIC",
+            "costType": "CALCULATED",
+            "shippingServices": [
+              {
+                "sortOrder": 1,
+                "shippingCarrierCode": "USPS",
+                "shippingServiceCode": "USPSFirstClass",
+                "freeShipping": true,
+                "buyerResponsibleForShipping": false,
+                "buyerResponsibleForPickup": false
+              }
+            ],
+            "packageHandlingCost": {
+              "value": "0.0",
+              "currency": "USD"
+            },
+            "shippingDiscountProfileId": "0",
+            "shippingPromotionOffered": false
+          }
+        ],
+        "globalShipping": false,
+        "pickupDropOff": false,
+        "freightShipping": false,
+        "fulfillmentPolicyId": "224902525024"
+      }
+    ]
+  }

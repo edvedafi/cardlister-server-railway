@@ -39,18 +39,22 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     return ebayLogin();
   }
 
-async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
-    try {
-      return (await eBay.sell.inventory.getOffers({ sku })).offers;
-    } catch (e) {
-      const message = handleEbayError(e, [25710, 25713]);
-      if (message) {
-        this.log(message, e);
+  async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
+      try {
+        return [
+          ...(await eBay.sell.inventory.getOffers({ sku })).offers,
+          ...(await eBay.sell.inventory.getOffers({ sku: sku.replace('|', '_') })).offers,
+          ...(await eBay.sell.inventory.getOffers({ sku: sku.replace('_', '|') })).offers,
+        ];
+      } catch (e) {
+        const message = handleEbayError(e, [25710, 25713]);
+        if (message) {
+          this.log(message, e);
+        }
+        return [];
       }
-      return [];
-    }
   }
-
+  
   async removeProduct(eBay: eBayApi, product: Product, variant: ProductVariant): Promise<ListAttempt> {
     let error: ListAttempt | undefined;
     const hasError = (e: unknown) => {
@@ -84,14 +88,15 @@ async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
     quantity: number,
     price: number,
   ): Promise<ListAttempt> {
-    // ebay doesn't allow | in sku anymore but all other sites prefer it
-    variant.sku = variant.sku.replace('|', '_');
     this.log(`Syncing product ${variant.sku}`);
     await this.ensureLocationExists(eBay);
 
     // this.log('Getting offers...');
     const offers: Offer[] = await this.getOffers(eBay, variant.sku);
     // this.log(`Got ${offers.length} offers`);
+
+    // ebay doesn't allow | in sku anymore but all other sites prefer it
+    variant.sku = variant.sku.replace('|', '_');
 
     if (offers.length > 0) {
       this.log(`Found ${offers.length} offers for ${variant.sku}`);
@@ -104,6 +109,7 @@ async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
         this.log(`Deleted offer ${offer.offerId}`);
       } 
     }
+
     
     // create the new inventory item
     this.log('Creating inventory item...');

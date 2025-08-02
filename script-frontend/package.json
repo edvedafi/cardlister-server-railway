@@ -11,12 +11,13 @@
     "compile": "swiftc src/image-processing/CardCropper.swift; swiftc src/image-processing/CardCropper.rotate.swift",
     "batch": "tsx src/cleanUpBatch.ts",
     "generateKey": "tsx src/generateMedusaToken.ts",
+    "generateKeyEbay": "tsx src/generateEbayToken.ts",
     "sales": "tsx src/sales.ts",
     "start": "tsx src/addCards.ts",
     "sync": "tsx src/sync.ts",
     "fix": "tsx src/fix.ts",
     "keepers": "tsx src/keepers.ts",
-    "test": "tsx src/testmcp.ts"
+    "test": "tsx test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.6.0",
@@ -50,6 +51,7 @@
     "decompress": "^4.2.1",
     "dotenv": "^16.4.5",
     "ebay-api": "^9.1.1",
+    "express": "^5.1.0",
     "figures": "^6.1.0",
     "firebase-admin": "^12.2.0",
     "form-data": "^4.0.0",
@@ -59,6 +61,7 @@
     "minimist": "^1.2.8",
     "node-graceful-shutdown": "^1.1.5",
     "open": "^10.1.0",
+    "openai": "^4.93.0",
     "p-retry": "^6.2.0",
     "pdf-lib": "^1.17.1",
     "prettier": "^3.3.2",

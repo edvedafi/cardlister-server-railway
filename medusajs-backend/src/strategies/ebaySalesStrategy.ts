@@ -58,9 +58,9 @@ abstract class EbaySalesStrategy extends SaleStrategy<eBayApi> {
       },
       lineItems: ebayOrder.lineItems.map((li) => ({
         title: li.title,
-        unit_price: parseInt(li.total.value.replace('.', '').replace('$', '').trim()),
+        unit_price: parseInt(li.total.value?.replace('.', '').replace('$', '').trim() || ''),
         quantity: li.quantity,
-        sku: li.sku.replace('_', '|'),
+        sku: li.sku?.replace('_', '|') || 'NA',
       })),
     }));
   }
