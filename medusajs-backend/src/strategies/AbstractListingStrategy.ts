@@ -173,7 +173,7 @@ abstract class AbstractListingStrategy<
   ): Promise<SyncResult> {
     const updated: { success: number; error?: string[] } = { success: 0 };
     let count = 0;
-    products = products.filter(product => product.variants.some(variant => variant.sku === '651|28'));
+    
     for (const product of products) {
       if (!this.requireImages || product.images.length > 0) {
         for (const variant of product.variants) {

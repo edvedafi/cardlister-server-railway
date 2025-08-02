@@ -12,3 +12,4 @@ const pass = await ask('Enter your password: ');
 const key = await ask('Enter your key: ');
 
 await generateKey(user, pass, key);
+
