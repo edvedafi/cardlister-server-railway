@@ -289,20 +289,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[], sku?:
       }, {});
 
     update('Adding Dividers');
-    Object.values(displayable).forEach((cards) =>
-      cards.forEach((card) => {
-        Object.keys(divider).forEach((key) => {
-          // @ts-expect-error - I know this is a bad idea, but it must be done
-          divider[key] = '-'.repeat(Math.max(parseInt(card[key]?.length || 0), parseInt(divider[key]?.length || 0)));
-        });
-      }),
-    );
-
-    let color = chalk.magentaBright;
-    const orderColors: { [key: string]: ChalkInstance } = {};
-    const orderColor = (orderId: string) => {
-      if (!orderColors[orderId]) {
-        orderColors[orderId] = [
+    const colors = [
           chalk.red,
           // chalk.green,
           chalk.yellow,
@@ -332,29 +319,89 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[], sku?:
           chalk.bgMagentaBright,
           chalk.bgCyanBright,
           chalk.bgWhiteBright,
-        ][Object.keys(orderColors).length];
+        ]
+    Object.values(displayable).forEach((cards) =>
+      cards.forEach((card) => {
+        Object.keys(divider).forEach((key) => {
+          // @ts-expect-error - I know this is a bad idea, but it must be done
+          divider[key] = '-'.repeat(Math.max(parseInt(card[key]?.length || 0), parseInt(divider[key]?.length || 0)));
+        });
+      }),
+    );
+
+    let color = chalk.magentaBright;
+    const orderColors: { [key: string]: ChalkInstance } = {};
+    const orderColor = (orderId: string) => {
+      if (!orderColors[orderId]) {
+        orderColors[orderId] = colors[Object.keys(orderColors).length % colors.length];
       }
       return orderColors[orderId];
     };
 
     update('Setting colors');
-    _.orderBy(
-      Array.from(Object.keys(displayable).map((key) => JSON.parse(key))),
-      ['sport', 'year', 'setName', 'parallel', 'insert'],
-      ['asc', 'desc', 'asc', 'asc', 'asc'],
-    ).forEach((key, i) => {
+    Array.from(Object.keys(displayable).map((key) => JSON.parse(key)))
+      .sort((a, b) => {
+        // First sort by sport, year, setName (ascending)
+        if (a.sport !== b.sport) {
+          return (a.sport || '') < (b.sport || '') ? -1 : 1;
+        }
+        if (a.year !== b.year) {
+          return (a.year || '') > (b.year || '') ? -1 : 1;
+        }
+        if (a.setName !== b.setName) {
+          return (a.setName || '') < (b.setName || '') ? -1 : 1;
+        }
+
+        // For items with same sport/year/setName, sort by insert/parallel logic
+        const aHasInsert = a.insert && a.insert !== null;
+        const bHasInsert = b.insert && b.insert !== null;
+        const aHasParallel = a.parallel && a.parallel !== null;
+        const bHasParallel = b.parallel && b.parallel !== null;
+
+        // First: items with null insert AND null parallel
+        if (!aHasInsert && !aHasParallel && (bHasInsert || bHasParallel)) {
+          return -1;
+        }
+        if (!bHasInsert && !bHasParallel && (aHasInsert || aHasParallel)) {
+          return 1;
+        }
+
+        // Second: items with null insert, sort parallel ascending
+        if (!aHasInsert && !bHasInsert) {
+          return (a.parallel || '') < (b.parallel || '') ? -1 : 1;
+        }
+
+        // Third: items with populated insert, sort insert ascending, then parallel ascending
+        if (aHasInsert && bHasInsert) {
+          if (a.insert !== b.insert) {
+            return a.insert < b.insert ? -1 : 1;
+          }
+          return (a.parallel || '') < (b.parallel || '') ? -1 : 1;
+        }
+
+        // If one has insert and other doesn't, the one with insert comes after
+        if (aHasInsert && !bHasInsert) {
+          return 1;
+        }
+        if (!aHasInsert && bHasInsert) {
+          return -1;
+        }
+
+        return 0;
+      })
+      .forEach((key, i) => {
       if (i > 0) {
         finalDisplay.push(divider);
       }
 
       if (key.insert) {
         if (key.parallel) {
-          color = chalk.redBright;
+          color = chalk.bgRed;
         } else {
-          color = chalk.blueBright;
+          color = chalk.bgBlue;
         }
       } else if (key.parallel) {
-        color = chalk.greenBright;
+        color = chalk.bgGreen;
       } else {
         color = chalk.whiteBright;
       }
