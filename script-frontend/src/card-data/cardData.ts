@@ -1,6 +1,6 @@
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import { ask } from '../utils/ask';
-import type { Card } from '../models/bsc';
+import type { Card } from '../models/bsc`';
 import { isNo, isYes, psaGrades } from '../utils/data';
 import {
   getInventory,
@@ -110,6 +110,11 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
     product.metadata?.features.map((feature: string) => featureMap[feature] || feature) || [],
   )?.filter((feature) => feature);
 
+  const serialNumber = product.metadata.features.find((feature: string) => feature.match(/^SN\d+$/));
+  if (serialNumber) {
+    product.metadata.printRun = serialNumber.replace('SN', '');
+  }
+
   return product as Product;
 }
 
@@ -150,7 +155,8 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   const features = add(
     card.features?.filter(
       (feature) =>
-        !['Insert', 'Parallel/Variety', 'Serial Numbered', 'Base Set', 'Refractor', 'Rookie'].includes(feature),
+        !['Insert', 'Parallel/Variety', 'Serial Numbered', 'Base Set', 'Refractor', 'Rookie'].includes(feature) &&
+        !feature.startsWith('SN'),
     ),
   ).replace(' | ', ' ');
   const printRun = card.printRun ? ` /${card.printRun}` : '';
