@@ -95,15 +95,18 @@ export async function getSLCards(
 
     await selectSet(category.metadata?.sportlots);
 
+    log(`URL: ${await browser.getUrl()}`);
     while ((await browser.getUrl()).includes('listcards.tpl')) {
       const rows = await browser
         .$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody')
         .$$('tr:has(td):not(:has(th))');
       for (const row of rows) {
-        cards.push({
+        const card = {
           cardNumber: await row.$('td:nth-child(2)').getText(),
           title: await row.$('td:nth-child(3)').getText(),
-        });
+        };
+  //      log(card.cardNumber);
+        cards.push(card);
       }
       if (cards.length === 0) {
         await browser.saveScreenshot('sportlots-error.png');
