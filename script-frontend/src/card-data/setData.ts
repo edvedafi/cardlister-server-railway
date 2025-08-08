@@ -9,7 +9,7 @@ import {
   getBSCVariantTypeFilter,
   getBSCYearFilter,
 } from '../listing-sites/bsc.js';
-import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear } from '../listing-sites/sportlots';
+import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear } from '../listing-sites/sportlots-adapter';
 import { ask, type AskOptions, type AskSelectOption } from '../utils/ask';
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import {

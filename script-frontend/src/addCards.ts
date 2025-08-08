@@ -1,7 +1,7 @@
 import { configDotenv } from 'dotenv';
 import 'zx/globals';
 import initializeFirebase from './utils/firebase.js';
-import { shutdownSportLots } from './listing-sites/sportlots.js';
+import { shutdownSportLots, setSportlotsImplementation } from './listing-sites/sportlots-adapter.js';
 import chalk from 'chalk';
 import { useSpinners } from './utils/spinners.js';
 import { onShutdown } from 'node-graceful-shutdown';
@@ -37,11 +37,12 @@ try {
   const args = parseArgs(
     {
       boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o'],
-      string: ['n'],
+      string: ['n', 'sl'],
       alias: {
         s: 'select-bulk-cards',
         b: 'bulk',
         n: 'numbers',
+        sl: 'sportlots-impl',
         u: 'skipSafetyCheck',
         z: 'lastZipFile',
         c: 'countCardsFirst',
@@ -55,6 +56,7 @@ try {
       s: 'Select Bulk Cards',
       b: 'Bulk Only Run',
       n: 'Card Numbers to enter quantity \n        ex: --numbers="1,2,3,4,5"\n        ex: --numbers="1-5" \n        ex: --numbers=">5"\n        ex: --numbers="<5"',
+      sl: 'SportLots implementation: webdriver or forms (default webdriver). Example: --sl=forms',
       u: 'Skip Safety Check',
       z: 'Process the most recent zip file in the users Downloads directory',
       c: 'Enter Counts of cards first and then process the zip file of images',
@@ -64,6 +66,14 @@ try {
       o: 'No Sync run after updating',
     },
   );
+
+  // Configure SportLots implementation before any SportLots calls
+  const slImplArg = (args['sportlots-impl'] || args['sl'] || '').toString().toLowerCase();
+  if (slImplArg === 'forms' || process.env.SL_IMPL === 'forms') {
+    setSportlotsImplementation('forms');
+  } else {
+    setSportlotsImplementation('webdriver');
+  }
 
   if (args['numbers'] || args['select-bulk-cards'] || args['inventory']) {
     args['bulk'] = true;
