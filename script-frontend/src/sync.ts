@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import 'zx/globals';
-import { shutdownSportLots } from './listing-sites/sportlots';
+import { shutdownSportLots } from './listing-sites/sportlots-adapter';
 import { useSpinners } from './utils/spinners';
 import { buildSet, findSet, updateSetDefaults } from './card-data/setData';
 import initializeFirebase from './utils/firebase';
