@@ -26,7 +26,7 @@ function handleEbayError(e: Error, nonErrors: number[] = []): string | undefined
       return err.message;
     }
   }
-  return e.message;
+return e.message;
 }
 
 class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
@@ -40,16 +40,26 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   }
 
   async getOffers(eBay: eBayApi, sku: string): Promise<Offer[]> {
-      try {
-        return [
-          ...(await eBay.sell.inventory.getOffers({ sku })).offers,
-          ...(await eBay.sell.inventory.getOffers({ sku: sku.replace('|', '_') })).offers,
-          ...(await eBay.sell.inventory.getOffers({ sku: sku.replace('_', '|') })).offers,
+    const callEbay = (sku: string) => {
+      return eBay.sell.inventory.getOffers({ sku }).catch(e => {
+        if (handleEbayError(e, [25710, 25713])) throw e;
+        return { offers: [] };
+      }).then(res => res.offers);
+    };
+    try {
+      const offers = [
+        ...(await callEbay(sku)),
+        ...(await callEbay(sku.replace('|', '_'))),
+        ...(await callEbay(sku.replace('_', '|')))
         ];
+        this.log(`Found ${offers.length} offers for ${sku} that have skus ${offers.map(o => o.sku).join(', ')}`);
+        return offers;
       } catch (e) {
         const message = handleEbayError(e, [25710, 25713]);
         if (message) {
           this.log(message, e);
+        } else {
+          this.log(`Error getting offers for ${sku}:`, e);
         }
         return [];
       }
@@ -58,6 +68,7 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   async removeProduct(eBay: eBayApi, product: Product, variant: ProductVariant): Promise<ListAttempt> {
     let error: ListAttempt | undefined;
     const hasError = (e: unknown) => {
+      this.log(`Error removing offers for ${variant.sku}: ${e}`);
       const err = handleEbayError(<Error>e, [25710, 25713]);
       if (err) {
         error = { error: err };
@@ -66,6 +77,7 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
     let offers: Offer[] = [];
     try {
       offers = await this.getOffers(eBay, variant.sku);
+      this.log(`Removing ${offers.length} offers for ${variant.sku}`);
       for (let i = 0; i < offers.length; i++) {
         try {
           await eBay.sell.inventory.deleteOffer(offers[i].offerId);
@@ -90,78 +102,130 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
   ): Promise<ListAttempt> {
     this.log(`Syncing product ${variant.sku}`);
     await this.ensureLocationExists(eBay);
-
-    // this.log('Getting offers...');
-    const offers: Offer[] = await this.getOffers(eBay, variant.sku);
-    // this.log(`Got ${offers.length} offers`);
-
-    // ebay doesn't allow | in sku anymore but all other sites prefer it
-    variant.sku = variant.sku.replace('|', '_');
-
-    if (offers.length > 0) {
-      this.log(`Found ${offers.length} offers for ${variant.sku}`);
-      // this.log(JSON.stringify(offers, null, 2));
-
-      // delete all of the offers
-      for (const offer of offers) {
-        // this.log(`Deleting offer ${offer.offerId}...`);
-        await eBay.sell.inventory.deleteOffer(offer.offerId);
-        this.log(`Deleted offer ${offer.offerId}`);
-      } 
+    
+    // Handle SKU format conversion first
+    const originalSku = variant.sku;
+    if (originalSku.includes('|')) {
+      await this.migrateSkuFormat(eBay, originalSku);
+      variant.sku = originalSku.replace('|', '_');
     }
 
+    if (quantity > 0) {
+      // Check if offers already exist for this SKU
+      const existingOffers = await this.getOffers(eBay, variant.sku);
+      
+      if (existingOffers.length > 0) {
+        // Update existing offers and inventory for quantity/price changes
+        this.log(`Found ${existingOffers.length} existing offers, updating quantities and prices...`);
+        await this.updateExistingOffers(eBay, product, variant, category, quantity, price, existingOffers);
+      } else {
+        // Create new inventory item and offer
+        this.log('No existing offers found, creating new inventory item and offer...');
+        await this.createNewInventoryAndOffer(eBay, product, variant, category, quantity, price);
+      }
+    } else {
+      // Remove all offers and inventory for this SKU
+      await this.removeProduct(eBay, product, variant);
+    }
+
+    return { quantity };
+  }
+
+  private async migrateSkuFormat(eBay: eBayApi, originalSku: string): Promise<void> {
+    const offersWithPipe = await this.getOffers(eBay, originalSku);
     
-    // create the new inventory item
+    if (offersWithPipe.length > 0) {
+      this.log(`Found ${offersWithPipe.length} existing offers with SKU ${originalSku}, migrating to use _ instead of |`);
+      
+      // Update each offer to use the new SKU
+      for (const offer of offersWithPipe) {
+        try {
+          const fullOffer = await eBay.sell.inventory.getOffer(offer.offerId);
+          await eBay.sell.inventory.updateOffer(offer.offerId, {
+            ...fullOffer,
+            sku: originalSku.replace('|', '_')
+          });
+          this.log(`Updated offer ${offer.offerId} SKU from ${originalSku} to ${originalSku.replace('|', '_')}`);
+        } catch (e) {
+          this.log(`Error updating offer ${offer.offerId}:`, e);
+        }
+      }
+      
+      // Update the inventory item SKU
+      try {
+        const inventoryItem = await eBay.sell.inventory.getInventoryItem(originalSku);
+        await eBay.sell.inventory.createOrReplaceInventoryItem(
+          originalSku.replace('|', '_'), 
+          inventoryItem
+        );
+        await eBay.sell.inventory.deleteInventoryItem(originalSku);
+        this.log(`Updated inventory item SKU from ${originalSku} to ${originalSku.replace('|', '_')}`);
+      } catch (e) {
+        this.log(`Error updating inventory item SKU:`, e);
+      }
+    }
+  }
+
+  private async updateExistingOffers(
+    eBay: eBayApi,
+    product: Product,
+    variant: ProductVariant,
+    category: ProductCategory,
+    quantity: number,
+    price: number,
+    existingOffers: Offer[]
+  ): Promise<void> {
+    // Update inventory item quantity
+    this.log('Updating inventory item quantity...');
+    const ebayInventoryItem: InventoryItem = convertCardToInventory(product, variant, category, quantity);
+    await eBay.sell.inventory.createOrReplaceInventoryItem(variant.sku, ebayInventoryItem);
+    this.log('Inventory item quantity updated successfully');
+
+    // Update each existing offer with new quantity and price
+    for (const offer of existingOffers) {
+      try {
+        const fullOffer = await eBay.sell.inventory.getOffer(offer.offerId);
+        const updatedOffer = {
+          ...fullOffer,
+          availableQuantity: quantity,
+          price: {
+            value: price.toString(),
+            currency: 'USD'
+          }
+        };
+        
+        await eBay.sell.inventory.updateOffer(offer.offerId, updatedOffer);
+        this.log(`Updated offer ${offer.offerId} with quantity ${quantity} and price ${price}`);
+      } catch (e) {
+        this.log(`Error updating offer ${offer.offerId}:`, e);
+        throw e;
+      }
+    }
+  }
+
+  private async createNewInventoryAndOffer(
+    eBay: eBayApi,
+    product: Product,
+    variant: ProductVariant,
+    category: ProductCategory,
+    quantity: number,
+    price: number
+  ): Promise<void> {
+    // Create the new inventory item
     this.log('Creating inventory item...');
     const ebayInventoryItem: InventoryItem = convertCardToInventory(product, variant, category, quantity);
-    // this.log('Inventory item data:');
-    // this.log(JSON.stringify(ebayInventoryItem, null, 2));
-    
     await eBay.sell.inventory.createOrReplaceInventoryItem(variant.sku, ebayInventoryItem);
-
-    // Wait for inventory item to be processed
-    // this.log('Waiting for inventory item to be processed...');
-    // await new Promise(resolve => setTimeout(resolve, 3000));
     this.log('Inventory item created successfully');
-    
-    // Verify inventory item was created
-    // this.log('Verifying inventory item...');
-    // const createdInventoryItem = await eBay.sell.inventory.getInventoryItem(variant.sku);
-    // this.log('Created inventory item:');
-    // this.log(JSON.stringify(createdInventoryItem, null, 2));
 
-    // Verify availability configuration
-    // this.log('Verifying availability configuration...');
-    // if (!createdInventoryItem.availability?.shipToLocationAvailability?.availabilityDistributions?.length) {
-    //   throw new Error('No availability distributions found in inventory item');
-    // }
-    
-    // const availabilityDistributions = createdInventoryItem.availability.shipToLocationAvailability.availabilityDistributions;
-    // this.log(`Found ${availabilityDistributions.length} availability distributions:`);
-    // this.log(JSON.stringify(availabilityDistributions, null, 2));
-    
-    // Check if the CardLister location is properly configured
-    // const cardListerDistribution = availabilityDistributions.find(dist => dist.merchantLocationKey === 'CardLister');
-    // if (!cardListerDistribution) {
-    //   throw new Error('CardLister location not found in availability distributions');
-    // }
-    
-    // this.log('CardLister availability distribution:');
-    // this.log(JSON.stringify(cardListerDistribution, null, 2));
-
-    // Query available locations to verify CardLister is active
-    // this.log('Querying available locations...');
+    // Verify location exists and is enabled
     try {
       const locations = await eBay.sell.inventory.getInventoryLocations();
       const cardListerLocation = locations.locations?.find(loc => loc.merchantLocationKey === 'CardLister');
-      
+    
       if (!cardListerLocation) {
         throw new Error('CardLister location not found in available locations');
       }
-      
-      // this.log('CardLister location status:');
-      // this.log(JSON.stringify(cardListerLocation, null, 2));
-      
+    
       if (cardListerLocation.merchantLocationStatus !== 'ENABLED') {
         throw new Error(`CardLister location is not enabled. Status: ${cardListerLocation.merchantLocationStatus}`);
       }
@@ -171,57 +235,22 @@ class EbayListingStrategy extends AbstractListingStrategy<eBayApi> {
       throw e;
     }
 
-    // create the new offer
+    // Create the new offer
     this.log('Creating offer...');
     const newOffer = createOfferForCard(product, variant, category, quantity, price);
-    // this.log('Offer data:');
-    // this.log(JSON.stringify(newOffer, null, 2));
-    
     const { offerId } = await eBay.sell.inventory.createOffer(newOffer);
     this.log(`Offer created with ID: ${offerId}`);
 
-    // Verify the offer was created correctly
-    // this.log('Verifying offer configuration...');
-    // const createdOffer = await eBay.sell.inventory.getOffer(offerId);
-    // this.log('Created offer:');
-    // this.log(JSON.stringify(createdOffer, null, 2));
-    
-    // // Check if the offer references the correct inventory item
-    // if (createdOffer.sku !== variant.sku) {
-    //   throw new Error(`Offer SKU mismatch. Expected: ${variant.sku}, Got: ${createdOffer.sku}`);
-    // }
-    
-    // // Check if the offer references the correct location
-    // if (createdOffer.merchantLocationKey !== 'CardLister') {
-    //   throw new Error(`Offer location mismatch. Expected: CardLister, Got: ${createdOffer.merchantLocationKey}`);
-    // }
-    
-    // this.log('Offer verification passed - all references are correct');
-
-    // publish the offer
+    // Publish the offer
     this.log('Publishing offer...');
-    let offerResult;
     try {
-      offerResult = await eBay.sell.inventory.publishOffer(offerId);
+      await eBay.sell.inventory.publishOffer(offerId);
       this.log('Offer published successfully');
-
-        // await eBay.sell.inventory.deleteOffer(offerId);
-        // this.log('Offer deleted successfully');
-        // await eBay.sell.inventory.deleteInventoryItem(variant.sku);
-        // this.log('Inventory item deleted successfully');
     } catch (e) {
       this.log('Error publishing offer:');
       this.log(JSON.stringify(e, null, 2));
-      if(offerResult) {
-        this.log('Offer published successfully');
-        this.log(JSON.stringify(offerResult, null, 2));
-      } else {
-        this.log('No response from publishOffer');
-      }
       throw e;
     }
-
-    return { quantity };
   }
 
   private async ensureLocationExists (eBay: eBayApi): Promise<void> {
@@ -266,63 +295,6 @@ function convertCardToInventory(
   quantity: number,
 ): InventoryItem {
   if (!variant.metadata) variant.metadata = {};
-
-  // const inventoryItem: InventoryItem =
-  // {
-  //   "sku": variant.sku,
-  //   "availability": {
-  //     "shipToLocationAvailability": {
-  //       "availabilityDistributions": [
-  //         {
-  //           "merchantLocationKey": "CardLister",
-  //           "quantity": 1,
-  //           "fulfillmentTime": {
-  //             "value": 1,
-  //             "unit": "DAY"
-  //           }
-  //         }
-  //       ],
-  //       "quantity": 1
-  //     }
-  //   },
-  //   "condition": "USED_VERY_GOOD",
-  //   "conditionDescriptors": [
-  //     {
-  //       "name": "40001",
-  //       "values": ["400011"]
-  //     }
-  //   ],
-  //   "product": {
-  //     "title": "2025 Topps Chrome Pink Refractor #105 Nolan Gorman",
-  //     "description": "2025 Topps Chrome Pink Refractor #105 Nolan Gorman. St. Louis Cardinals. Ships securely in a top loader with tracking.",
-  //     "imageUrls": [
-  //       "https://yourdomain.com/images/2025GormanFront.jpg"
-  //     ],
-  //     // @ts-expect-error Ebay's API is incorrectly typed for sports cards
-  //     "aspects": {
-  //       "Sport": ["Baseball"],
-  //       "Player/Athlete": ["Nolan Gorman"],
-  //       "Team": ["St. Louis Cardinals"],
-  //       "Manufacturer": ["Topps"],
-  //       "Year Manufactured": ["2025"],
-  //       "Parallel/Variety": ["Pink Refractor"],
-  //       "Card Condition": ["Very Good"]
-  //     }
-  //   },
-  //   "packageWeightAndSize": {
-  //     "dimensions": {
-  //       "length": 6,
-  //       "width": 4,
-  //       "height": 1,
-  //       "unit": "INCH"
-  //     },
-  //     "weight": {
-  //       "value": 1,
-  //       "unit": "OUNCE"
-  //     },
-  //     "packageType": "LETTER"
-  //   }
-  // };
   const inventoryItem: InventoryItem = {
 
     "availability": {
@@ -465,60 +437,16 @@ const createOfferForCard = (
   quantity: number,
   price: number,
 ): EbayOfferDetailsWithKeys => ({
-  // "sku": variant.sku,
-  // "marketplaceId": "EBAY_US",
-  // "format": "FIXED_PRICE",
-  // "availableQuantity": 1,
-  // "categoryId": "261328",
-  // "merchantLocationKey": "CardLister",
-  // "listingDescription": "2025 Topps Chrome Pink Refractor #105 Nolan Gorman. St. Louis Cardinals. Ships in top loader with tracking.",
-  // "listingPolicies": {
-  //   "fulfillmentPolicyId": "122729485024",
-  //   "paymentPolicyId": "173080971024",
-  //   "returnPolicyId": "143996946024"
-  // },
-  // "pricingSummary": {
-  //   "price": {
-  //     "value": "9999.99",
-  //     "currency": "USD"
-  //   }
-  // },
-  // "listingDuration": "GTC"
 
   availableQuantity: quantity,
   categoryId: '261328',
-  // "charity": {
-  //   "charityId": "string",
-  //   "donationPercentage": "string"
-  // },
-  // "extendedProducerResponsibility": {
-  //   "ecoParticipationFee": {
-  //     "currency": "string",
-  //     "value": "string"
-  //   },
-  //   "producerProductId": "string",
-  //   "productDocumentationId": "string",
-  //   "productPackageId": "string",
-  //   "shipmentPackageId": "string"
-  // },
   format: 'FIXED_PRICE', //"FormatTypeEnum : [AUCTION,FIXED_PRICE]",
   hideBuyerDetails: true,
-  // includeCatalogProductDetails: true,
-  // listingDescription: 'string',
   listingDuration: 'GTC', //"ListingDurationEnum : [DAYS_1,DAYS_3,DAYS_5,DAYS_7,DAYS_10,DAYS_21,DAYS_30,GTC]",
   listingPolicies: {
     bestOfferTerms: {
-      // autoAcceptPrice: {
-      //   currency: 'USD',
-      //   value: card.price,
-      // },
-      // autoDeclinePrice: {
-      //   currency: 'string',
-      //   value: 'string',
-      // },
       bestOfferEnabled: true,
     },
-    // eBayPlusIfEligible: 'boolean',
     fulfillmentPolicyId: '122729485024',
     paymentPolicyId: '173080971024',
     // productCompliancePolicyIds: ['string'],
