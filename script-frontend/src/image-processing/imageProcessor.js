@@ -1,5 +1,5 @@
 import { ask } from '../utils/ask.ts';
-import terminalImage from 'terminal-image';
+import terminalImage from 'term-img';
 import sharp from 'sharp';
 import fs from 'fs-extra';
 import { useSpinners } from '../utils/spinners.ts';
@@ -108,7 +108,26 @@ export const cropImage = async (
         update(`Attempting crop ${i}/${cropAttempts.length}`);
         const cropped = await cropAttempts[i]();
         if (cropped) {
-          log('  ' + (await terminalImage.file(tempImage, { height: 25 })));
+          try {
+            // Try to display the image using term-img first
+            const imageOutput = await terminalImage(tempImage, { height: 25 });
+            log('  ' + imageOutput);
+          } catch (error) {
+            // If term-img fails, show image info
+            log('  📷 [Image display failed, showing details]');
+            log(`     File: ${tempImage.split('/').pop()}`);
+
+            // Try to get image dimensions using sharp
+            try {
+              const metadata = await sharp(tempImage).metadata();
+              log(`     Dimensions: ${metadata.width} x ${metadata.height}`);
+              log(`     Format: ${metadata.format}`);
+              log(`     Size: ${metadata.size ? (metadata.size / 1024 / 1024).toFixed(2) : 'Unknown'} MB`);
+            } catch (sharpError) {
+              log('     [Could not read image metadata]');
+            }
+          }
+
           found = await ask('Did Image render correct?', true);
         } else {
           found = false;
@@ -147,46 +166,101 @@ export async function buildPDF(images, outputFileName) {
   let output;
   try {
     const pdfDoc = await PDFDocument.create();
-    let page = pdfDoc.addPage([8.5 * DPI, 11 * DPI]); // 8.5" x 11" page
+    
+    // Group images by index: even indices (0,2,4...) are fronts, odd indices (1,3,5...) are backs
+    const frontImages = [];
+    const backImages = [];
+    
+    images.forEach((image, index) => {
+      if (index % 2 === 0) {
+        frontImages.push(image);
+      } else {
+        backImages.push(image);
+      }
+    });
 
-    const resize = async (image) =>
-      await sharp(image)
+    const resize = async (image) => {
+      // Get image metadata to check orientation
+      const metadata = await sharp(image).metadata();
+
+      // If image is landscape (width > height), rotate it to portrait
+      let processedImage = sharp(image);
+      if (metadata.width > metadata.height) {
+        processedImage = processedImage.rotate(90);
+      }
+
+      // Resize to standard card dimensions
+      return await processedImage
         .resize(750, 1050, { fit: 'fill' }) // Resize to 750x1050 pixels
         .toBuffer();
+    };
 
-    const cardWidth = 2.6 * DPI; // 2.5 inches in points
-    const cardHeight = 3.6 * DPI; // 3.5 inches in points
-    const marginX = 0.33 * DPI; // 0.5 inch margin
-    const marginY = 0.16 * DPI;
+    const cardWidth = 2.5 * DPI; // 2.5 inches in points
+    const cardHeight = 3.5 * DPI; // 3.5 inches in points
+    const marginX = 0.125 * DPI; // 0.125 inch margin between cards
+    const marginY = 0.125 * DPI; // 0.125 inch margin between rows
+    const pageMargin = 0.25 * DPI; // 0.25 inch page margin
 
-    let x = marginX;
-    let y = 11 * DPI - marginY - cardHeight;
+    // Calculate total grid width and center the grid
+    const cardsPerRow = 3;
+    const totalGridWidth = cardsPerRow * cardWidth + (cardsPerRow - 1) * marginX;
+    const totalGridHeight = 3 * cardHeight + 2 * marginY;
+    const pageWidth = 8.5 * DPI;
+    const pageHeight = 11 * DPI;
+    const startX = (pageWidth - totalGridWidth) / 2;
+    const startY = pageHeight - pageMargin - totalGridHeight;
 
-    for (let i = 0; i < images.length; i++) {
-      update(`Adding Image ${i + 1}/${images.length}`);
-      log(`Adding ${images[i]}`);
-      const resizedImage = await resize(images[i]);
-      const img = await pdfDoc.embedJpg(resizedImage);
+    // Helper function to add images to pages
+    const addImagesToPages = async (imageList, pageType) => {
+      let page = pdfDoc.addPage([8.5 * DPI, 11 * DPI]); // 8.5" x 11" page
+      let x = startX;
+      let y = startY;
 
-      page.drawImage(img, {
-        x,
-        y,
-        width: cardWidth,
-        height: cardHeight,
-      });
+      for (let i = 0; i < imageList.length; i++) {
+        update(`Adding ${pageType} Image ${i + 1}/${imageList.length}`);
+        log(`Adding ${imageList[i]}`);
+        const resizedImage = await resize(imageList[i]);
+        const img = await pdfDoc.embedJpg(resizedImage);
 
-      x += cardWidth + marginX;
-      if ((i + 1) % 3 === 0) {
-        x = marginX;
-        y -= cardHeight + marginY;
+        page.drawImage(img, {
+          x,
+          y,
+          width: cardWidth,
+          height: cardHeight,
+        });
+
+        x += cardWidth + marginX;
+        if ((i + 1) % cardsPerRow === 0) {
+          x = startX;
+          y += cardHeight + marginY;
+        }
+
+        // If we reach the bottom, create a new page
+        if ((i + 1) % 9 === 0 && i !== imageList.length - 1) {
+          page = pdfDoc.addPage([8.5 * DPI, 11 * DPI]);
+          x = startX;
+          y = startY;
+        }
       }
+    };
 
-      // If we reach the bottom, create a new page
-      if ((i + 1) % 9 === 0 && i !== images.length - 1) {
-        page = pdfDoc.addPage([8.5 * DPI, 11 * DPI]);
-        x = marginX;
-        y = 11 * DPI - marginY - cardHeight;
+    // Add front images first
+    if (frontImages.length > 0) {
+      await addImagesToPages(frontImages, 'Front');
+    }
+
+    // Add back images on new page(s) - reverse each row (groups of 3) for proper back-to-back alignment
+    if (backImages.length > 0) {
+      const cardsPerRow = 3;
+      const reversedBackImages = [];
+      
+      // Process back images in groups of 3 and reverse each group
+      for (let i = 0; i < backImages.length; i += cardsPerRow) {
+        const row = backImages.slice(i, i + cardsPerRow);
+        reversedBackImages.push(...row.reverse());
       }
+      
+      await addImagesToPages(reversedBackImages, 'Back');
     }
 
     const pdfBytes = await pdfDoc.save();
