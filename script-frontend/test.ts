@@ -1,6 +1,7 @@
 import { getFiles, getInputs } from './src/utils/inputs';
 import 'zx/globals';
 import { ChatGPTProcessor } from './src/image-processing/chatgpt-processor';
+import { cropCardsWithPython } from './src/image-processing/card-cropper-wrapper';
 import { parseArgs } from './src/utils/parseArgs';
 import { useSpinners } from './src/utils/spinners';
 import initializeFirebase from './src/utils/firebase';
@@ -72,16 +73,21 @@ async function main() {
       return;
     }
 
+    // Crop cards first using Python
+    log('Cropping cards using Python');
+    log('files: ', files);
+    const croppedFiles = await cropCardsWithPython(files);
+
     // Initialize ChatGPT processor
     const chatGPTProcessor = new ChatGPTProcessor(process.env.OPENAI_API_KEY);
 
-    // Process each file with ChatGPT
-    update('Processing images with ChatGPT');
-    const results = await chatGPTProcessor.processImages(files);
+    // Process each cropped file with ChatGPT
+    log('Processing images with ChatGPT');
+    // const results = await chatGPTProcessor.processImages(croppedFiles);
 
     // Log results
     finish('Processing complete');
-    console.log('Processing results:', results);
+    console.log('Processing results:', croppedFiles);
 
   } catch (err) {
     error(err);
