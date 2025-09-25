@@ -101,11 +101,17 @@ export async function getSLCards(
         .$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody')
         .$$('tr:has(td):not(:has(th))');
       for (const row of rows) {
-        const card = {
-          cardNumber: await row.$('td:nth-child(2)').getText(),
-          title: await row.$('td:nth-child(3)').getText(),
-        };
-  //      log(card.cardNumber);
+        let card;
+        try {
+          card = {
+            cardNumber: await row.$('td:nth-child(2)').getText(),
+            title: await row.$('td:nth-child(3)').getText(),
+          };
+        } catch(e) {
+          log(e);
+          log(`Error getting card number and title for row: ${await row.getText()}`)
+        }
+       log(card);
         cards.push(card);
       }
       if (cards.length === 0) {

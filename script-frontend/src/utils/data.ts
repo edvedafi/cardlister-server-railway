@@ -401,7 +401,7 @@ export async function buildTableData(orders: Order[], oldSales: OldSale[], sku?:
           color = chalk.bgBlue;
         }
       } else if (key.parallel) {
-        color = chalk.bgGreen;
+        color = chalk.bgGreen.black;
       } else {
         color = chalk.whiteBright;
       }

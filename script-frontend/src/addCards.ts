@@ -8,7 +8,7 @@ import { onShutdown } from 'node-graceful-shutdown';
 import { findSet } from './card-data/setData';
 import { getFiles, getInputs } from './utils/inputs';
 import { parseArgs } from './utils/parseArgs';
-import terminalImage from 'terminal-image';
+import terminalImage from 'term-img';
 import { processSet } from './card-data/listSet';
 import type { ProductCategory } from '@medusajs/client-types';
 import { getCategory } from './utils/medusa';
@@ -87,9 +87,63 @@ try {
     files = await getFiles(input_directory);
   }
 
-  update('Gathering Set Data');
+    update('Gathering Set Data');
   if (files && files[0]) {
-    log('  ' + (await terminalImage.file(files[0], { height: 25 })));
+    log(` Displaying: ${files[0]}`);
+    
+    try {
+      // Try to display the image using term-img first (for iTerm2/supported terminals)
+      const imageOutput = await terminalImage(files[0], { height: 25 });
+      log('  ' + imageOutput);
+    } catch (error) {
+      // If term-img fails, try multiple terminal image viewers for best quality
+      log('  📷 [Displaying image using terminal viewers...]');
+      log(`     File: ${files[0].split('/').pop()}`);
+      
+      try {
+        // Try chafa first - it often gives the best quality
+        const chafaResult = await $`chafa --size 80x25 ${files[0]}`;
+        log('     🎨 High-Quality ANSI Image:');
+        log(chafaResult.stdout);
+        log('     ✅ Image displayed using chafa (best quality)');
+        
+      } catch (chafaError) {
+        try {
+          // Try terminalimageviewer (tiv) as second option
+          const tivResult = await $`tiv -h 25 ${files[0]}`;
+          log('     🖼️  Terminal Image:');
+          log(tivResult.stdout);
+          log('     ✅ Image displayed using terminalimageviewer');
+          
+        } catch (tivError) {
+          try {
+            // Try catimg as third option
+            const catimgResult = await $`catimg -H 25 -r 2 ${files[0]}`;
+            log('     🐱 Cat Image:');
+            log(catimgResult.stdout);
+            log('     ✅ Image displayed using catimg');
+            
+          } catch (catimgError) {
+            // Final fallback: open in system viewer and show metadata
+            log('     📷 [Opening in system viewer as final fallback...]');
+            
+            try {
+              const sharp = await import('sharp');
+              const metadata = await sharp.default(files[0]).metadata();
+              log(`     Dimensions: ${metadata.width} x ${metadata.height}`);
+              log(`     Format: ${metadata.format}`);
+              
+              await $`open ${files[0]}`;
+              log('     ✅ Image opened in system viewer');
+              
+            } catch (systemError) {
+              log('     ❌ All image display methods failed');
+              log(`     📁 File exists at: ${files[0]}`);
+            }
+          } 
+        }
+      }
+    }
   }
   const setData = await findSet({ allowParent: args['inventory'], parentName: 'All' });
   update('Processing Singles');

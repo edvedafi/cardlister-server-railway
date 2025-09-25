@@ -2,7 +2,7 @@ import { useSpinners } from '../utils/spinners';
 import chalk from 'chalk';
 import Queue from 'queue';
 import { getCardData, saveBulk, saveListing } from './cardData';
-import terminalImage from 'terminal-image';
+import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync } from '../utils/medusa';
 import { ask, type AskSelectOption } from '../utils/ask';
@@ -59,10 +59,49 @@ const processPair = async (
   args: ParsedArgs,
 ) => {
   try {
-    log('  ' + (await terminalImage.file(front, { height: 25 })));
+    try {
+      // Try to display the front image using term-img first
+      const frontImageOutput = await terminalImage(front, { height: 25 });
+      log('  ' + frontImageOutput);
+    } catch (error) {
+      // If term-img fails, show image info
+      log('  📷 [Front image display failed, showing details]');
+      log(`     File: ${front.split('/').pop()}`);
+      
+      // Try to get image dimensions using sharp
+      try {
+        const sharp = await import('sharp');
+        const metadata = await sharp.default(front).metadata();
+        log(`     Dimensions: ${metadata.width} x ${metadata.height}`);
+        log(`     Format: ${metadata.format}`);
+        log(`     Size: ${metadata.size ? (metadata.size / 1024 / 1024).toFixed(2) : 'Unknown'} MB`);
+      } catch (sharpError) {
+        log('     [Could not read image metadata]');
+      }
+    }
+    
     if (back) {
       log('  ');
-      log('  ' + (await terminalImage.file(back, { height: 25 })));
+      try {
+        // Try to display the back image using term-img first
+        const backImageOutput = await terminalImage(back, { height: 25 });
+        log('  ' + backImageOutput);
+      } catch (error) {
+        // If term-img fails, show image info
+        log('  📷 [Back image display failed, showing details]');
+        log(`     File: ${back.split('/').pop()}`);
+        
+        // Try to get image dimensions using sharp
+        try {
+          const sharp = await import('sharp');
+          const metadata = await sharp.default(back).metadata();
+          log(`     Dimensions: ${metadata.width} x ${metadata.height}`);
+          log(`     Format: ${metadata.format}`);
+          log(`     Size: ${metadata.size ? (metadata.size / 1024 / 1024).toFixed(2) : 'Unknown'} MB`);
+        } catch (sharpError) {
+          log('     [Could not read image metadata]');
+        }
+      }
     }
 
     const { productVariant, quantity } = await getCardData(setData, imageDefaults, args);
