@@ -38,9 +38,10 @@ export async function getSLSet(setInfo: SetInfo): Promise<any> {
 export async function getSLCards(
   setInfo: SetInfo & { year: Category; brand: Category; sport: Category },
   category: Category,
+  expectedCards: number,
 ): Promise<any> {
   const mod = await loadModule();
-  return await mod.getSLCards(setInfo, category);
+  return await mod.getSLCards(setInfo, category, expectedCards);
 }
 
 export async function shutdownSportLots(): Promise<void> {

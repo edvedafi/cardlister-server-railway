@@ -246,6 +246,7 @@ export async function getSLCards(
     sport: Category;
   },
   category: Category,
+  expectedCards: number,
 ): Promise<{ cardNumber: string; title: string }[]> {
   const cards: { cardNumber: string; title: string }[] = [];
   const { finish, error } = showSpinner('getSLCards', 'Get Cards');
