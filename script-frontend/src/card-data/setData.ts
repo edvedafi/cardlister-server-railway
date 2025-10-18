@@ -393,7 +393,7 @@ export async function buildSet(setInfo: SetInfo) {
     let builtProducts = 0;
     let cards: SiteCards;
     if (category.metadata?.sportlots) {
-      const slCards = await getSLCards(setInfo, category);
+      const slCards = await getSLCards(setInfo, category, bscCards.length);
       cards = findVariations(bscCards, slCards);
 
       while (
@@ -402,7 +402,8 @@ export async function buildSet(setInfo: SetInfo) {
       ) {
         update('Looking for Series 2');
         const nextSeries = await findSet({ onlySportlots: true });
-        const nextSLCards = await getSLCards(nextSeries, nextSeries.category);
+        // Use a reasonable default for expected cards since we don't know the exact count yet
+        const nextSLCards = await getSLCards(nextSeries, nextSeries.category, bscCards.length - cards.slBase.length);
         const maxCardNumberString = _.maxBy(nextSLCards, 'cardNumber')?.cardNumber;
         const minCardNumberString = _.minBy(nextSLCards, 'cardNumber')?.cardNumber;
         const maxCardNumber = parseInt(maxCardNumberString?.replace(/\D/g, '') || '0');

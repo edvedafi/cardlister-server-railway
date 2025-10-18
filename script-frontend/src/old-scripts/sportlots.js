@@ -1061,7 +1061,7 @@ export async function getSLSet(setInfo) {
   }
 }
 
-export async function getSLCards(setInfo, category) {
+export async function getSLCards(setInfo, category, expectedCards = 0) {
   const { finish, error } = showSpinner('getSLCards', 'Get Cards');
   try {
     const driver = await login();
