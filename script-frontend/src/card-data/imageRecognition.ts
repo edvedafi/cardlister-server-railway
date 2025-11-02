@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { type UpdateSpinner, useSpinners } from '../utils/spinners.js';
 import type { Metadata, SetInfo } from '../models/setInfo';
 import type { CropHints, ImageRecognitionResults } from '../models/cards';
+import type { Product } from '@medusajs/client-types';
 import { HfInference } from '@huggingface/inference';
 import { protos } from '@google-cloud/vision';
 
@@ -33,14 +34,86 @@ type SearchableData = {
   isProperName: boolean;
 };
 
+type ProductMatchResult = {
+  product: Product;
+  score: number;
+} | null;
+
+async function matchProductFromOCR(
+  frontText: string,
+  backText: string,
+  products: Product[],
+): Promise<ProductMatchResult> {
+  type ProductScore = { product: Product; score: number };
+  const scoredProducts: ProductScore[] = [];
+
+  for (const product of products) {
+    let score = 0;
+    const productMetadata = product.metadata || {};
+    const cardNumber = productMetadata.cardNumber || '';
+    const playerNames = (productMetadata.player || []) as string[];
+
+    // Heavily weight finding the card number on the back
+    if (cardNumber && backText.includes(cardNumber.toLowerCase())) {
+      score += 1000;
+    }
+
+    // Check each player name
+    let playerNameOnFront = false;
+    let playerNameOnBack = false;
+
+    for (const playerName of playerNames) {
+      const normalizedPlayerName = playerName.toLowerCase();
+
+      // Heavily weight player name on both sides
+      if (frontText.includes(normalizedPlayerName)) {
+        playerNameOnFront = true;
+        score += 500;
+      }
+      if (backText.includes(normalizedPlayerName)) {
+        playerNameOnBack = true;
+        score += 500;
+      }
+
+      // Count occurrences of last name on back and increase score based on occurrences
+      const lastName = normalizedPlayerName.split(' ').pop() || '';
+      if (lastName) {
+        const occurrences = (backText.match(new RegExp(lastName, 'g')) || []).length;
+        if (occurrences > 0) {
+          score += 50 * occurrences; // Increase score based on occurrences
+        }
+      }
+    }
+
+    // Perfect match: card number + player name on both sides
+    if (cardNumber && backText.includes(cardNumber.toLowerCase()) && playerNameOnFront && playerNameOnBack) {
+      score += 5000; // Perfect match bonus
+    }
+
+    // Finding player name on front but not back weighs heavier than just on back
+    if (playerNameOnFront && !playerNameOnBack) {
+      score += 200;
+    } else if (!playerNameOnFront && playerNameOnBack) {
+      score += 100;
+    }
+
+    scoredProducts.push({ product, score });
+  }
+
+  // Sort by score (highest first)
+  scoredProducts.sort((a, b) => b.score - a.score);
+
+  // Return the best match if score > 0
+  const bestMatch = scoredProducts[0];
+  if (bestMatch && bestMatch.score > 0) {
+    return bestMatch;
+  }
+
+  return null;
+}
+
 async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
-  // const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const update = (text: string) => {};
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const error = (text: string) => {};
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const finish = (text: string) => {};
+  const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
 
   let defaults: Partial<ImageRecognitionResults> = {
     sport: setData.metadata?.sport,
@@ -52,6 +125,45 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
   };
   if (back) {
     defaults.raw?.push(back);
+  }
+
+  // New branch: If products exist, score them based on OCR results
+  // Using EasyOCR for FREE text extraction (cost-effective alternative to Google Vision)
+  if (setData.products && setData.products.length > 0) {
+    try {
+      update('Extracting text from card images using EasyOCR');
+      const { extractTextWithOCR } = await import('../image-processing/ocr-extractor.js');
+      
+      const imagePaths = back ? [front, back] : [front];
+      const ocrResults = await extractTextWithOCR(imagePaths);
+      
+      const frontText = ocrResults[0]?.text?.toLowerCase() || '';
+      const backText = back ? (ocrResults[1]?.text?.toLowerCase() || '') : '';
+
+      // Score products and find best match
+      const bestMatch = await matchProductFromOCR(frontText, backText, setData.products);
+
+      if (bestMatch) {
+        const bestProduct = bestMatch.product;
+        const bestMetadata = bestProduct.metadata || {};
+
+        defaults = {
+          ...defaults,
+          player: bestMetadata.player || defaults.player,
+          cardNumber: bestMetadata.cardNumber || defaults.cardNumber,
+          printRun: bestMetadata.printRun || defaults.printRun,
+          features: (bestMetadata.features || defaults.features) as string[],
+        };
+
+        finish(`Product matched: ${bestProduct.title} (score: ${bestMatch.score})`);
+        return defaults;
+      }
+
+      finish('No good product matches found, falling back to standard processing');
+    } catch (e) {
+      error(String(e));
+      // Fall through to standard processing
+    }
   }
 
   try {

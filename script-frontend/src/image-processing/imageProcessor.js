@@ -80,8 +80,18 @@ export const cropImage = async (
         return listing?.crop?.left ? await sharp(input).extract(listing.crop).toFile(tempImage) : false;
       },
       async () => {
-        tempImage = `${tempDirectory}/sharp.trimp.jpg`;
-        return await sharp(input).trim({ threshold: 50 }).toFile(tempImage);
+        tempImage = `${tempDirectory}/magick.fuzz.trim.jpg`;
+
+        // Use ImageMagick's fuzz-based trim to cope with near-black backgrounds
+        return await $`magick ${input} -fuzz 18% -trim +repage -bordercolor black -border 10 ${tempImage}`;
+      },
+      async () => {
+        tempImage = `${tempDirectory}/sharp.trim.jpg`;
+        return await sharp(input)
+          .blur(0.3)
+          .trim({ threshold: 180, background: { r: 0, g: 0, b: 0 } })
+          .extend({ top: 10, bottom: 10, left: 10, right: 10, background: { r: 0, g: 0, b: 0 } })
+          .toFile(tempImage);
       },
       async () => {
         tempImage = `${tempDirectory}/CC.crop.jpg`;

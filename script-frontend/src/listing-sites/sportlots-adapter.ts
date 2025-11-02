@@ -1,4 +1,9 @@
 import type { Category, SetInfo } from '../models/setInfo';
+import { retryWithExponentialBackoff } from '../utils/retry';
+import { useSpinners } from '../utils/spinners';
+import chalk from 'chalk';
+
+const { log } = useSpinners('SportLots Adapter', chalk.magentaBright);
 
 type Implementation = 'webdriver' | 'forms';
 
@@ -32,7 +37,21 @@ export async function getSLBrand(defaultName?: string): Promise<any> {
 
 export async function getSLSet(setInfo: SetInfo): Promise<any> {
   const mod = await loadModule();
-  return await mod.getSLSet(setInfo);
+  return await retryWithExponentialBackoff(
+    async () => {
+      return await mod.getSLSet(setInfo);
+    },
+    3,
+    1000,
+    2,
+    undefined,
+    async (attempt, error, delayMs) => {
+      log(`Error getting SL set (attempt ${attempt}/3): ${error}`);
+      log(`Shutting down browser and retrying in ${delayMs}ms...`);
+      // Shut down the browser before retrying to start fresh
+      await shutdownSportLots();
+    }
+  );
 }
 
 export async function getSLCards(
