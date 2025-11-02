@@ -127,6 +127,36 @@ export type Variation = {
   metadata?: Metadata;
 };
 
+async function getProductByHandle(handle: string): Promise<Product | null> {
+  // Search for product by handle by listing products
+  let offset = 0;
+  const limit = 100;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const response: AdminProductsListRes = await medusa.admin.products.list({
+      limit,
+      offset,
+      expand: 'variants',
+    });
+    
+    const foundProduct = response.products.find((p: Product) => p.handle === handle);
+    if (foundProduct) {
+      return foundProduct;
+    }
+    
+    hasMore = response.products.length === limit;
+    offset += limit;
+    
+    // Prevent infinite loop - if we've searched more than 10,000 products, give up
+    if (offset > 10000) {
+      break;
+    }
+  }
+  
+  return null;
+}
+
 export async function createProduct(product: Product, variations: Variation[] = []): Promise<Product> {
   log('Creating SKUs: ', variations.map((v) => v.sku).join(', '));
   const payload = {
@@ -159,6 +189,107 @@ export async function createProduct(product: Product, variations: Variation[] = 
   try {
     response = await medusa.admin.products.create(payload);
   } catch (error) {
+    // Check if this is a duplicate handle error (422)
+    if (axios.isAxiosError(error) && error.response?.status === 422) {
+      const errorData = error.response?.data;
+      const errorMessage = errorData?.message || '';
+      
+      // Check if it's a duplicate handle error
+      if (errorMessage.includes('already exists') && errorMessage.includes('handle')) {
+        // Extract handle from error message: "Product with handle结束后 X already exists."
+        const handleMatch = errorMessage.match(/handle\s+([a-z0-9-]+)/i);
+        if (handleMatch && handleMatch[1]) {
+          const handle = handleMatch[1];
+          log(`Product with handle "${handle}" already exists. Updating existing product...`);
+          
+          // Find the existing product
+          const existingProduct = await getProductByHandle(handle);
+          if (!existingProduct) {
+            log(`Could not find existing product with handle "${handle}", rethrowing original error`);
+            throw error;
+          }
+          
+          log(`Found existing product: ${existingProduct.id} - ${existingProduct.title}`);
+          
+          // Update the existing product with new data
+          try {
+            const updatePayload: any = {
+              title: product.title,
+              description: product.description as string,
+              weight: product.weight as number,
+              length: product.length as number,
+              width: product.width as number,
+              height: product.height as number,
+              origin_country: product.origin_country as string,
+              material: product.material as string,
+              metadata: product.metadata || {},
+              categories: [{ id: product.categories?.[0].id || '' }],
+            };
+            
+            if (product.metadata?.features) {
+              updatePayload.metadata = {
+                ...updatePayload.metadata,
+                features: _.uniq(product.metadata.features).filter((f) => f),
+              };
+            }
+            
+            response = await medusa.admin.products.update(existingProduct.id, updatePayload);
+            log(`Updated product ${existingProduct.id}`);
+            
+            // Get updated product with variants
+            const updatedProduct = await medusa.admin.products.retrieve(existingProduct.id, { expand: 'variants' });
+            response = { product: updatedProduct.product };
+            
+            // Update or create variants
+            for (const variation of variations) {
+              const existingVariant = updatedProduct.product.variants?.find((v: ProductVariant) => v.sku === variation.sku);
+              
+              if (existingVariant) {
+                // Update existing variant
+                await medusa.admin.products.updateVariant(existingProduct.id, existingVariant.id, {
+                  title: variation.title,
+                  prices: [{ currency_code: 'usd', amount: 99 }],
+                  metadata: variation.metadata,
+                });
+                log(`Updated variant ${existingVariant.sku}`);
+              } else {
+                // Create new variant
+                try {
+                  const variantResponse = await medusa.admin.products.addVariant(existingProduct.id, {
+                    title: variation.title,
+                    sku: variation.sku,
+                    prices: [{ currency_code: 'usd', amount: 99 }],
+                    manage_inventory: true,
+                  });
+                  
+                  // Update variant metadata after creation
+                  if (variation.metadata) {
+                    await medusa.admin.products.updateVariant(
+                      existingProduct.id,
+                      variantResponse.product.variants?.find((v: ProductVariant) => v.sku === variation.sku)?.id || '',
+                      { metadata: variation.metadata },
+                    );
+                  }
+                  log(`Created new variant ${variation.sku}`);
+                } catch (variantError) {
+                  log(`Error creating variant ${variation.sku}: ${variantError}`);
+                  // Continue with other variants
+                }
+              }
+            }
+            
+            // Get final product state
+            const finalProduct = await medusa.admin.products.retrieve(existingProduct.id, { expand: 'variants' });
+            return finalProduct.product;
+          } catch (updateError) {
+            log(`Error updating existing product: ${updateError}`);
+            throw updateError;
+          }
+        }
+      }
+    }
+    
+    // If not a duplicate handle error, log and throw as before
     console.log('Error creating product', error);
     const r: AdminProductsListRes = await medusa.admin.products.list({
       limit: 10000,

@@ -165,11 +165,11 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   const teamDisplay = add(card.teams);
   const graded = isYes(<string>card.graded) ? ` ${card.grader} ${card.grade} ${psaGrades[<number>card.grade]}` : '';
 
-  titles.longTitle = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
+  titles.longTitle = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`.replace(/ +/g, ' ');
   let title = titles.longTitle;
   if (title.length > maxTitleLength && ['Panini', 'Leaf'].includes(<string>card.brand)) {
     setName = card.setName;
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   // if (title.length > maxTitleLength) {
   //   teamDisplay = card.team.map((team) => team.team).join(' | ');
@@ -181,39 +181,39 @@ export async function getTitles(card: Metadata): Promise<Titles> {
   // }
   if (title.length > maxTitleLength) {
     insert = add(card.insert);
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   if (title.length > maxTitleLength) {
     parallel = add(card.parallel);
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   if (title.length > maxTitleLength) {
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${teamDisplay}${variation}${features}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   if (title.length > maxTitleLength) {
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${features}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${features}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   if (title.length > maxTitleLength) {
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`.replace(/ +/g, ' ');
   }
-  // if (title.length > maxTitleLength && card.insert) {
-  //   insert = add((<string>card.insert).replace(' Refractor', ''));
-  //   title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
-  // }
   if (title.length > maxTitleLength && card.insert) {
     insert = add((<string>card.insert).replace('Rookie', 'RC'));
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   if (title.length > maxTitleLength && card.parallel_xs) {
     parallel = add(<string>card.parallel_xs);
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`.replace(/ +/g, ' ');
   }
   if (title.length > maxTitleLength && card.insert_xs) {
     insert = add(<string>card.insert_xs);
-    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`.replace(/ +/g, ' ');
+  }
+  if (title.length > maxTitleLength && card.xs_setName) {
+    setName = card.xs_setName;
+    title = `${card.year} ${setName}${insert}${parallel} #${card.cardNumber} ${card.player}${variation}${printRun}${graded}`.replace(/ +/g, ' ');
   }
 
-  title = title.replace(/ {2}/g, ' ');
+  title = title.replace(/ +/g, ' ');
 
   if (title.length > maxTitleLength) {
     title = await ask(`Title`, titles.longTitle, { maxLength: maxTitleLength });
@@ -260,7 +260,11 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
   if (cardName.length > maxCardNameLength) {
     cardName = `${category.metadata.setName}${category.metadata.insert_xs || insert}${category.metadata.parallel_xs || parallel}`;
   }
-  cardName = cardName.replace(/ {2}/g, ' ').replace(' | ', ' ');
+  if (cardName.length > maxCardNameLength) {
+    cardName = `${category.metadata.xs_setName}${category.metadata.insert_xs || insert}${category.metadata.parallel_xs || parallel} ${card.metadata.printRun}`;
+  }
+  // Replace any number of consecutive spaces (2 or more) with a single space
+  cardName = cardName.replace(/ +/g, ' ').replace(' | ', ' ');
 
   if (cardName.length > maxCardNameLength) {
     cardName = await ask('Card Name', cardName, {
@@ -273,22 +277,64 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
 
 export async function getCardData(setData: SetInfo, imageDefaults: Metadata, args: ParsedArgs) {
   if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
-
   const product = await matchCard(setData, imageDefaults);
-  if (!product.variants) product.variants = [];
-
-  let productVariantId;
+  if (!product.variants) {
+    product.variants = [];
+  }
+  let productVariant: ProductVariant;
   if (product.variants.length === 1) {
-    productVariantId = product.variants[0].id;
+    productVariant = product.variants[0];
+    // If variant doesn't have full data, fetch it
+    if (!productVariant.prices || productVariant.prices.length === 0) {
+      try {
+        productVariant = await getProductVariant(productVariant.id);
+      } catch (e) {
+        // ignore and use existing variant from product
+      }
+    }
   } else {
-    productVariantId = await ask('Which variant is this?', undefined, {
+    const selectedVariant = await ask('Which variant is this?', undefined, {
       selectOptions: product.variants.map((variant) => ({
         name: `${variant.metadata?.description || variant.title}`,
-        value: variant.id,
+        value: variant,
       })),
     });
+    productVariant = selectedVariant as ProductVariant;
+    // If variant doesn't have full data, fetch it
+    if (!productVariant.prices || productVariant.prices.length === 0) {
+      try {
+        productVariant = await getProductVariant(productVariant.id);
+      } catch (e) {
+        // ignore and use selected variant object
+      }
+    }
   }
-  const productVariant = await getProductVariant(productVariantId);
+  return getCardDataWithVariant(setData, imageDefaults, args, product, productVariant);
+}
+
+async function getCardDataWithVariant(
+  setData: SetInfo,
+  imageDefaults: Metadata,
+  args: ParsedArgs,
+  product: Product,
+  productVariant: ProductVariant,
+) {
+  // Ensure variant has a product reference for downstream code paths
+  if (!productVariant.product) {
+    productVariant.product = product;
+  }
+  // Kick off inventory quantity fetch early to avoid blocking later prompt
+  const qtySpinner = showSpinner('inventory-qty', 'Fetching existing inventory quantity');
+  const quantityPromise = (async () => {
+    try {
+      const qty = await getInventoryQuantity(productVariant);
+      qtySpinner.finish(`Quantity: ${qty ?? 0}`);
+      return qty ?? 0;
+    } catch (e) {
+      qtySpinner.error(e, 'Fetching existing inventory quantity');
+      return 0;
+    }
+  })();
 
   const updatePVMetadata = (key: string) => {
     if (!product.metadata) product.metadata = {};
@@ -353,8 +399,11 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
 
   productVariant.metadata.features = _.uniq(productVariant.metadata.features).filter((feature) => feature);
 
-  log(productVariant.metadata);
-  if (await ask('Update Card Details?', false)) {
+  const DEBUG = process.argv.includes('--debug') || Boolean((args as any)?.debug);
+  if (DEBUG) {
+    log(productVariant.metadata);
+  }
+  if (DEBUG && (await ask('Update Card Details?', false))) {
     if (!productVariant.metadata) productVariant.metadata = {};
 
     let nextName: string | undefined;
@@ -378,12 +427,23 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
     }
   }
 
+  // Build card metadata for search parameter
+  const cardMetadata = {
+    year: setData.category?.metadata?.year,
+    setName: setData.category?.metadata?.setName,
+    insert: setData.metadata?.insert,
+    parallel: setData.metadata?.parallel,
+    player: productVariant.metadata?.player || product.metadata?.player,
+    cardName: productVariant.metadata?.cardName || product.metadata?.cardName || product.title,
+  };
+
   const prices = await getPricing(
     productVariant.prices && productVariant.prices.length > 1 //one is odd but there is always the default 99 cent price
       ? productVariant.prices
       : setData.category?.metadata?.prices,
     args['skipSafetyCheck'],
     args['allBase'],
+    cardMetadata,
   );
   if (productVariant.prices) {
     productVariant.prices = <MoneyAmount[]>prices
@@ -405,47 +465,191 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
     productVariant.prices = prices;
   }
 
-  const quantity = await ask('Quantity', (await getInventoryQuantity(productVariant)) || 1);
+  // Use the pre-fetched quantity (non-blocking for the prompt)
+  const existingQty = (await quantityPromise) || 1;
+  const quantity = await ask('Quantity', existingQty);
 
   return { productVariant, quantity };
 }
 
-export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
-  // log(products);
+export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {  
+  const DEBUG = process.argv.includes('--debug');
+  const dlog = (...args: unknown[]) => {
+    if (DEBUG) log('[MATCH]', ...args);
+  };
+  const matchesPlayer = (productPlayer: unknown, searchPlayer: unknown): boolean => {
+    if (!productPlayer || !searchPlayer) return false;
+    
+    // Normalize productPlayer to an array of strings
+    const productPlayers: string[] = Array.isArray(productPlayer)
+      ? productPlayer.map(p => typeof p === 'string' ? p : String(p))
+      : typeof productPlayer === 'string'
+        ? [productPlayer]
+        : [String(productPlayer)];
+    
+    // Normalize searchPlayer to an array of strings
+    const searchPlayers: string[] = Array.isArray(searchPlayer)
+      ? searchPlayer.map(s => typeof s === 'string' ? s : String(s))
+      : typeof searchPlayer === 'string'
+        ? [searchPlayer]
+        : [String(searchPlayer)];
+    
+    // Check if any productPlayer matches any searchPlayer (bidirectional substring matching)
+    return productPlayers.some((productStr) =>
+      searchPlayers.some((searchStr) =>
+        productStr.includes(searchStr) || searchStr.includes(productStr)
+      )
+    );
+  };
+  
+  // Normalize card numbers for comparison - handle cases where product might have prefix or not
+  const matchesCardNumber = (productCardNumber: unknown, searchCardNumber: unknown): boolean => {
+    if (!productCardNumber || !searchCardNumber) return false;
+    
+    const productCardNumberStr = typeof productCardNumber === 'string' 
+      ? productCardNumber 
+      : String(productCardNumber);
+    
+    const searchCardNumberStr = typeof searchCardNumber === 'string' 
+      ? searchCardNumber 
+      : String(searchCardNumber);
+    
+    const prefix = setInfo.metadata?.card_number_prefix || '';
+    const searchWithPrefix = `${prefix}${searchCardNumberStr}`;
+    
+    // Check if they match directly, or if product has prefix and matches, or if product number equals search
+    return (
+      productCardNumberStr === searchCardNumberStr ||
+      productCardNumberStr === searchWithPrefix ||
+      (prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr)
+    );
+  };
+  
+  // In debug, show quick overview of inputs
+  dlog('inputs', {
+    prefix: setInfo.metadata?.card_number_prefix,
+    cardNumber: imageDefaults.cardNumber,
+    player: imageDefaults.player,
+  });
+
+  // In debug, list all candidates that match cardNumber (regardless of player) to see the field of options
+  if (DEBUG) {
+    const numberCandidates = (setInfo.products || [])
+      .filter((p) => {
+        const n = p?.metadata?.cardNumber;
+        if (!n) return false;
+        const prefix = setInfo.metadata?.card_number_prefix || '';
+        const search = String(imageDefaults.cardNumber ?? '');
+        return (
+          n === search ||
+          n === `${prefix}${search}` ||
+          (prefix && n.replace(prefix, '') === search)
+        );
+      })
+      .map((p) => ({
+        title: p.title,
+        cardNumber: p.metadata?.cardNumber,
+        player: p.metadata?.player,
+      }));
+    dlog('cardNumber candidates', numberCandidates);
+  }
+
   let card = setInfo.products?.find(
     (product) =>
-      product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}` &&
-      product.metadata.player.includes(imageDefaults.player),
+      matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
+      matchesPlayer(product.metadata?.player, imageDefaults.player),
   );
   if (card) {
+    dlog('primary match (number+player)', {
+      cardNumber: imageDefaults.cardNumber,
+      player: imageDefaults.player,
+      matched: card.title,
+      matchedCardNumber: card.metadata?.cardNumber,
+      matchedPlayers: card.metadata?.player,
+    });
     return card;
   }
   if (imageDefaults.player) {
+    // Clean all player strings (whether array or single string)
+    let cleanedPlayer: string | string[];
+    if (Array.isArray(imageDefaults.player)) {
+      cleanedPlayer = imageDefaults.player.map(p => {
+        const playerStr = typeof p === 'string' ? p : String(p || '');
+        return playerStr.replace(/[^a-zA-Z ]/g, '');
+      });
+    } else {
+      const playerStr = typeof imageDefaults.player === 'string' 
+        ? imageDefaults.player 
+        : String(imageDefaults.player || '');
+      cleanedPlayer = playerStr.replace(/[^a-zA-Z ]/g, '');
+    }
     card = setInfo.products?.find(
       (product) =>
-        product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}` &&
-        product.metadata?.player.includes((<string>imageDefaults.player).replace(/[^a-zA-Z ]/g, '')),
+        matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
+        matchesPlayer(product.metadata?.player, cleanedPlayer),
     );
   }
   if (card) {
+    dlog('cleaned-player match (number+cleaned player)', {
+      cardNumber: imageDefaults.cardNumber,
+      player: imageDefaults.player,
+      matched: card.title,
+      matchedCardNumber: card.metadata?.cardNumber,
+      matchedPlayers: card.metadata?.player,
+    });
     return card;
   }
-  card = setInfo.products?.find(
-    (product) => product.metadata?.cardNumber === `${setInfo.metadata?.card_number_prefix}${imageDefaults.cardNumber}`,
+  // If we have at least one card-number-only match, skip the yes/no prompt
+  // and go straight to the filtered selection list for better UX
+  const numberCandidates = setInfo.products?.filter((product) =>
+    matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber),
   );
-  if (card) {
-    log(card.metadata);
-    const isCard = await ask(`Is this the correct card?`, true);
-    if (isCard) {
+  if (numberCandidates && numberCandidates.length > 0) {
+    const imageDefaultsPlayerDisplay = Array.isArray(imageDefaults.player)
+      ? imageDefaults.player.join(', ')
+      : typeof imageDefaults.player === 'string'
+        ? imageDefaults.player
+        : String(imageDefaults.player || '');
+
+    card = await ask('Which card is this?', imageDefaultsPlayerDisplay, {
+      selectOptions: numberCandidates.map((product) => {
+        const player = product.metadata?.player;
+        const playerDisplay = Array.isArray(player)
+          ? player.join(', ')
+          : typeof player === 'string'
+            ? player
+            : String(player || '');
+        return {
+          name: `${product.metadata?.cardNumber} ${playerDisplay}`,
+          value: product,
+        };
+      }),
+    });
+    if (card) {
       return card;
     }
   }
-  card = await ask('Which card is this?', imageDefaults.player, {
-    selectOptions: setInfo.products?.map((product) => ({
-      name: `${product.metadata?.cardNumber} ${product.metadata?.player.join(', ')}`,
-      value: product,
-    })),
+  const imageDefaultsPlayerDisplay = Array.isArray(imageDefaults.player)
+    ? imageDefaults.player.join(', ')
+    : typeof imageDefaults.player === 'string'
+      ? imageDefaults.player
+      : String(imageDefaults.player || '');
+  
+  card = await ask('Which card is this?', imageDefaultsPlayerDisplay, {
+    selectOptions: setInfo.products?.map((product) => {
+      const player = product.metadata?.player;
+      const playerDisplay = Array.isArray(player) 
+        ? player.join(', ') 
+        : typeof player === 'string' 
+          ? player 
+          : String(player || '');
+      return {
+        name: `${product.metadata?.cardNumber} ${playerDisplay}`,
+        value: product,
+      };
+    }),
   });
+  dlog('user selection result', { selected: card?.title });
   if (card) {
     return card;
   }

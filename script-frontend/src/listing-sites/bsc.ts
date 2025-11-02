@@ -6,75 +6,95 @@ import { ask } from '../utils/ask';
 import type { Aggregations, Card, Filter, FilterParams, Filters } from '../models/bsc';
 import type { Category, SetInfo } from '../models/setInfo';
 import { getBrowserlessConfig } from '../utils/browserless';
+import { retryWithExponentialBackoff } from '../utils/retry';
 
 const { showSpinner, log } = useSpinners('bsc', '#e5e5e5');
 
-let _api: AxiosInstance;
+let _api: AxiosInstance | undefined;
 
-async function login() {
-  if (!_api) {
-    // const browser = await remote({
-    //   capabilities: {
-    //     browserName: 'chrome',
-    //     'goog:chromeOptions': {
-    //       args: ['headless', 'disable-gpu', '--window-size=1200,2000'],
-    //     },
-    //     browserVersion: '126',
-    //   },
-    //   logLevel: 'error',
-    // });
+async function performLogin(): Promise<AxiosInstance> {
+  // Always create a new browser session for login
+  const browser = await remote(getBrowserlessConfig('https://www.buysportscards.com/', 'BSC_LOG_LEVEL'));
 
-    const browser = await remote(getBrowserlessConfig('https://www.buysportscards.com/', 'BSC_LOG_LEVEL'));
+  try {
+    await browser.url('https://www.buysportscards.com');
+    const signInButton = await browser.$('.=Sign In');
+    await signInButton.waitForClickable({ timeout: 10000 });
+    await signInButton.click();
 
+    const emailInput = await browser.$('#signInName');
+    await emailInput.waitForExist({ timeout: 5000 });
+    await emailInput.setValue(process.env.BSC_EMAIL as string);
+    await browser.$('#password').setValue(process.env.BSC_PASSWORD as string);
+
+    await browser.$('#next').click();
+
+    await browser.$('.=welcome back,').waitForExist({ timeout: 10000 });
+
+    const reduxAsString: string = await browser.execute(
+      'return Object.values(localStorage).filter((value) => value.includes("secret")).find(value=>value.includes("Bearer"));',
+    );
+    const redux = JSON.parse(reduxAsString);
+
+    const api = axios.create({
+      baseURL: 'https://api-prod.buysportscards.com/',
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'accept-language': 'en-US,en;q=0.9',
+        assumedrole: 'sellers',
+        'content-type': 'application/json',
+        origin: 'https://www.buysportscards.com',
+        referer: 'https://www.buysportscards.com/',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': 'macOS',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site',
+        authority: 'api-prod.buysportscards.com',
+        authorization: `Bearer ${redux.secret.trim()}`,
+      },
+    });
+
+    axiosRetry(api, { retries: 5, retryDelay: axiosRetry.exponentialDelay });
+    return api;
+  } catch (e) {
+    log(`Login error: ${e}`);
     try {
-      await browser.url('https://www.buysportscards.com');
-      const signInButton = await browser.$('.=Sign In');
-      await signInButton.waitForClickable({ timeout: 10000 });
-      await signInButton.click();
-
-      const emailInput = await browser.$('#signInName');
-      await emailInput.waitForExist({ timeout: 5000 });
-      await emailInput.setValue(process.env.BSC_EMAIL as string);
-      await browser.$('#password').setValue(process.env.BSC_PASSWORD as string);
-
-      await browser.$('#next').click();
-
-      await browser.$('.=welcome back,').waitForExist({ timeout: 10000 });
-
-      const reduxAsString: string = await browser.execute(
-        'return Object.values(localStorage).filter((value) => value.includes("secret")).find(value=>value.includes("Bearer"));',
-      );
-      const redux = JSON.parse(reduxAsString);
-
-      _api = axios.create({
-        baseURL: 'https://api-prod.buysportscards.com/',
-        headers: {
-          accept: 'application/json, text/plain, */*',
-          'accept-language': 'en-US,en;q=0.9',
-          assumedrole: 'sellers',
-          'content-type': 'application/json',
-          origin: 'https://www.buysportscards.com',
-          referer: 'https://www.buysportscards.com/',
-          'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-          'Sec-Ch-Ua-Mobile': '?0',
-          'Sec-Ch-Ua-Platform': 'macOS',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-site',
-          authority: 'api-prod.buysportscards.com',
-          authorization: `Bearer ${redux.secret.trim()}`,
-        },
-      });
-    } catch (e) {
-      log(e);
       await browser.saveScreenshot('.error.png');
-    } finally {
-      await browser.deleteSession();
+    } catch (screenshotError) {
+      // Ignore screenshot errors
     }
-
-    axiosRetry(_api, { retries: 5, retryDelay: axiosRetry.exponentialDelay });
+    throw e; // Re-throw to trigger retry
+  } finally {
+    try {
+      await browser.deleteSession();
+    } catch (deleteError) {
+      // Ignore delete errors
+    }
   }
-  return _api;
+}
+
+async function login(): Promise<AxiosInstance> {
+  if (!_api) {
+    _api = await retryWithExponentialBackoff(
+      async () => {
+        return await performLogin();
+      },
+      3,
+      1000,
+      2,
+      undefined,
+      async (attempt, error, delayMs) => {
+        log(`BSC login failed (attempt ${attempt}/3): ${error}`);
+        log(`Retrying BSC login in ${delayMs}ms...`);
+        // Reset _api to undefined so we can retry
+        _api = undefined;
+      }
+    );
+  }
+  // _api is guaranteed to be set here (either from cache or from retryWithExponentialBackoff)
+  return _api!;
 }
 
 export async function getBSCCards(setInfo: Category): Promise<Card[]> {

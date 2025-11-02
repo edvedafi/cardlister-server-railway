@@ -9,7 +9,7 @@ import {
   getBSCVariantTypeFilter,
   getBSCYearFilter,
 } from '../listing-sites/bsc.js';
-import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear } from '../listing-sites/sportlots-adapter';
+import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear, shutdownSportLots } from '../listing-sites/sportlots-adapter';
 import { ask, type AskOptions, type AskSelectOption } from '../utils/ask';
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import {
@@ -325,6 +325,9 @@ export async function findSet(
       if (!setInfo.variantName?.description) {
         description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name} ${setInfo.variantName?.name}`);
       }
+      if (!setInfo.variantName?.metadata?.xs_setName) {
+        updates.xs_setName = await ask('XS Set Name?', `${setInfo.set.name} ${setInfo.variantName?.name}`);
+      }
       if (setInfo.variantName?.metadata?.insert && !setInfo.variantName?.metadata?.insert_xs) {
         updates.insert_xs = await ask('XS Insert Name?', setInfo.variantName?.metadata?.insert);
       }
@@ -376,12 +379,100 @@ export async function updateSetDefaults(metadata: Metadata = {}): Promise<Metada
   return metadata;
 }
 
+export async function updateAllSetMetadata(
+  category: Category,
+  metadata: Metadata = {},
+): Promise<{ description?: string; metadata: Metadata }> {
+  const { finish, error } = showSpinner('updateAllSetMetadata', 'Updating All Set Metadata');
+
+  try {
+    // Start with existing metadata to preserve all fields
+    const updatedMetadata = { ...metadata };
+
+    const update = async (field: string, config?: AskOptions) => {
+      const response = await ask(field, updatedMetadata[field], config);
+      if (response !== undefined && response !== null && response !== '') {
+        updatedMetadata[field] = response;
+      }
+    };
+
+    // Update default metadata fields
+    await update('card_number_prefix');
+    await update('features', { isArray: true });
+    await update('printRun');
+    await update('autograph', { selectOptions: ['None', 'Label or Sticker', 'On Card'] });
+    updatedMetadata.prices = await getPricing(<MoneyAmount[]>updatedMetadata.prices);
+
+    // Update XS fields
+    await update('xs_setName');
+    if (updatedMetadata.insert) {
+      await update('insert_xs');
+    }
+    if (updatedMetadata.parallel) {
+      await update('parallel_xs');
+    }
+
+    // Get description (Set Title)
+    let description: string | undefined;
+    const currentDescription = category.description || '';
+    if (currentDescription) {
+      description = await ask('Set Title', currentDescription);
+    } else {
+      // Try to construct a default from category metadata
+      const defaultTitle = category.metadata?.year && category.metadata?.setName
+        ? `${category.metadata.year} ${category.metadata.setName}${category.name !== 'Base' ? ` ${category.name}` : ''}`
+        : category.name;
+      description = await ask('Set Title', defaultTitle);
+    }
+
+    finish();
+    return { description, metadata: updatedMetadata };
+  } catch (e) {
+    error(e);
+    throw e;
+  }
+}
+
 export async function getCategoriesAsOptions(parent_category_id: string) {
   const categories = await getCategories(parent_category_id);
   return categories.map((category: Category) => ({
     value: category,
     name: category.name,
   }));
+}
+
+async function getSLCardsWithRetry(
+  setInfo: SetInfo & { year: Category; brand: Category; sport: Category },
+  category: Category,
+  expectedCards: number,
+  maxRetries = 3,
+): Promise<{ cardNumber: string; title: string }[]> {
+  let lastError: Error | unknown;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      log(`Attempting to get SportLots cards (attempt ${attempt}/${maxRetries})`);
+      return await getSLCards(setInfo, category, expectedCards);
+    } catch (e) {
+      lastError = e;
+      log(`Error getting SportLots cards on attempt ${attempt}: ${e}`);
+      
+      if (attempt < maxRetries) {
+        log(`Shutting down browser and retrying...`);
+        try {
+          await shutdownSportLots();
+          // Wait a moment for the browser to fully close
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (shutdownError) {
+          log(`Error during shutdown: ${shutdownError}`);
+        }
+      }
+    }
+  }
+  
+  // If we get here, all retries failed
+  log(`Failed to get SportLots cards after ${maxRetries} attempts`);
+  throw lastError;
 }
 
 export async function buildSet(setInfo: SetInfo) {
@@ -393,7 +484,7 @@ export async function buildSet(setInfo: SetInfo) {
     let builtProducts = 0;
     let cards: SiteCards;
     if (category.metadata?.sportlots) {
-      const slCards = await getSLCards(setInfo, category, bscCards.length);
+      const slCards = await getSLCardsWithRetry(setInfo, category, bscCards.length);
       cards = findVariations(bscCards, slCards);
 
       while (
@@ -403,7 +494,7 @@ export async function buildSet(setInfo: SetInfo) {
         update('Looking for Series 2');
         const nextSeries = await findSet({ onlySportlots: true });
         // Use a reasonable default for expected cards since we don't know the exact count yet
-        const nextSLCards = await getSLCards(nextSeries, nextSeries.category, bscCards.length - cards.slBase.length);
+        const nextSLCards = await getSLCardsWithRetry(nextSeries, nextSeries.category, bscCards.length - cards.slBase.length);
         const maxCardNumberString = _.maxBy(nextSLCards, 'cardNumber')?.cardNumber;
         const minCardNumberString = _.minBy(nextSLCards, 'cardNumber')?.cardNumber;
         const maxCardNumber = parseInt(maxCardNumberString?.replace(/\D/g, '') || '0');
@@ -449,6 +540,7 @@ export async function buildSet(setInfo: SetInfo) {
     finish(`Built ${builtProducts} products for ${category.name}`);
   } catch (e) {
     error(e);
+    throw e; // Re-throw so caller can handle
   }
 }
 
@@ -693,6 +785,8 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
             return result;
           } catch (e) {
             error(e);
+            // createProduct now handles duplicate handle errors by updating existing products
+            // So if we get here, it's a different error - rethrow to stop processing
             throw e;
           }
         }),

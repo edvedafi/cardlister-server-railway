@@ -7,7 +7,7 @@ import { getBrowserlessConfig } from '../utils/browserless';
 
 const { showSpinner, log } = useSpinners('sportlots', chalk.blueBright);
 
-let _browser: WebdriverIO.Browser;
+let _browser: WebdriverIO.Browser | undefined;
 
 async function login() {
   if (!_browser) {
@@ -434,9 +434,11 @@ export async function shutdownSportLots() {
   if (_browser) {
     try {
       await _browser.deleteSession();
+      _browser = undefined; // Reset browser so it will be recreated on next login
       finish('Sportlots shutdown complete');
     } catch (e) {
       error('Sportslots shutdown errored');
+      _browser = undefined; // Reset even on error
     }
   } else {
     finish();
