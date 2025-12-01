@@ -1,6 +1,6 @@
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import { ask } from '../utils/ask';
-import type { Card } from '../models/bsc`';
+import type { Card } from '../models/bsc';
 import { isNo, isYes, psaGrades } from '../utils/data';
 import {
   getInventory,
@@ -399,7 +399,7 @@ async function getCardDataWithVariant(
 
   productVariant.metadata.features = _.uniq(productVariant.metadata.features).filter((feature) => feature);
 
-  const DEBUG = process.argv.includes('--debug') || Boolean((args as any)?.debug);
+  const DEBUG = process.argv.includes('--debug') || Boolean(args?.debug);
   if (DEBUG) {
     log(productVariant.metadata);
   }
@@ -503,7 +503,8 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
   };
   
   // Normalize card numbers for comparison - handle cases where product might have prefix or not
-  const matchesCardNumber = (productCardNumber: unknown, searchCardNumber: unknown): boolean => {
+  // For exact matching, card numbers must match exactly (not substring)
+  const matchesCardNumber = (productCardNumber: unknown, searchCardNumber: unknown, exact: boolean = false): boolean => {
     if (!productCardNumber || !searchCardNumber) return false;
     
     const productCardNumberStr = typeof productCardNumber === 'string' 
@@ -517,11 +518,48 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
     const prefix = setInfo.metadata?.card_number_prefix || '';
     const searchWithPrefix = `${prefix}${searchCardNumberStr}`;
     
-    // Check if they match directly, or if product has prefix and matches, or if product number equals search
+    // For exact matching, require exact match only
+    if (exact) {
+      return (
+        productCardNumberStr === searchCardNumberStr ||
+        productCardNumberStr === searchWithPrefix ||
+        (prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr)
+      );
+    }
+    
+    // For non-exact matching, allow substring matches
     return (
       productCardNumberStr === searchCardNumberStr ||
       productCardNumberStr === searchWithPrefix ||
-      (prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr)
+      (prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr) ||
+      productCardNumberStr.includes(searchCardNumberStr) ||
+      searchCardNumberStr.includes(productCardNumberStr)
+    );
+  };
+  
+  // Exact player name matching - player name must appear exactly (not as substring)
+  const exactMatchesPlayer = (productPlayer: unknown, searchPlayer: unknown): boolean => {
+    if (!productPlayer || !searchPlayer) return false;
+    
+    // Normalize productPlayer to an array of strings
+    const productPlayers: string[] = Array.isArray(productPlayer)
+      ? productPlayer.map(p => typeof p === 'string' ? p.toLowerCase().trim() : String(p).toLowerCase().trim())
+      : typeof productPlayer === 'string'
+        ? [productPlayer.toLowerCase().trim()]
+        : [String(productPlayer).toLowerCase().trim()];
+    
+    // Normalize searchPlayer to an array of strings
+    const searchPlayers: string[] = Array.isArray(searchPlayer)
+      ? searchPlayer.map(s => typeof s === 'string' ? s.toLowerCase().trim() : String(s).toLowerCase().trim())
+      : typeof searchPlayer === 'string'
+        ? [searchPlayer.toLowerCase().trim()]
+        : [String(searchPlayer).toLowerCase().trim()];
+    
+    // For exact matching, check if any productPlayer exactly matches any searchPlayer
+    return productPlayers.some((productStr) =>
+      searchPlayers.some((searchStr) =>
+        productStr === searchStr || productStr.includes(searchStr) || searchStr.includes(productStr)
+      )
     );
   };
   
@@ -530,7 +568,12 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
     prefix: setInfo.metadata?.card_number_prefix,
     cardNumber: imageDefaults.cardNumber,
     player: imageDefaults.player,
+    perfectMatch: imageDefaults._perfectMatch,
   });
+
+  // Check if we have a perfect match flag from OCR (set in imageRecognition.ts)
+  const perfectMatch = imageDefaults._perfectMatch === true;
+  const bestMatchPlayer = imageDefaults._bestMatchPlayer || imageDefaults.player;
 
   // In debug, list all candidates that match cardNumber (regardless of player) to see the field of options
   if (DEBUG) {
@@ -554,6 +597,28 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
     dlog('cardNumber candidates', numberCandidates);
   }
 
+  // Only auto-match if we have perfect match criteria met:
+  // 1. Exact card number match on back
+  // 2. Exact player name match on front AND back
+  if (perfectMatch && imageDefaults.cardNumber && imageDefaults.player) {
+    const card = setInfo.products?.find(
+      (product) =>
+        matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber, true) &&
+        exactMatchesPlayer(product.metadata?.player, imageDefaults.player),
+    );
+    if (card) {
+      dlog('perfect match (exact number+exact player on front+back)', {
+        cardNumber: imageDefaults.cardNumber,
+        player: imageDefaults.player,
+        matched: card.title,
+        matchedCardNumber: card.metadata?.cardNumber,
+        matchedPlayers: card.metadata?.player,
+      });
+      return card;
+    }
+  }
+
+  // Fallback to substring matching for non-perfect matches
   let card = setInfo.products?.find(
     (product) =>
       matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
@@ -567,7 +632,44 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
       matchedCardNumber: card.metadata?.cardNumber,
       matchedPlayers: card.metadata?.player,
     });
-    return card;
+    // Only return if perfect match, otherwise prompt user with all products
+    if (perfectMatch) {
+      return card;
+    }
+    // Inexact match found - show all products
+    dlog('Not a perfect match, will prompt user with all products');
+    // Ensure we have products to show
+    if (!setInfo.products || setInfo.products.length === 0) {
+      throw new Error('No products available to select from');
+    }
+    // Create selectOptions
+    const selectOptions = setInfo.products.map((product) => {
+      const player = product.metadata?.player;
+      const playerDisplay = Array.isArray(player) 
+        ? player.join(', ') 
+        : typeof player === 'string' 
+          ? player 
+          : String(player || '');
+      return {
+        name: `${product.metadata?.cardNumber} ${playerDisplay}`,
+        value: product,
+      };
+    });
+    // Extract player name from matched card to use as default search term
+    const matchedPlayer = card.metadata?.player;
+    const defaultPlayerName = Array.isArray(matchedPlayer)
+      ? matchedPlayer.join(', ')
+      : typeof matchedPlayer === 'string'
+        ? matchedPlayer
+        : String(matchedPlayer || '');
+    card = await ask('Which card is this?', defaultPlayerName, {
+      selectOptions: selectOptions,
+    });
+    dlog('user selection result', { selected: card?.title });
+    if (card) {
+      return card;
+    }
+    throw new Error('No card found');
   }
   if (imageDefaults.player) {
     // Clean all player strings (whether array or single string)
@@ -597,45 +699,71 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
       matchedCardNumber: card.metadata?.cardNumber,
       matchedPlayers: card.metadata?.player,
     });
-    return card;
-  }
-  // If we have at least one card-number-only match, skip the yes/no prompt
-  // and go straight to the filtered selection list for better UX
-  const numberCandidates = setInfo.products?.filter((product) =>
-    matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber),
-  );
-  if (numberCandidates && numberCandidates.length > 0) {
-    const imageDefaultsPlayerDisplay = Array.isArray(imageDefaults.player)
-      ? imageDefaults.player.join(', ')
-      : typeof imageDefaults.player === 'string'
-        ? imageDefaults.player
-        : String(imageDefaults.player || '');
-
-    card = await ask('Which card is this?', imageDefaultsPlayerDisplay, {
-      selectOptions: numberCandidates.map((product) => {
-        const player = product.metadata?.player;
-        const playerDisplay = Array.isArray(player)
-          ? player.join(', ')
-          : typeof player === 'string'
-            ? player
-            : String(player || '');
-        return {
-          name: `${product.metadata?.cardNumber} ${playerDisplay}`,
-          value: product,
-        };
-      }),
+    // Only return if perfect match, otherwise prompt user with all products
+    if (perfectMatch) {
+      return card;
+    }
+    // Inexact match found - show all products
+    dlog('Not a perfect match, will prompt user with all products');
+    // Ensure we have products to show
+    if (!setInfo.products || setInfo.products.length === 0) {
+      throw new Error('No products available to select from');
+    }
+    // Create selectOptions
+    const selectOptions = setInfo.products.map((product) => {
+      const player = product.metadata?.player;
+      const playerDisplay = Array.isArray(player) 
+        ? player.join(', ') 
+        : typeof player === 'string' 
+          ? player 
+          : String(player || '');
+      return {
+        name: `${product.metadata?.cardNumber} ${playerDisplay}`,
+        value: product,
+      };
     });
+    // Extract player name from matched card to use as default search term
+    const matchedPlayer = card.metadata?.player;
+    const defaultPlayerName = Array.isArray(matchedPlayer)
+      ? matchedPlayer.join(', ')
+      : typeof matchedPlayer === 'string'
+        ? matchedPlayer
+        : String(matchedPlayer || '');
+    card = await ask('Which card is this?', defaultPlayerName, {
+      selectOptions: selectOptions,
+    });
+    dlog('user selection result', { selected: card?.title });
     if (card) {
       return card;
     }
+    throw new Error('No card found');
   }
-  const imageDefaultsPlayerDisplay = Array.isArray(imageDefaults.player)
-    ? imageDefaults.player.join(', ')
-    : typeof imageDefaults.player === 'string'
-      ? imageDefaults.player
-      : String(imageDefaults.player || '');
   
-  card = await ask('Which card is this?', imageDefaultsPlayerDisplay, {
+  // Find the best matching product to use as default
+  // First try to find by card number + best match player
+  let defaultCard: Product | undefined;
+  if (imageDefaults.cardNumber && bestMatchPlayer) {
+    defaultCard = setInfo.products?.find(
+      (product) =>
+        matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
+        matchesPlayer(product.metadata?.player, bestMatchPlayer),
+    );
+  }
+  // If no match, try just by card number
+  if (!defaultCard && imageDefaults.cardNumber) {
+    defaultCard = setInfo.products?.find(
+      (product) => matchesCardNumber(product.metadata?.cardNumber, imageDefaults.cardNumber),
+    );
+  }
+  // If still no match, try just by best match player
+  if (!defaultCard && bestMatchPlayer) {
+    defaultCard = setInfo.products?.find(
+      (product) => matchesPlayer(product.metadata?.player, bestMatchPlayer),
+    );
+  }
+  
+  // Always show ALL products, but use the best match as default
+  card = await ask('Which card is this?', defaultCard, {
     selectOptions: setInfo.products?.map((product) => {
       const player = product.metadata?.player;
       const playerDisplay = Array.isArray(player) 

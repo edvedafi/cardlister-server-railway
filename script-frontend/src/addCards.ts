@@ -37,7 +37,7 @@ try {
   const args = parseArgs(
     {
       boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o'],
-      string: ['n', 'sl'],
+      string: ['n', 'sl', 'p'],
       alias: {
         s: 'select-bulk-cards',
         b: 'bulk',
@@ -50,6 +50,7 @@ try {
         i: 'images',
         v: 'inventory',
         o: 'no-sync',
+        p: 'price',
       },
     },
     {
@@ -64,6 +65,7 @@ try {
       i: 'Attempt to use the image as is first',
       v: 'Inventory Mode: Will only show cards with a quantity greater than 0',
       o: 'No Sync run after updating',
+      p: 'Price Mode: Update pricing and quantity for cards in a set. Optional percentage reduction (e.g., -p 10 for 10% reduction, -p for 0% reduction)',
     },
   );
 
@@ -75,7 +77,7 @@ try {
     setSportlotsImplementation('webdriver');
   }
 
-  if (args['numbers'] || args['select-bulk-cards'] || args['inventory']) {
+  if (args['numbers'] || args['select-bulk-cards'] || args['inventory'] || args['price'] !== undefined) {
     args['bulk'] = true;
   }
 

@@ -4,17 +4,18 @@ import Queue from 'queue';
 import { getCardData, saveBulk, saveListing } from './cardData';
 import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
-import { getProducts, startSync } from '../utils/medusa';
+import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion } from '../utils/medusa';
 import { ask, type AskSelectOption } from '../utils/ask';
 import type { SetInfo } from '../models/setInfo';
 import type { ProductImage } from '../models/cards';
 import { processImageFile } from '../listing-sites/firebase';
 import imageRecognition from './imageRecognition';
-import type { InventoryItemDTO, Product, ProductVariant } from '@medusajs/client-types';
+import type { InventoryItemDTO, Product, ProductVariant, MoneyAmount } from '@medusajs/client-types';
 import { buildSet } from './setData';
 import _ from 'lodash';
 import type { ParsedArgs } from 'minimist';
 import { getFiles, getInputs } from '../utils/inputs';
+import { getCommonPricing } from './pricing';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 
@@ -171,8 +172,8 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
       } else {
         products = products.filter((p) => p.metadata?.cardNumber === args.numbers);
       }
+      if (products.length === 0) throw new Error(`No products found for ${args.numbers}`);
     }
-    if (products.length === 0) throw new Error(`No products found for ${args.numbers}`);
     products = _.sortBy(products, (p) => {
       let asInt = parseInt(p.metadata?.cardNumber);
       if (isNaN(asInt)) {
@@ -238,6 +239,280 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
   }
 };
 
+const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
+  if (!setData.products) throw 'Must set products on Set Data before processing price updates';
+
+  const { finish, error } = showSpinner('price', `Processing Price Updates`);
+  log('Updating Prices and Quantities');
+  
+  // Create queue for price updates
+  const queuePriceUpdates = new Queue({
+    results: [],
+    autostart: true,
+    concurrency: 5, // Process 5 updates concurrently
+  });
+  
+  const updateErrors: Array<{ variant: string; error: Error }> = [];
+  
+  try {
+    let products = setData.products;
+    if (args.numbers) {
+      if (args.numbers.includes(',')) {
+        const numbers = args.numbers.split(',');
+        products = products.filter((p) => {
+          console.log(`Checking ${p.metadata?.cardNumber} in ${numbers}`);
+          return numbers.includes(p.metadata?.cardNumber);
+        });
+      } else if (args.numbers.startsWith('<')) {
+        const number = parseInt(args.numbers.replace('<', ''));
+        products = products.filter((p) => parseInt(p.metadata?.cardNumber) < number);
+      } else if (args.numbers.startsWith('>')) {
+        const number = parseInt(args.numbers.replace('>', ''));
+        products = products.filter((p) => parseInt(p.metadata?.cardNumber) > number);
+      } else {
+        products = products.filter((p) => p.metadata?.cardNumber === args.numbers);
+      }
+      if (products.length === 0) throw new Error(`No products found for ${args.numbers}`);
+    }
+    products = _.sortBy(products, (p) => {
+      let asInt = parseInt(p.metadata?.cardNumber);
+      if (isNaN(asInt)) {
+        if (setData.metadata?.card_number_prefix) {
+          asInt = parseInt(p.metadata?.cardNumber.replace(setData.metadata?.card_number_prefix, ''));
+        }
+        if (isNaN(asInt)) {
+          return p.metadata?.cardNumber;
+        }
+      }
+      return asInt;
+    });
+
+    const commonPricing = await getCommonPricing();
+    const bscRegionId = await getRegion('BSC');
+    const sportlotsRegionId = await getRegion('SportLots');
+    const bscCommonPrice = commonPricing.find((p) => bscRegionId === p.region_id)?.amount || 25;
+    const sportlotsCommonPrice = commonPricing.find((p) => sportlotsRegionId === p.region_id)?.amount || 18;
+
+    for (let i = 0; i < products.length; i++) {
+      const product = products[i];
+      if (!product.variants) throw new Error('Product has no variants');
+      const variants = _.sortBy(product.variants, 'metadata.cardNumber');
+      for (let j = 0; j < variants.length; j++) {
+        if (!args['inventory'] || variants[j].inventory_quantity > 0) {
+          const variant = variants[j];
+          
+          // Get current quantity first and skip if invalid
+          const currentQuantity = await getInventoryQuantity(variant);
+          if (currentQuantity == null || currentQuantity === undefined || currentQuantity <= 0) {
+            continue; // Skip cards with 0, null, undefined, or negative quantity
+          }
+          
+          let title = variant.title.trim();
+          if (variant.metadata?.isBase && variants.length > 1) {
+            title = `Has Variations:\n   ${variants
+              .filter((v) => !v.metadata?.isBase)
+              .map((v) => v.metadata?.variationName)
+              .join('\n   ')}\n${chalk.green('?')} ${title}`;
+          }
+
+          // Get current prices
+          const currentPrices = variant.prices || [];
+          const getCurrentPrice = async (region: string): Promise<number | undefined> => {
+            const regionId = await getRegion(region);
+            const price = currentPrices.find((p) => p.region_id === regionId);
+            const amount: number | string | undefined = price?.amount;
+            // @ts-expect-error sometimes the backend returns a string for some crazy reason
+            if (amount && amount !== 'undefined') {
+              return typeof amount === 'number' ? amount : parseInt(amount);
+            }
+            return undefined;
+          };
+
+          // Display card title
+          log(`\n${chalk.bold(title)}`);
+
+          // Parse percentage reduction from args (default to 0 if not provided)
+          const priceReductionPercent = args['price'] ? parseFloat(args['price'] as string) || 0 : 0;
+          
+          // Calculate new prices with percentage reduction, maintaining minimums per platform
+          const calculateReducedPrice = (currentPrice: number, minPrice: number): number => {
+            if (currentPrice === 0) return minPrice;
+            const reducedPrice = Math.floor(currentPrice * (1 - priceReductionPercent / 100));
+            return Math.max(reducedPrice, minPrice);
+          };
+
+          const currentEbay = (await getCurrentPrice('ebay')) || 99;
+          const currentMCP = (await getCurrentPrice('MCP')) || 100;
+          const currentBSC = (await getCurrentPrice('BSC')) || bscCommonPrice;
+          const currentSportLots = (await getCurrentPrice('SportLots')) || sportlotsCommonPrice;
+
+          const calculatedEbay = calculateReducedPrice(currentEbay, 99);
+          const calculatedMCP = calculateReducedPrice(currentMCP, 100);
+          const calculatedBSC = calculateReducedPrice(currentBSC, bscCommonPrice);
+          const calculatedSportLots = calculateReducedPrice(currentSportLots, sportlotsCommonPrice);
+
+          // Check if current pricing is already common pricing
+          const isCommonPricing = currentEbay === 99 && 
+                                  currentMCP === 100 && 
+                                  currentBSC === bscCommonPrice && 
+                                  currentSportLots === sportlotsCommonPrice;
+
+          let pricingChoice: string;
+          let newPrices: MoneyAmount[] = currentPrices;
+
+          if (isCommonPricing) {
+            // Skip pricing selection if already at common pricing
+            log('Common Pricing in use');
+            pricingChoice = 'original';
+          } else {
+            // Show calculated prices
+            const reductionText = priceReductionPercent > 0 ? ` (${priceReductionPercent}% reduction)` : '';
+            log(`\nCalculated prices${reductionText}:`);
+            log(`  eBay: ${currentEbay} → ${calculatedEbay}${calculatedEbay === 99 ? ' (minimum)' : ''}`);
+            log(`  MCP: ${currentMCP} → ${calculatedMCP}${calculatedMCP === 100 ? ' (minimum)' : ''}`);
+            log(`  BSC: ${currentBSC} → ${calculatedBSC}${calculatedBSC === bscCommonPrice ? ' (minimum)' : ''}`);
+            log(`  SportLots: ${currentSportLots} → ${calculatedSportLots}${calculatedSportLots === sportlotsCommonPrice ? ' (minimum)' : ''}`);
+
+            // Ask for pricing option
+            const pricingOptions = [
+              { value: 'reduced', name: 'Reduced Pricing' },
+              { value: 'common', name: 'Common Pricing' },
+              { value: 'original', name: 'Original Pricing' },
+              { value: 'manual', name: 'Manually Set Prices' },
+            ];
+            pricingChoice = await ask('Select Pricing Option', undefined, { selectOptions: pricingOptions });
+          }
+
+          if (pricingChoice === 'reduced') {
+            // Use calculated prices with reduction
+            newPrices = [
+              { amount: calculatedEbay, region_id: await getRegion('ebay') } as MoneyAmount,
+              { amount: calculatedMCP, region_id: await getRegion('MCP') } as MoneyAmount,
+              { amount: calculatedBSC, region_id: await getRegion('BSC') } as MoneyAmount,
+              { amount: calculatedSportLots, region_id: await getRegion('SportLots') } as MoneyAmount,
+            ];
+          } else if (pricingChoice === 'common') {
+            // Use common/minimum pricing
+            newPrices = [
+              { amount: 99, region_id: await getRegion('ebay') } as MoneyAmount,
+              { amount: 100, region_id: await getRegion('MCP') } as MoneyAmount,
+              { amount: bscCommonPrice, region_id: await getRegion('BSC') } as MoneyAmount,
+              { amount: sportlotsCommonPrice, region_id: await getRegion('SportLots') } as MoneyAmount,
+            ];
+          } else if (pricingChoice === 'original') {
+            // Use original/current prices (already set above)
+            newPrices = currentPrices;
+          } else if (pricingChoice === 'manual') {
+            // Manually set prices, defaulting to reduced pricing
+            const getPrice = async (region: string, defaultPrice: number, minPrice: number): Promise<number> => {
+              let price = await ask(`${region} price (min: ${minPrice})`, defaultPrice);
+              while (price.toString().indexOf('.') > -1) {
+                price = await ask(`${region} price should not have a decimal, did you mean: `, price.toString().replace('.', ''));
+              }
+              const parsedPrice = parseInt(price);
+              if (parsedPrice < minPrice) {
+                log(`${chalk.yellow(`Warning: ${region} price ${parsedPrice} is below minimum ${minPrice}. Using minimum.`)}`);
+                return minPrice;
+              }
+              return parsedPrice;
+            };
+
+            const manualEbay = await getPrice('eBay', calculatedEbay, 99);
+            const manualMCP = await getPrice('MCP', calculatedMCP, 100);
+            const manualBSC = await getPrice('BSC', calculatedBSC, bscCommonPrice);
+            const manualSportLots = await getPrice('SportLots', calculatedSportLots, sportlotsCommonPrice);
+
+            newPrices = [
+              { amount: manualEbay, region_id: await getRegion('ebay') } as MoneyAmount,
+              { amount: manualMCP, region_id: await getRegion('MCP') } as MoneyAmount,
+              { amount: manualBSC, region_id: await getRegion('BSC') } as MoneyAmount,
+              { amount: manualSportLots, region_id: await getRegion('SportLots') } as MoneyAmount,
+            ];
+          }
+
+          // Prompt for quantity (currentQuantity already fetched above)
+          const newQuantity = await ask('Quantity', currentQuantity || undefined);
+
+          // Update prices and quantity if changed
+          // Compare new prices with current prices to detect changes
+          const getNewPrice = async (region: string): Promise<number> => {
+            const regionId = await getRegion(region);
+            const price = newPrices.find((p) => p.region_id === regionId);
+            return price?.amount || 0;
+          };
+          const newEbayAmount = await getNewPrice('ebay');
+          const newMCPAmount = await getNewPrice('MCP');
+          const newBSCAmount = await getNewPrice('BSC');
+          const newSportLotsAmount = await getNewPrice('SportLots');
+
+          const pricesChanged = pricingChoice !== 'original' && (
+            newEbayAmount !== currentEbay ||
+            newMCPAmount !== currentMCP ||
+            newBSCAmount !== currentBSC ||
+            newSportLotsAmount !== currentSportLots
+          );
+          const quantityChanged = newQuantity !== currentQuantity;
+
+          if (pricesChanged || quantityChanged) {
+            hasUpdated = true;
+            const variantTitle = variant.title;
+            
+            // Add price update to queue
+            if (pricesChanged) {
+              queuePriceUpdates.push(async () => {
+                try {
+                  await updatePrices(product.id, variant.id, newPrices);
+                } catch (e) {
+                  updateErrors.push({ variant: variantTitle, error: e as Error });
+                  log(`${chalk.red(`Error updating prices for ${variantTitle}:`)} ${e}`);
+                  throw e;
+                }
+              });
+            }
+            
+            // Add quantity update to queue
+            if (quantityChanged) {
+              queuePriceUpdates.push(async () => {
+                try {
+                  const inventoryItem = await getInventory(variant);
+                  await updateInventory(inventoryItem, newQuantity);
+                } catch (e) {
+                  updateErrors.push({ variant: variantTitle, error: e as Error });
+                  log(`${chalk.red(`Error updating quantity for ${variantTitle}:`)} ${e}`);
+                  throw e;
+                }
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // Wait for queue to finish
+    if (queuePriceUpdates.length > 0) {
+      await new Promise<void>((resolve) => {
+        queuePriceUpdates.addEventListener('end', () => {
+          resolve();
+        });
+      });
+    }
+    
+    // Print any errors that occurred
+    if (updateErrors.length > 0) {
+      log(`\n${chalk.red(`Errors occurred during ${updateErrors.length} update(s):`)}`);
+      for (const err of updateErrors) {
+        log(`${chalk.red(`  ${err.variant}:`)} ${err.error.message || err.error}`);
+      }
+    }
+    
+    const totalUpdates = queuePriceUpdates.results?.length || 0;
+    finish(`Processed ${totalUpdates} Price Updates${updateErrors.length > 0 ? ` (${updateErrors.length} errors)` : ''}`);
+  } catch (e) {
+    error(e);
+    throw e;
+  }
+};
+
 export async function processSet(setData: SetInfo, files: string[] = [], args: ParsedArgs) {
   const {
     update: updateSpinner,
@@ -263,6 +538,18 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     if (setData.products.length === 0) {
       await buildSet(setData);
       setData.products = await getProducts(setData.category.id);
+    }
+
+    // Handle price mode - skip image processing
+    if (args['price']) {
+      updateSpinner('Processing Price Updates');
+      await processPrice(setData, args);
+      updateSpinner(`Kickoff Set Processing`);
+      if (!args['no-sync']) {
+        await startSync(setData.category.id);
+      }
+      finishSpinner('Completed Set Processing');
+      return;
     }
 
     if (args.countCardsFirst) {
@@ -354,3 +641,4 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     errorSpinner(error);
   }
 }
+

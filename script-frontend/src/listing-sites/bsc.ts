@@ -21,16 +21,13 @@ async function performLogin(): Promise<AxiosInstance> {
     const signInButton = await browser.$('.=Sign In');
     await signInButton.waitForClickable({ timeout: 10000 });
     await signInButton.click();
-
     const emailInput = await browser.$('#signInName');
     await emailInput.waitForExist({ timeout: 5000 });
     await emailInput.setValue(process.env.BSC_EMAIL as string);
     await browser.$('#password').setValue(process.env.BSC_PASSWORD as string);
 
     await browser.$('#next').click();
-
     await browser.$('.=welcome back,').waitForExist({ timeout: 10000 });
-
     const reduxAsString: string = await browser.execute(
       'return Object.values(localStorage).filter((value) => value.includes("secret")).find(value=>value.includes("Bearer"));',
     );
@@ -55,15 +52,17 @@ async function performLogin(): Promise<AxiosInstance> {
         authorization: `Bearer ${redux.secret.trim()}`,
       },
     });
-
     axiosRetry(api, { retries: 5, retryDelay: axiosRetry.exponentialDelay });
     return api;
   } catch (e) {
-    log(`Login error: ${e}`);
+    console.error(`[BSC Login] Login error during performLogin:`, e);
+    log(`[BSC Login] Login error: ${e}`);
     try {
       await browser.saveScreenshot('.error.png');
+      console.log(`[BSC Login] Saved error screenshot to .error.png`);
     } catch (screenshotError) {
       // Ignore screenshot errors
+      console.error(`[BSC Login] Could not save screenshot:`, screenshotError);
     }
     throw e; // Re-throw to trigger retry
   } finally {
@@ -78,16 +77,16 @@ async function performLogin(): Promise<AxiosInstance> {
 async function login(): Promise<AxiosInstance> {
   if (!_api) {
     _api = await retryWithExponentialBackoff(
-      async () => {
-        return await performLogin();
-      },
+      performLogin,
       3,
       1000,
       2,
-      undefined,
+      10000,
       async (attempt, error, delayMs) => {
-        log(`BSC login failed (attempt ${attempt}/3): ${error}`);
-        log(`Retrying BSC login in ${delayMs}ms...`);
+        console.error(`[BSC Login Retry] Login failed (attempt ${attempt}/3):`, error);
+        log(`[BSC Login Retry] Login failed (attempt ${attempt}/3): ${error}`);
+        console.log(`[BSC Login Retry] Retrying BSC login in ${delayMs}ms...`);
+        log(`[BSC Login Retry] Retrying in ${delayMs}ms...`);
         // Reset _api to undefined so we can retry
         _api = undefined;
       }
@@ -137,10 +136,12 @@ const getNextFilter = async (
   filterType: keyof Filters,
   defaultValue?: string,
 ): Promise<BSCFilterResponse> => {
-  const { finish, error } = showSpinner('setFilter', `Getting BSC Variant Name Filter`);
+  const { finish, error, update } = showSpinner('setFilter', `Getting BSC Variant Name Filter`);
   let rtn: BSCFilterResponse = { name: filterType, filter: filters };
   try {
+    update('Logging in to BSC...');
     const api = await login();
+    update('Fetching filter options...');
     const { data: filterOptions } = await api.post<Aggregations>('search/bulk-upload/filters', filters);
     const filteredFilterOptions = filterOptions.aggregations[filterType].filter((option: Filter) => option.count > 0);
     if (filteredFilterOptions.length > 1) {
@@ -180,10 +181,26 @@ const getNextFilter = async (
 export const buildBSCFilters = (searchInfo: Partial<SetInfo>) =>
   searchInfo.variantName?.metadata?.bsc || {
     filters: {
-      sport: searchInfo.sport?.metadata?.bsc,
-      year: searchInfo.year?.metadata?.bsc,
-      setName: searchInfo.set?.metadata?.bsc,
-      variant: searchInfo.variantType?.metadata?.bsc,
+      sport: searchInfo.sport?.metadata?.bsc
+        ? Array.isArray(searchInfo.sport.metadata.bsc)
+          ? searchInfo.sport.metadata.bsc
+          : [searchInfo.sport.metadata.bsc]
+        : undefined,
+      year: searchInfo.year?.metadata?.bsc
+        ? Array.isArray(searchInfo.year.metadata.bsc)
+          ? searchInfo.year.metadata.bsc
+          : [searchInfo.year.metadata.bsc]
+        : undefined,
+      setName: searchInfo.set?.metadata?.bsc
+        ? Array.isArray(searchInfo.set.metadata.bsc)
+          ? searchInfo.set.metadata.bsc
+          : [searchInfo.set.metadata.bsc]
+        : undefined,
+      variant: searchInfo.variantType?.metadata?.bsc
+        ? Array.isArray(searchInfo.variantType.metadata.bsc)
+          ? searchInfo.variantType.metadata.bsc
+          : [searchInfo.variantType.metadata.bsc]
+        : undefined,
     },
   };
 
