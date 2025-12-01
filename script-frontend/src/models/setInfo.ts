@@ -3,6 +3,8 @@ import type { Product, ProductCategory } from '@medusajs/client-types';
 export type Metadata = {
   [key: string]: unknown;
   features?: string[];
+  _perfectMatch?: boolean;
+  _bestMatchPlayer?: string | string[];
 };
 
 export type Category = ProductCategory;

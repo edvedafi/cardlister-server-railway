@@ -17,6 +17,7 @@ import {
   createCategoryActive,
   createProduct,
   getCategories,
+  getCategory,
   getNextBin,
   getProductCardNumbers,
   getRootCategory,
@@ -433,6 +434,139 @@ export async function updateAllSetMetadata(
   }
 }
 
+async function buildSetInfoFromCategory(category: Category): Promise<Partial<SetInfo>> {
+  const setInfo: Partial<SetInfo> = { category };
+  const rootId = await getRootCategory();
+  
+  // Walk up the parent chain to build the hierarchy
+  const hierarchy: Category[] = [category];
+  let current: Category | undefined = category;
+  
+  // Collect all ancestors up to root
+  while (current?.parent_category_id && current.parent_category_id !== rootId) {
+    current = await getCategory(current.parent_category_id);
+    hierarchy.push(current);
+  }
+  
+  // Reverse to get from root to leaf
+  hierarchy.reverse();
+  
+  // Map hierarchy levels to SetInfo (assuming standard hierarchy: sport -> year -> brand -> set -> variantType -> variantName)
+  if (hierarchy.length > 0) {
+    setInfo.sport = hierarchy[0];
+  }
+  if (hierarchy.length > 1) {
+    setInfo.year = hierarchy[1];
+  }
+  if (hierarchy.length > 2) {
+    setInfo.brand = hierarchy[2];
+  }
+  if (hierarchy.length > 3) {
+    setInfo.set = hierarchy[3];
+  }
+  if (hierarchy.length > 4) {
+    setInfo.variantType = hierarchy[4];
+  }
+  if (hierarchy.length > 5) {
+    setInfo.variantName = hierarchy[5];
+  }
+  
+  return setInfo;
+}
+
+export async function updateBSCFilters(setInfo: SetInfo): Promise<void> {
+  const { update, finish, error } = showSpinner('updateBSCFilters', 'Updating BSC Filters');
+
+  try {
+    // Build SetInfo from the selected category, walking up the parent chain
+    const categorySetInfo = await buildSetInfoFromCategory(setInfo.category);
+    
+    // Update sport BSC filter
+    if (categorySetInfo.sport) {
+      update('Updating Sport BSC Filter');
+      const bscSport = await getBSCSportFilter(categorySetInfo.sport.name);
+      await updateCategory(categorySetInfo.sport.id, {
+        ...categorySetInfo.sport.metadata,
+        bsc: bscSport?.filter,
+      });
+      // Update the SetInfo with the new sport metadata
+      categorySetInfo.sport = await getCategory(categorySetInfo.sport.id);
+    }
+
+    // Update year BSC filter
+    if (categorySetInfo.year) {
+      update('Updating Year BSC Filter');
+      const bscYear = getBSCYearFilter(categorySetInfo.year.name);
+      await updateCategory(categorySetInfo.year.id, {
+        ...categorySetInfo.year.metadata,
+        bsc: bscYear,
+      });
+      // Update the SetInfo with the new year metadata
+      categorySetInfo.year = await getCategory(categorySetInfo.year.id);
+    }
+
+    // Update set BSC filter - use parent categories only, not child categories
+    if (categorySetInfo.set) {
+      update('Updating Set BSC Filter');
+      // Build filter info from parent categories only (sport, year, brand)
+      const parentSetInfo: Partial<SetInfo> = {
+        sport: categorySetInfo.sport,
+        year: categorySetInfo.year,
+        brand: categorySetInfo.brand,
+      };
+      const bscSet = await getBSCSetFilter(parentSetInfo);
+      await updateCategory(categorySetInfo.set.id, {
+        ...categorySetInfo.set.metadata,
+        bsc: bscSet.filter,
+      });
+      // Update the SetInfo with the new set metadata
+      categorySetInfo.set = await getCategory(categorySetInfo.set.id);
+    }
+
+    // Update variant type BSC filter - use parent categories only
+    if (categorySetInfo.variantType) {
+      update('Updating Variant Type BSC Filter');
+      // Build filter info from parent categories only (sport, year, brand, set)
+      const parentSetInfo: Partial<SetInfo> = {
+        sport: categorySetInfo.sport,
+        year: categorySetInfo.year,
+        brand: categorySetInfo.brand,
+        set: categorySetInfo.set,
+      };
+      const bscVariantType = await getBSCVariantTypeFilter(parentSetInfo);
+      await updateCategory(categorySetInfo.variantType.id, {
+        ...categorySetInfo.variantType.metadata,
+        bsc: bscVariantType.filter,
+      });
+      // Update the SetInfo with the new variantType metadata
+      categorySetInfo.variantType = await getCategory(categorySetInfo.variantType.id);
+    }
+
+    // Update variant name BSC filter - use parent categories only
+    if (categorySetInfo.variantName) {
+      update('Updating Variant Name BSC Filter');
+      // Build filter info from parent categories only (sport, year, brand, set, variantType)
+      const parentSetInfo: Partial<SetInfo> = {
+        sport: categorySetInfo.sport,
+        year: categorySetInfo.year,
+        brand: categorySetInfo.brand,
+        set: categorySetInfo.set,
+        variantType: categorySetInfo.variantType,
+      };
+      const bscVariantName = await getBSCVariantNameFilter(parentSetInfo);
+      await updateCategory(categorySetInfo.variantName.id, {
+        ...categorySetInfo.variantName.metadata,
+        bsc: bscVariantName.filter,
+      });
+    }
+
+    finish('BSC Filters Updated');
+  } catch (e) {
+    error(e);
+    throw e;
+  }
+}
+
 export async function getCategoriesAsOptions(parent_category_id: string) {
   const categories = await getCategories(parent_category_id);
   return categories.map((category: Category) => ({
@@ -451,27 +585,33 @@ async function getSLCardsWithRetry(
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      log(`Attempting to get SportLots cards (attempt ${attempt}/${maxRetries})`);
+      console.log(`[SportLots Retry] Attempting to get SportLots cards (attempt ${attempt}/${maxRetries})`);
+      log(`[SportLots Retry] Attempt ${attempt}/${maxRetries}: Getting cards...`);
       return await getSLCards(setInfo, category, expectedCards);
     } catch (e) {
       lastError = e;
-      log(`Error getting SportLots cards on attempt ${attempt}: ${e}`);
+      console.error(`[SportLots Retry] Error on attempt ${attempt}/${maxRetries}:`, e);
+      log(`[SportLots Retry] Error on attempt ${attempt}/${maxRetries}: ${e}`);
       
       if (attempt < maxRetries) {
-        log(`Shutting down browser and retrying...`);
+        const delayMs = 2000 * attempt; // 2s, 4s, 6s delays
+        console.log(`[SportLots Retry] Shutting down browser and retrying in ${delayMs}ms...`);
+        log(`[SportLots Retry] Shutting down browser and retrying in ${delayMs}ms...`);
         try {
           await shutdownSportLots();
-          // Wait a moment for the browser to fully close
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Wait a moment for the browser to fully close (longer delay for later attempts)
+          await new Promise(resolve => setTimeout(resolve, delayMs));
         } catch (shutdownError) {
-          log(`Error during shutdown: ${shutdownError}`);
+          console.error(`[SportLots Retry] Error during shutdown:`, shutdownError);
+          log(`[SportLots Retry] Error during shutdown: ${shutdownError}`);
         }
       }
     }
   }
   
   // If we get here, all retries failed
-  log(`Failed to get SportLots cards after ${maxRetries} attempts`);
+  console.error(`[SportLots Retry] Failed to get SportLots cards after ${maxRetries} attempts`);
+  log(`[SportLots Retry] Failed after ${maxRetries} attempts`);
   throw lastError;
 }
 
@@ -479,22 +619,120 @@ export async function buildSet(setInfo: SetInfo) {
   const { update, finish, error } = showSpinner('buildSet', 'Building Set');
   try {
     update('Building Set');
-    const category: Category = setInfo.variantName || setInfo.variantType;
+    let category: Category = setInfo.variantName || setInfo.variantType;
     let bscCards = await getBSCCards(category);
     let builtProducts = 0;
-    let cards: SiteCards;
+    let cards: SiteCards = {
+      bsc: bscCards,
+      sl: [],
+      bscBase: bscCards,
+      bscVariations: {},
+      slBase: [],
+      slVariations: {},
+    };
     if (category.metadata?.sportlots) {
-      const slCards = await getSLCardsWithRetry(setInfo, category, bscCards.length);
-      cards = findVariations(bscCards, slCards);
+      // Retry loop for SportLots set selection
+      let setSelectionComplete = false;
+      let allSlCards: { cardNumber: string; title: string }[] = [];
+      let firstSetCount = 0;
+      let secondSetCount = 0;
+      let nextSeries: SetInfo | undefined;
+      
+      while (!setSelectionComplete) {
+        // Get first SportLots set
+        update('Getting SportLots cards for first set');
+        const slCards = await getSLCardsWithRetry(setInfo, category, bscCards.length);
+        allSlCards = [...slCards];
+        firstSetCount = slCards.length;
+        cards = findVariations(bscCards, allSlCards);
 
-      while (
-        cards.slBase.length < cards.bscBase.length &&
-        (await ask(`Is there another series? (${cards.slBase.length} in SL ${cards.bscBase.length} in BSC)`, true))
-      ) {
-        update('Looking for Series 2');
-        const nextSeries = await findSet({ onlySportlots: true });
-        // Use a reasonable default for expected cards since we don't know the exact count yet
-        const nextSLCards = await getSLCardsWithRetry(nextSeries, nextSeries.category, bscCards.length - cards.slBase.length);
+        // Check if we need a second set - check both raw count and matched count
+        // Raw count check: did we get fewer cards than expected?
+        // Matched count check: after matching, do we have fewer matches?
+        const rawCountMismatch = slCards.length < bscCards.length;
+        const matchedCountMismatch = cards.slBase.length < cards.bscBase.length;
+        
+        log(`Card count check: SL raw=${slCards.length}, BSC=${bscCards.length}, SL matched=${cards.slBase.length}, BSC matched=${cards.bscBase.length}, rawMismatch=${rawCountMismatch}, matchedMismatch=${matchedCountMismatch}`);
+        
+        if (rawCountMismatch || matchedCountMismatch) {
+          const needsSecondSet = await ask(
+            `Is there a second set to include? (${slCards.length} SportLots cards retrieved, ${bscCards.length} BSC cards expected. After matching: ${cards.slBase.length} matched in SL, ${cards.bscBase.length} in BSC)`,
+            true
+          );
+          
+          if (needsSecondSet) {
+            update('Looking for second set');
+            nextSeries = await findSet({ onlySportlots: true });
+            const nextSLCards = await getSLCardsWithRetry(
+              nextSeries,
+              nextSeries.category,
+              bscCards.length - cards.slBase.length
+            );
+            secondSetCount = nextSLCards.length;
+            
+            // Combine cards from both sets
+            allSlCards = [...slCards, ...nextSLCards];
+            cards = findVariations(bscCards, allSlCards);
+            
+            // Check combined count
+            const totalSlCount = cards.slBase.length;
+            const totalBSCCount = cards.bscBase.length;
+            
+            if (totalSlCount < totalBSCCount) {
+              // Still insufficient after combining sets
+              const useCount = await ask(
+                `Found ${totalSlCount} cards in SportLots (set 1: ${firstSetCount}, set 2: ${secondSetCount}) vs ${totalBSCCount} cards in BSC. Use this count or try again?`,
+                'Use this count',
+                { selectOptions: ['Use this count', 'Try again'] }
+              );
+              
+              if (useCount === 'Try again') {
+                // Loop back to re-select SportLots set
+                update('Retrying SportLots set selection');
+                // Re-select the SportLots set for the current category
+                const newSlSet = await getSLSet(setInfo);
+                if (newSlSet) {
+                  category = await updateCategory(category.id, {
+                    ...category.metadata,
+                    sportlots: newSlSet.key,
+                  });
+                  // Update the category reference in setInfo
+                  if (setInfo.variantName && setInfo.variantName.id === category.id) {
+                    setInfo.variantName = category;
+                  } else if (setInfo.variantType && setInfo.variantType.id === category.id) {
+                    setInfo.variantType = category;
+                  }
+                }
+                // Reset and continue loop
+                allSlCards = [];
+                firstSetCount = 0;
+                secondSetCount = 0;
+                nextSeries = undefined;
+                continue;
+              } else {
+                // User chose to use the count - proceed with combined sets
+                setSelectionComplete = true;
+              }
+            } else {
+              // Counts match or we have enough - proceed
+              setSelectionComplete = true;
+            }
+          } else {
+            // User said no second set - proceed with what we have
+            setSelectionComplete = true;
+          }
+        } else {
+          // Counts match - proceed
+          setSelectionComplete = true;
+        }
+      }
+      
+      // Now process the sets if we have a second set
+      if (nextSeries && secondSetCount > 0) {
+        // We have a second set, need to split BSC cards and process separately
+        const slCards = allSlCards.slice(0, firstSetCount);
+        const nextSLCards = allSlCards.slice(firstSetCount);
+        
         const maxCardNumberString = _.maxBy(nextSLCards, 'cardNumber')?.cardNumber;
         const minCardNumberString = _.minBy(nextSLCards, 'cardNumber')?.cardNumber;
         const maxCardNumber = parseInt(maxCardNumberString?.replace(/\D/g, '') || '0');
@@ -503,9 +741,6 @@ export async function buildSet(setInfo: SetInfo) {
         const prevBSC: Card[] = [];
         bscCards.forEach((card) => {
           const cardNo = parseInt(card.cardNo.replace(/\D/g, '') || '0');
-          // log(
-          //   `cardNo >= minCardNumber && cardNo <= maxCardNumber: ${cardNo} >= ${minCardNumber} && ${cardNo} <= ${maxCardNumber} === ${cardNo >= minCardNumber && cardNo <= maxCardNumber}`,
-          // );
           if (cardNo >= minCardNumber && cardNo <= maxCardNumber) {
             nextBSCCards.push(card);
           } else {
@@ -514,13 +749,8 @@ export async function buildSet(setInfo: SetInfo) {
         });
         bscCards = prevBSC;
         const nextCards = findVariations(nextBSCCards, nextSLCards);
-        // log(`After sorting ${nextCards.bscBase.length} are in Series 2 and ${bscCards.length} are in Series 1`);
-        // log(`Next Cards: ${nextCards.slBase.length} SL Cards and ${nextCards.bscBase.length} BSC Cards`);
-        // log(`Next SL Cards: ${nextCards.slBase.map((card) => card.cardNumber)}`);
-        // log(`Next BSC Cards: ${nextCards.bscBase.map((card) => card.cardNo)}`);
         const nextProducts = await buildProducts(nextSeries.category, nextCards);
         builtProducts += nextProducts.length;
-        // log('builtProducts', builtProducts);
         cards = findVariations(bscCards, slCards);
       }
     } else {

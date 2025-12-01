@@ -39,12 +39,59 @@ type ProductMatchResult = {
   score: number;
 } | null;
 
+type ProductMatchResultWithPerfect = {
+  perfectMatch: ProductMatchResult;
+  bestMatch: ProductMatchResult;
+};
+
+// Check if card number appears exactly in text (not as substring)
+// e.g., "1234" matches "1234" but not "123", "234", or "12345"
+function exactCardNumberMatch(cardNumber: string, text: string): boolean {
+  if (!cardNumber || !text) return false;
+  const normalizedCardNumber = cardNumber.toLowerCase().trim();
+  const normalizedText = text.toLowerCase();
+  
+  // Escape special regex characters
+  const escapedCardNumber = normalizedCardNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  
+  // For exact matching, we need to ensure the card number appears as a complete number
+  // This means it should be surrounded by non-digit characters or start/end of string
+  // But we also need to handle cases where the card number might have letters (e.g., "BC8")
+  
+  // If card number is purely numeric, ensure it's not part of a larger number
+  if (/^\d+$/.test(normalizedCardNumber)) {
+    // Match the number only if it's:
+    // - At start of string followed by non-digit
+    // - Preceded by non-digit and followed by non-digit
+    // - Preceded by non-digit and at end of string
+    // - Standalone word (word boundaries work for numbers when they're separated)
+    const exactMatchRegex = new RegExp(`(^|[^0-9])${escapedCardNumber}([^0-9]|$)`);
+    return exactMatchRegex.test(normalizedText);
+  } else {
+    // For alphanumeric card numbers, use word boundaries
+    const exactMatchRegex = new RegExp(`\\b${escapedCardNumber}\\b`);
+    return exactMatchRegex.test(normalizedText);
+  }
+}
+
+// Check if player name appears exactly in text (not as substring)
+function exactPlayerNameMatch(playerName: string, text: string): boolean {
+  if (!playerName || !text) return false;
+  const normalizedPlayerName = playerName.toLowerCase().trim();
+  const normalizedText = text.toLowerCase();
+  
+  // Check if the full player name appears in the text
+  // This allows for the name to appear as part of a larger string but ensures
+  // we're matching the full name, not just a substring
+  return normalizedText.includes(normalizedPlayerName);
+}
+
 async function matchProductFromOCR(
   frontText: string,
   backText: string,
   products: Product[],
-): Promise<ProductMatchResult> {
-  type ProductScore = { product: Product; score: number };
+): Promise<ProductMatchResultWithPerfect> {
+  type ProductScore = { product: Product; score: number; perfectMatch: boolean };
   const scoredProducts: ProductScore[] = [];
 
   for (const product of products) {
@@ -53,26 +100,41 @@ async function matchProductFromOCR(
     const cardNumber = productMetadata.cardNumber || '';
     const playerNames = (productMetadata.player || []) as string[];
 
-    // Heavily weight finding the card number on the back
-    if (cardNumber && backText.includes(cardNumber.toLowerCase())) {
+    // Check for exact card number match on back
+    const hasExactCardNumber = exactCardNumberMatch(cardNumber, backText);
+    if (hasExactCardNumber) {
       score += 1000;
     }
 
-    // Check each player name
+    // Check each player name for exact matches
     let playerNameOnFront = false;
     let playerNameOnBack = false;
+    let exactPlayerNameFront = false;
+    let exactPlayerNameBack = false;
 
     for (const playerName of playerNames) {
       const normalizedPlayerName = playerName.toLowerCase();
 
-      // Heavily weight player name on both sides
-      if (frontText.includes(normalizedPlayerName)) {
+      // Check for exact match on front
+      if (exactPlayerNameMatch(playerName, frontText)) {
         playerNameOnFront = true;
+        exactPlayerNameFront = true;
         score += 500;
+      } else if (frontText.includes(normalizedPlayerName)) {
+        // Substring match (for scoring but not perfect match)
+        playerNameOnFront = true;
+        score += 300;
       }
-      if (backText.includes(normalizedPlayerName)) {
+
+      // Check for exact match on back
+      if (exactPlayerNameMatch(playerName, backText)) {
         playerNameOnBack = true;
+        exactPlayerNameBack = true;
         score += 500;
+      } else if (backText.includes(normalizedPlayerName)) {
+        // Substring match (for scoring but not perfect match)
+        playerNameOnBack = true;
+        score += 300;
       }
 
       // Count occurrences of last name on back and increase score based on occurrences
@@ -85,8 +147,9 @@ async function matchProductFromOCR(
       }
     }
 
-    // Perfect match: card number + player name on both sides
-    if (cardNumber && backText.includes(cardNumber.toLowerCase()) && playerNameOnFront && playerNameOnBack) {
+    // Perfect match: exact card number + exact player name on both front AND back
+    const isPerfectMatch = hasExactCardNumber && exactPlayerNameFront && exactPlayerNameBack;
+    if (isPerfectMatch) {
       score += 5000; // Perfect match bonus
     }
 
@@ -97,19 +160,26 @@ async function matchProductFromOCR(
       score += 100;
     }
 
-    scoredProducts.push({ product, score });
+    scoredProducts.push({ product, score, perfectMatch: isPerfectMatch });
   }
 
   // Sort by score (highest first)
   scoredProducts.sort((a, b) => b.score - a.score);
 
-  // Return the best match if score > 0
+  // Find perfect match (if any)
+  const perfectMatch = scoredProducts.find((item) => item.perfectMatch);
+  
+  // Find best match (highest score)
   const bestMatch = scoredProducts[0];
-  if (bestMatch && bestMatch.score > 0) {
-    return bestMatch;
-  }
 
-  return null;
+  return {
+    perfectMatch: perfectMatch && perfectMatch.score > 0 
+      ? { product: perfectMatch.product, score: perfectMatch.score }
+      : null,
+    bestMatch: bestMatch && bestMatch.score > 0
+      ? { product: bestMatch.product, score: bestMatch.score }
+      : null,
+  };
 }
 
 async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
@@ -140,11 +210,14 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
       const frontText = ocrResults[0]?.text?.toLowerCase() || '';
       const backText = back ? (ocrResults[1]?.text?.toLowerCase() || '') : '';
 
-      // Score products and find best match
-      const bestMatch = await matchProductFromOCR(frontText, backText, setData.products);
+      // Score products and find matches
+      const matchResult = await matchProductFromOCR(frontText, backText, setData.products);
 
-      if (bestMatch) {
-        const bestProduct = bestMatch.product;
+      // Use perfect match if available, otherwise use best match for default
+      const matchToUse = matchResult.perfectMatch || matchResult.bestMatch;
+
+      if (matchToUse) {
+        const bestProduct = matchToUse.product;
         const bestMetadata = bestProduct.metadata || {};
 
         defaults = {
@@ -153,9 +226,17 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
           cardNumber: bestMetadata.cardNumber || defaults.cardNumber,
           printRun: bestMetadata.printRun || defaults.printRun,
           features: (bestMetadata.features || defaults.features) as string[],
+          // Store whether this was a perfect match for use in matchCard
+          _perfectMatch: matchResult.perfectMatch !== null,
+          // Store the best match player name for default in matchCard
+          _bestMatchPlayer: matchResult.bestMatch?.product.metadata?.player || defaults.player,
         };
 
-        finish(`Product matched: ${bestProduct.title} (score: ${bestMatch.score})`);
+        if (matchResult.perfectMatch) {
+          finish(`Perfect match found: ${bestProduct.title} (score: ${matchToUse.score})`);
+        } else {
+          finish(`Best match found: ${bestProduct.title} (score: ${matchToUse.score}) - will prompt for confirmation`);
+        }
         return defaults;
       }
 

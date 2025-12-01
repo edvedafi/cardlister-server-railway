@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import 'zx/globals';
 import { shutdownSportLots } from './listing-sites/sportlots-adapter';
 import { useSpinners } from './utils/spinners';
-import { buildSet, findSet, updateSetDefaults, updateAllSetMetadata } from './card-data/setData';
+import { buildSet, findSet, updateSetDefaults, updateAllSetMetadata, updateBSCFilters } from './card-data/setData';
 import initializeFirebase from './utils/firebase';
 import { deleteCardsFromSet, getCategory, setCategoryActive, startSync, updateCategory } from './utils/medusa';
 import { ask } from './utils/ask';
@@ -13,7 +13,7 @@ import { retryWithExponentialBackoff } from './utils/retry';
 
 const args = parseArgs(
   {
-    boolean: ['d', 's', 'u'],
+    boolean: ['d', 's', 'u', 'b'],
     string: ['o', 'c'],
     alias: {
       d: 'delete',
@@ -21,6 +21,7 @@ const args = parseArgs(
       s: 'select',
       c: 'category',
       u: 'update-metadata',
+      b: 'update-bsc',
     },
   },
   {
@@ -29,6 +30,7 @@ const args = parseArgs(
     s: 'Select platforms to sync',
     c: 'Category to sync',
     u: 'Update all metadata fields for the selected set',
+    b: 'Update BSC filters for the selected set',
   },
 );
 
@@ -144,7 +146,10 @@ try {
       }
     );
 
-    if (args.u) {
+    if (args.b) {
+      // Update BSC filters only
+      await updateBSCFilters(set);
+    } else if (args.u) {
       // Update all metadata fields including description
       const result = await updateAllSetMetadata(set.category, set.category.metadata || {});
       await setCategoryActive(
