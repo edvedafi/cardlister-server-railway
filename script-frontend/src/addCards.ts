@@ -36,7 +36,7 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o'],
+      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x'],
       string: ['n', 'sl', 'p'],
       alias: {
         s: 'select-bulk-cards',
@@ -51,6 +51,7 @@ try {
         v: 'inventory',
         o: 'no-sync',
         p: 'price',
+        x: 'include-zero-images',
       },
     },
     {
@@ -66,8 +67,15 @@ try {
       v: 'Inventory Mode: Will only show cards with a quantity greater than 0',
       o: 'No Sync run after updating',
       p: 'Price Mode: Update pricing and quantity for cards in a set. Optional percentage reduction (e.g., -p 10 for 10% reduction, -p for 0% reduction)',
+      x: 'Include cards with 0 inventory if they have stored images (only works with -p flag)',
     },
   );
+
+  // Validate that -x flag only works with -p flag
+  if (args['include-zero-images'] && args['price'] === undefined) {
+    error('The -x (include-zero-images) flag can only be used with the -p (price) flag');
+    process.exit(1);
+  }
 
   // Configure SportLots implementation before any SportLots calls
   const slImplArg = (args['sportlots-impl'] || args['sl'] || '').toString().toLowerCase();

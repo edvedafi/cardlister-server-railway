@@ -239,6 +239,15 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
   }
 };
 
+// Helper function to check if a variant has stored images
+const hasStoredImages = (variant: ProductVariant): boolean => {
+  return !!(
+    variant.metadata?.frontImage || 
+    variant.metadata?.backImage || 
+    (variant.metadata?.extraImages && variant.metadata.extraImages.length > 0)
+  );
+};
+
 export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
   if (!setData.products) throw 'Must set products on Set Data before processing price updates';
 
@@ -333,8 +342,12 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
       if (!product.variants) throw new Error('Product has no variants');
       const variants = _.sortBy(product.variants, 'metadata.cardNumber');
       for (let j = 0; j < variants.length; j++) {
-        if (!args['inventory'] || variants[j].inventory_quantity > 0) {
-          const variant = variants[j];
+        const variant = variants[j];
+        // Filter: include if inventory mode is off, or inventory > 0, or (-x flag is set and variant has stored images)
+        const shouldInclude = !args['inventory'] || 
+                             variant.inventory_quantity > 0 || 
+                             (args['include-zero-images'] && hasStoredImages(variant));
+        if (shouldInclude) {
           processedVariants++;
           
           // Update progress
@@ -342,8 +355,16 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
           
           // Get current quantity from batch-fetched map (O(1) lookup instead of API call)
           const currentQuantity = variant.sku ? (inventoryQuantityMap.get(variant.sku) ?? 0) : 0;
-          if (currentQuantity == null || currentQuantity === undefined || currentQuantity <= 0) {
-            continue; // Skip cards with 0, null, undefined, or negative quantity
+          
+          // Skip cards with 0 inventory unless -x flag is set and card has stored images
+          if (currentQuantity == null || currentQuantity === undefined || currentQuantity < 0) {
+            continue; // Skip cards with null, undefined, or negative quantity
+          }
+          if (currentQuantity === 0) {
+            // Allow 0 inventory if -x flag is set and variant has stored images
+            if (!args['include-zero-images'] || !hasStoredImages(variant)) {
+              continue; // Skip cards with 0 inventory that don't meet the criteria
+            }
           }
           
           let title = variant.title.trim();
@@ -369,8 +390,8 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
           // Display card title
           log(`\n${chalk.bold(title)}`);
 
-          // Parse percentage reduction from args (default to 0 if not provided)
-          const priceReductionPercent = args['price'] ? parseFloat(args['price'] as string) || 0 : 0;
+          // Parse percentage reduction from args (default to 10 if flag provided without value, 0 if flag not provided)
+          const priceReductionPercent = args['price'] !== undefined ? (parseFloat(args['price'] as string) || 10) : 0;
           
           // Calculate new prices with percentage reduction, maintaining minimums per platform
           const calculateReducedPrice = (currentPrice: number, minPrice: number): number => {
@@ -419,7 +440,11 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
               { value: 'original', name: 'Original Pricing' },
               { value: 'manual', name: 'Manually Set Prices' },
             ];
-            pricingChoice = await ask('Select Pricing Option', undefined, { selectOptions: pricingOptions });
+            // Default to 'original' for 0-inventory cards with images when -x flag is set
+            const defaultPricingChoice = (currentQuantity === 0 && args['include-zero-images'] && hasStoredImages(variant)) 
+              ? 'original' 
+              : undefined;
+            pricingChoice = await ask('Select Pricing Option', defaultPricingChoice, { selectOptions: pricingOptions });
           }
 
           if (pricingChoice === 'reduced') {
