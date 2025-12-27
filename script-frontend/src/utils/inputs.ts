@@ -5,6 +5,9 @@ import chalk from 'chalk';
 import { useSpinners } from './spinners.js';
 import { minimist } from 'zx';
 import ParsedArgs = minimist.ParsedArgs;
+import fs from 'fs/promises';
+import * as fsSync from 'fs';
+import path from 'path';
 
 const { showSpinner } = useSpinners('trim', chalk.cyan);
 
@@ -82,22 +85,22 @@ export async function getInputs(args: ParsedArgs) {
 }
 
 export const getInputDirectory = async () => {
-  const directories = fs.readdirSync('input', { withFileTypes: true });
+  const directories = fsSync.readdirSync('input', { withFileTypes: true });
   const inputDirectories = ['input', 'bulk', ...directories.filter((dir) => dir.isDirectory()).map((dir) => dir.name)];
   let input_directory = await ask('Input Directory', undefined, { selectOptions: inputDirectories });
   if (input_directory === 'input') {
     input_directory = 'input/';
   } else if (input_directory === 'bulk') {
     //check to see if the bulk directory exists
-    if (fs.existsSync('input/bulk')) {
+    if (fsSync.existsSync('input/bulk')) {
       const shouldRest = true; //await ask('Reset Bulk?', false);
       if (shouldRest) {
         //delete everything in the bulk directory
-        fs.rmSync('input/bulk', { recursive: true });
-        fs.mkdirSync('input/bulk');
+        fsSync.rmSync('input/bulk', { recursive: true });
+        fsSync.mkdirSync('input/bulk');
       }
     } else {
-      fs.mkdirSync('input/bulk');
+      fsSync.mkdirSync('input/bulk');
     }
     input_directory = `input/bulk/`;
   } else if (input_directory.indexOf('/') !== input_directory.length - 1) {
@@ -113,11 +116,12 @@ export const getFiles = async (inputDirectory: string, requireEven = true): Prom
   const { finish, error } = showSpinner('inputs', 'Getting Files');
   let files: string[] = [];
   try {
-    const lsOutput = await $`ls ${inputDirectory}*.jpg`;
-    files = lsOutput
-      .toString()
-      .split('\n')
-      .filter((image) => image !== '');
+    // Use Node.js fs operations instead of shell command to avoid zx segfault issues
+    const dirEntries = await fs.readdir(inputDirectory, { withFileTypes: true });
+    files = dirEntries
+      .filter(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.jpg'))
+      .map(entry => path.join(inputDirectory, entry.name));
+    
     if (requireEven && files.length % 2 !== 0) {
       const ok = await ask(`Odd Number of Files? [${files.length}]`, false);
       if (!ok) {

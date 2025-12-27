@@ -121,6 +121,31 @@ export async function getCategory(id: string): Promise<ProductCategory> {
   return response.product_category;
 }
 
+/**
+ * Recursively get all leaf categories (categories without children) under a given category
+ */
+export async function getAllLeafCategories(categoryId: string): Promise<ProductCategory[]> {
+  const leafCategories: ProductCategory[] = [];
+  
+  const processCategory = async (catId: string) => {
+    const category = await getCategory(catId);
+    const children = await getCategories(catId);
+    
+    if (children.length === 0) {
+      // This is a leaf category (no children)
+      leafCategories.push(category);
+    } else {
+      // Recursively process all children
+      for (const child of children) {
+        await processCategory(child.id);
+      }
+    }
+  };
+  
+  await processCategory(categoryId);
+  return leafCategories;
+}
+
 export type Variation = {
   title: string;
   sku: string;
@@ -582,7 +607,95 @@ export async function getInventoryQuantity(productVariant: ProductVariant): Prom
   const locationLevel = inventoryItem.location_levels?.find(
     (level: { location_id: string }) => level.location_id === stockLocationId,
   );
-  return locationLevel?.stocked_quantity || 0;
+  const quantity = locationLevel?.stocked_quantity || 0;
+  
+  return quantity;
+}
+
+/**
+ * Batch fetch inventory quantities for multiple variants.
+ * Returns a map of SKU -> quantity for O(1) lookup.
+ * This is much more efficient than calling getInventoryQuantity() for each variant individually.
+ * Uses parallel requests in batches to avoid overwhelming the API.
+ */
+export async function getInventoryQuantitiesBatch(
+  variants: ProductVariant[],
+  logProgress?: (message: string) => void,
+): Promise<Map<string, number>> {
+  const startTime = Date.now();
+  const skuArray: string[] = [];
+  
+  // Collect all SKUs
+  for (const variant of variants) {
+    if (variant.sku && !skuArray.includes(variant.sku)) {
+      skuArray.push(variant.sku);
+    }
+  }
+  
+  if (logProgress) {
+    logProgress(`Fetching inventory for ${skuArray.length} variants...`);
+  }
+  
+  const quantityMap = new Map<string, number>();
+  const stockLocationId = await getStockLocationId();
+  
+  // Fetch inventory items in parallel batches (10 at a time to avoid overwhelming the API)
+  const batchSize = 10;
+  let fetchedCount = 0;
+  
+  for (let i = 0; i < skuArray.length; i += batchSize) {
+    const batch = skuArray.slice(i, i + batchSize);
+    
+    // Fetch all SKUs in this batch in parallel
+    const batchPromises = batch.map(async (sku) => {
+      try {
+        const response = await medusa.admin.inventoryItems.list({ 
+          sku,
+          expand: 'location_levels',
+        });
+        
+        const inventoryItem = response.inventory_items?.[0];
+        if (inventoryItem) {
+          const locationLevel = inventoryItem.location_levels?.find(
+            (level: { location_id: string }) => level.location_id === stockLocationId,
+          );
+          return { sku, quantity: locationLevel?.stocked_quantity || 0 };
+        }
+        return { sku, quantity: 0 };
+      } catch (error) {
+        // Log error but continue processing - log() is designed to minimize UI interference
+        log(`Error fetching inventory for SKU ${sku}: ${error}`);
+        return { sku, quantity: 0 };
+      }
+    });
+    
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Add results to map
+    for (const result of batchResults) {
+      quantityMap.set(result.sku, result.quantity);
+      fetchedCount++;
+    }
+    
+    // Update progress
+    if (logProgress) {
+      logProgress(`Fetched ${fetchedCount}/${skuArray.length} inventory items...`);
+    }
+  }
+  
+  // Ensure all SKUs are in the map (set to 0 if not found)
+  for (const sku of skuArray) {
+    if (!quantityMap.has(sku)) {
+      quantityMap.set(sku, 0);
+    }
+  }
+  
+  const duration = Date.now() - startTime;
+  if (logProgress) {
+    logProgress(`Fetched inventory for ${fetchedCount} variants in ${duration}ms`);
+  }
+  
+  return quantityMap;
 }
 
 export async function updateInventory(

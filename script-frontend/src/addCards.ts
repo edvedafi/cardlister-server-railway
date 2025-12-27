@@ -9,9 +9,9 @@ import { findSet } from './card-data/setData';
 import { getFiles, getInputs } from './utils/inputs';
 import { parseArgs } from './utils/parseArgs';
 import terminalImage from 'term-img';
-import { processSet } from './card-data/listSet';
+import { processSet, processPrice } from './card-data/listSet';
 import type { ProductCategory } from '@medusajs/client-types';
-import { getCategory } from './utils/medusa';
+import { getCategory, getAllLeafCategories, startSync, getProducts } from './utils/medusa';
 import type { SetInfo } from './models/setInfo';
 
 configDotenv();
@@ -85,7 +85,8 @@ try {
 
   //gather the list of files that we will process
   let files: string[] = [];
-  if (input_directory !== 'input/bulk/') {
+  // Skip file listing in bulk/price mode (files aren't needed for price updates)
+  if (input_directory !== 'input/bulk' && input_directory !== 'input/bulk/') {
     files = await getFiles(input_directory);
   }
 
@@ -147,10 +148,71 @@ try {
       }
     }
   }
-  const setData = await findSet({ allowParent: args['inventory'], parentName: 'All' });
+  const setData = await findSet({ allowParent: args['inventory'] || args['price'] !== undefined, parentName: 'All' });
   update('Processing Singles');
   // log(setData);
-  if (setData.category && setData.category.category_children.length === 0) {
+  
+  // Handle parent selection in price mode - iterate through all children and sync in background
+  let handledParentSync = false;
+  const syncPromises: Promise<void>[] = [];
+  if (args['price'] !== undefined && setData.category) {
+    // Ensure category has children loaded
+    const categoryWithChildren = await getCategory(setData.category.id);
+    
+    // Check if this is a parent category (has children)
+    if (categoryWithChildren.category_children && categoryWithChildren.category_children.length > 0) {
+      update('Getting all leaf categories for parent sync...');
+      const leafCategories = await getAllLeafCategories(setData.category.id);
+      // Sort categories alphabetically by name
+      leafCategories.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      log(`Found ${leafCategories.length} leaf categories to process`);
+      
+      // Process each leaf category: update prices/inventory, then start sync in background
+      for (const category of leafCategories) {
+        log(`\n${chalk.bold(`Updating Inventory and Pricing on ${category.name || category.id}`)}`);
+        
+        // Build SetInfo for this category
+        const categorySetInfo: SetInfo = {
+          ...setData,
+          category: category,
+          metadata: category.metadata || {},
+        };
+        
+        // Get products for this category
+        categorySetInfo.products = await getProducts(category.id);
+        
+        // Run price update logic
+        if (categorySetInfo.products.length > 0) {
+          await processPrice(categorySetInfo, args);
+        } else {
+          log(`No products found for ${category.name || category.id}, skipping...`);
+        }
+        
+        // Track sync promise to ensure initialization completes before exit
+        syncPromises.push(
+          startSync(category.id).catch((e) => {
+            log(`${chalk.red(`Sync failed for ${category.name || category.id}:`)} ${e}`);
+          })
+        );
+      }
+      
+      // Wait for all sync initialization calls to complete before proceeding
+      // This ensures HTTP connections are properly established before process exit
+      if (syncPromises.length > 0) {
+        update('Initializing sync operations...');
+        await Promise.allSettled(syncPromises);
+        log(`Started sync for ${syncPromises.length} categories`);
+      }
+      
+      finish('Completed all parent price updates');
+      handledParentSync = true;
+    }
+  }
+  
+  // If we already handled parent sync, don't process children again
+  if (handledParentSync) {
+    // Already processed all leaf categories, exit early
+  } else if (setData.category && setData.category.category_children.length === 0) {
     await processSet(setData, files, args);
   } else {
     const processChildren = async (productCategory: ProductCategory, data: SetInfo) => {
@@ -238,7 +300,9 @@ try {
   // }
 } catch (e) {
   error(e);
+  process.exit(1);
 } finally {
   await shutdown();
   finish('Completed Processing');
+  process.exit(0);
 }
