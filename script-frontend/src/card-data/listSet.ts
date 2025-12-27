@@ -4,7 +4,7 @@ import Queue from 'queue';
 import { getCardData, saveBulk, saveListing } from './cardData';
 import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
-import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion } from '../utils/medusa';
+import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion, getInventoryQuantitiesBatch } from '../utils/medusa';
 import { ask, type AskSelectOption } from '../utils/ask';
 import type { SetInfo } from '../models/setInfo';
 import type { ProductImage } from '../models/cards';
@@ -239,10 +239,10 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
   }
 };
 
-const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
+export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
   if (!setData.products) throw 'Must set products on Set Data before processing price updates';
 
-  const { finish, error } = showSpinner('price', `Processing Price Updates`);
+  const { finish, error, update: updateSpinner } = showSpinner('price', `Processing Price Updates`);
   log('Updating Prices and Quantities');
   
   // Create queue for price updates
@@ -287,11 +287,46 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
       return asInt;
     });
 
-    const commonPricing = await getCommonPricing();
+    // Collect all variants for batch inventory fetching
+    const allVariants: ProductVariant[] = [];
+    for (const product of products) {
+      if (product.variants) {
+        allVariants.push(...product.variants);
+      }
+    }
+
+    // Batch fetch inventory quantities upfront (major performance optimization)
+    updateSpinner('Fetching inventory quantities...');
+    const inventoryStartTime = Date.now();
+    const inventoryQuantityMap = await getInventoryQuantitiesBatch(
+      allVariants,
+      (message) => updateSpinner(message)
+    );
+    const inventoryDuration = Date.now() - inventoryStartTime;
+    log(`Fetched inventory for ${allVariants.length} variants in ${inventoryDuration}ms`);
+
+    // Cache region IDs upfront to avoid repeated calls
+    updateSpinner('Loading region information...');
+    const regionStartTime = Date.now();
+    const ebayRegionId = await getRegion('ebay');
+    const mcpRegionId = await getRegion('MCP');
     const bscRegionId = await getRegion('BSC');
     const sportlotsRegionId = await getRegion('SportLots');
+    const regionDuration = Date.now() - regionStartTime;
+    log(`Loaded region IDs in ${regionDuration}ms`);
+
+    const commonPricing = await getCommonPricing();
     const bscCommonPrice = commonPricing.find((p) => bscRegionId === p.region_id)?.amount || 25;
     const sportlotsCommonPrice = commonPricing.find((p) => sportlotsRegionId === p.region_id)?.amount || 18;
+
+    // Calculate total variants for progress tracking
+    let totalVariants = 0;
+    let processedVariants = 0;
+    for (const product of products) {
+      if (product.variants) {
+        totalVariants += product.variants.length;
+      }
+    }
 
     for (let i = 0; i < products.length; i++) {
       const product = products[i];
@@ -300,9 +335,13 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
       for (let j = 0; j < variants.length; j++) {
         if (!args['inventory'] || variants[j].inventory_quantity > 0) {
           const variant = variants[j];
+          processedVariants++;
           
-          // Get current quantity first and skip if invalid
-          const currentQuantity = await getInventoryQuantity(variant);
+          // Update progress
+          updateSpinner(`Processing variant ${processedVariants}/${totalVariants}: ${variant.title}`);
+          
+          // Get current quantity from batch-fetched map (O(1) lookup instead of API call)
+          const currentQuantity = variant.sku ? (inventoryQuantityMap.get(variant.sku) ?? 0) : 0;
           if (currentQuantity == null || currentQuantity === undefined || currentQuantity <= 0) {
             continue; // Skip cards with 0, null, undefined, or negative quantity
           }
@@ -315,10 +354,9 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
               .join('\n   ')}\n${chalk.green('?')} ${title}`;
           }
 
-          // Get current prices
+          // Get current prices using cached region IDs
           const currentPrices = variant.prices || [];
-          const getCurrentPrice = async (region: string): Promise<number | undefined> => {
-            const regionId = await getRegion(region);
+          const getCurrentPrice = (region: string, regionId: string): number | undefined => {
             const price = currentPrices.find((p) => p.region_id === regionId);
             const amount: number | string | undefined = price?.amount;
             // @ts-expect-error sometimes the backend returns a string for some crazy reason
@@ -341,10 +379,11 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
             return Math.max(reducedPrice, minPrice);
           };
 
-          const currentEbay = (await getCurrentPrice('ebay')) || 99;
-          const currentMCP = (await getCurrentPrice('MCP')) || 100;
-          const currentBSC = (await getCurrentPrice('BSC')) || bscCommonPrice;
-          const currentSportLots = (await getCurrentPrice('SportLots')) || sportlotsCommonPrice;
+          // Use cached region IDs instead of making API calls
+          const currentEbay = getCurrentPrice('ebay', ebayRegionId) || 99;
+          const currentMCP = getCurrentPrice('MCP', mcpRegionId) || 100;
+          const currentBSC = getCurrentPrice('BSC', bscRegionId) || bscCommonPrice;
+          const currentSportLots = getCurrentPrice('SportLots', sportlotsRegionId) || sportlotsCommonPrice;
 
           const calculatedEbay = calculateReducedPrice(currentEbay, 99);
           const calculatedMCP = calculateReducedPrice(currentMCP, 100);
@@ -384,20 +423,20 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
           }
 
           if (pricingChoice === 'reduced') {
-            // Use calculated prices with reduction
+            // Use calculated prices with reduction (using cached region IDs)
             newPrices = [
-              { amount: calculatedEbay, region_id: await getRegion('ebay') } as MoneyAmount,
-              { amount: calculatedMCP, region_id: await getRegion('MCP') } as MoneyAmount,
-              { amount: calculatedBSC, region_id: await getRegion('BSC') } as MoneyAmount,
-              { amount: calculatedSportLots, region_id: await getRegion('SportLots') } as MoneyAmount,
+              { amount: calculatedEbay, region_id: ebayRegionId } as MoneyAmount,
+              { amount: calculatedMCP, region_id: mcpRegionId } as MoneyAmount,
+              { amount: calculatedBSC, region_id: bscRegionId } as MoneyAmount,
+              { amount: calculatedSportLots, region_id: sportlotsRegionId } as MoneyAmount,
             ];
           } else if (pricingChoice === 'common') {
-            // Use common/minimum pricing
+            // Use common/minimum pricing (using cached region IDs)
             newPrices = [
-              { amount: 99, region_id: await getRegion('ebay') } as MoneyAmount,
-              { amount: 100, region_id: await getRegion('MCP') } as MoneyAmount,
-              { amount: bscCommonPrice, region_id: await getRegion('BSC') } as MoneyAmount,
-              { amount: sportlotsCommonPrice, region_id: await getRegion('SportLots') } as MoneyAmount,
+              { amount: 99, region_id: ebayRegionId } as MoneyAmount,
+              { amount: 100, region_id: mcpRegionId } as MoneyAmount,
+              { amount: bscCommonPrice, region_id: bscRegionId } as MoneyAmount,
+              { amount: sportlotsCommonPrice, region_id: sportlotsRegionId } as MoneyAmount,
             ];
           } else if (pricingChoice === 'original') {
             // Use original/current prices (already set above)
@@ -422,11 +461,12 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
             const manualBSC = await getPrice('BSC', calculatedBSC, bscCommonPrice);
             const manualSportLots = await getPrice('SportLots', calculatedSportLots, sportlotsCommonPrice);
 
+            // Use cached region IDs
             newPrices = [
-              { amount: manualEbay, region_id: await getRegion('ebay') } as MoneyAmount,
-              { amount: manualMCP, region_id: await getRegion('MCP') } as MoneyAmount,
-              { amount: manualBSC, region_id: await getRegion('BSC') } as MoneyAmount,
-              { amount: manualSportLots, region_id: await getRegion('SportLots') } as MoneyAmount,
+              { amount: manualEbay, region_id: ebayRegionId } as MoneyAmount,
+              { amount: manualMCP, region_id: mcpRegionId } as MoneyAmount,
+              { amount: manualBSC, region_id: bscRegionId } as MoneyAmount,
+              { amount: manualSportLots, region_id: sportlotsRegionId } as MoneyAmount,
             ];
           }
 
@@ -434,16 +474,15 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
           const newQuantity = await ask('Quantity', currentQuantity || undefined);
 
           // Update prices and quantity if changed
-          // Compare new prices with current prices to detect changes
-          const getNewPrice = async (region: string): Promise<number> => {
-            const regionId = await getRegion(region);
+          // Compare new prices with current prices to detect changes (using cached region IDs)
+          const getNewPrice = (regionId: string): number => {
             const price = newPrices.find((p) => p.region_id === regionId);
             return price?.amount || 0;
           };
-          const newEbayAmount = await getNewPrice('ebay');
-          const newMCPAmount = await getNewPrice('MCP');
-          const newBSCAmount = await getNewPrice('BSC');
-          const newSportLotsAmount = await getNewPrice('SportLots');
+          const newEbayAmount = getNewPrice(ebayRegionId);
+          const newMCPAmount = getNewPrice(mcpRegionId);
+          const newBSCAmount = getNewPrice(bscRegionId);
+          const newSportLotsAmount = getNewPrice(sportlotsRegionId);
 
           const pricesChanged = pricingChoice !== 'original' && (
             newEbayAmount !== currentEbay ||
@@ -488,13 +527,74 @@ const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
       }
     }
     
-    // Wait for queue to finish
-    if (queuePriceUpdates.length > 0) {
-      await new Promise<void>((resolve) => {
-        queuePriceUpdates.addEventListener('end', () => {
-          resolve();
+    // Wait for queue to finish - ensure it completes
+    const initialQueueLength = queuePriceUpdates.length;
+    if (initialQueueLength > 0) {
+      updateSpinner(`Waiting for ${initialQueueLength} price updates to complete...`);
+      try {
+        await new Promise<void>((resolve) => {
+          let resolved = false;
+          let checkInterval: NodeJS.Timeout | null = null;
+          let timeoutHandle: NodeJS.Timeout | null = null;
+          
+          const cleanup = () => {
+            if (!resolved) {
+              resolved = true;
+              try {
+                queuePriceUpdates.removeEventListener('end', onEnd);
+                queuePriceUpdates.removeEventListener('error', onError);
+              } catch (e) {
+                // Ignore cleanup errors
+              }
+              // Clear interval and timeout to prevent them from keeping the process alive
+              if (checkInterval) {
+                clearInterval(checkInterval);
+                checkInterval = null;
+              }
+              if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+              }
+            }
+          };
+          
+          const onEnd = () => {
+            cleanup();
+            resolve();
+          };
+          
+          const onError = (e: any) => {
+            cleanup();
+            const errorMsg = e.detail?.error || e;
+            log(`${chalk.red('Queue error:')} ${errorMsg}`);
+            // Still resolve to continue processing - errors are already logged in updateErrors
+            resolve();
+          };
+          
+          queuePriceUpdates.addEventListener('end', onEnd);
+          queuePriceUpdates.addEventListener('error', onError);
+          
+          // Fallback: check periodically if queue is done (in case event doesn't fire)
+          checkInterval = setInterval(() => {
+            if (queuePriceUpdates.length === 0 && !resolved) {
+              cleanup();
+              resolve();
+            }
+          }, 100);
+          
+          // Safety timeout - resolve after 5 minutes even if queue isn't done
+          timeoutHandle = setTimeout(() => {
+            if (!resolved) {
+              cleanup();
+              log(`${chalk.yellow('Warning:')} Queue timeout - forcing completion`);
+              resolve();
+            }
+          }, 300000);
         });
-      });
+      } catch (e) {
+        log(`${chalk.yellow('Warning:')} Error waiting for queue: ${e}`);
+        // Continue anyway - errors are already logged
+      }
     }
     
     // Print any errors that occurred
