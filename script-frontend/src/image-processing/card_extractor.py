@@ -279,10 +279,12 @@ def extract_with_ollama(front_path: str, back_path: str) -> dict:
     """Extract card info using a local Ollama vision model.
 
     Makes two separate requests (one per image) because most vision models
-    only support a single image per request. Results are merged, preferring
-    the front for player/team and the back for card_number, but checking
-    both sides for all fields.
+    only support a single image per request. Requests are fired in parallel
+    using threads. Results are merged, preferring the front for player/team
+    and the back for card_number, but checking both sides for all fields.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     ollama_host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
     ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2-vision:11b')
 
@@ -295,8 +297,11 @@ def extract_with_ollama(front_path: str, back_path: str) -> dict:
     front_b64, _ = encode_image(front_path)
     back_b64, _ = encode_image(back_path)
 
-    front_result = _ollama_request(front_b64, prompt, ollama_host, ollama_model)
-    back_result  = _ollama_request(back_b64,  prompt, ollama_host, ollama_model)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        front_future = executor.submit(_ollama_request, front_b64, prompt, ollama_host, ollama_model)
+        back_future  = executor.submit(_ollama_request, back_b64,  prompt, ollama_host, ollama_model)
+        front_result = front_future.result()
+        back_result  = back_future.result()
 
     return _merge_results(front_result, back_result)
 
