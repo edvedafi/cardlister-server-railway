@@ -6,3 +6,4 @@ script-frontend/input/
 script-frontend/output
 *.env*
 script-frontend/venv/*
+script-frontend/log/
