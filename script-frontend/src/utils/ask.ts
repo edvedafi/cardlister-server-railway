@@ -24,12 +24,13 @@ export type AskOptions = {
   isYN?: boolean;
   cancellable?: boolean;
   isArray?: boolean;
+  validate?: (value: string) => boolean | string | Promise<boolean | string>;
 };
 
 export const ask = async (
   questionText: string,
   defaultAnswer: any = undefined,
-  { maxLength, selectOptions, isYN = false, cancellable = false, isArray = false }: AskOptions = {},
+  { maxLength, selectOptions, isYN = false, cancellable = false, isArray = false, validate }: AskOptions = {},
 ): Promise<any> => {
   if (isArray) {
     const defaultAnswers = defaultAnswer ? (defaultAnswer as unknown[]) : [];
@@ -37,7 +38,7 @@ export const ask = async (
     let i = 0;
     let answer;
     do {
-      answer = await askInternal(questionText, defaultAnswers[i], { maxLength, selectOptions, isYN, cancellable });
+      answer = await askInternal(questionText, defaultAnswers[i], { maxLength, selectOptions, isYN, cancellable, validate });
       if (answer) {
         result.push(answer);
       }
@@ -48,9 +49,9 @@ export const ask = async (
     return await new Promise((resolve) => {
       queue.push(async () => {
         if (cancellable) {
-          resolve(askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable }));
+          resolve(askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable, validate }));
         } else {
-          resolve(await askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable }));
+          resolve(await askInternal(questionText, defaultAnswer, { maxLength, selectOptions, isYN, cancellable, validate }));
         }
       });
     });
@@ -60,7 +61,7 @@ export const ask = async (
 const askInternal = async (
   questionText: string,
   defaultAnswer: any = undefined,
-  { maxLength, selectOptions, isYN, cancellable = false }: AskOptions = {},
+  { maxLength, selectOptions, isYN, cancellable = false, validate }: AskOptions = {},
 ): Promise<any> => {
   pauseSpinners();
   if (typeof defaultAnswer === 'boolean' || isYes(defaultAnswer) || isNo(defaultAnswer)) {
@@ -101,9 +102,9 @@ const askInternal = async (
     } else {
       // answer = await question(`${displayText}: `);
       if (cancellable) {
-        answer = input({ message: displayText, default: defaultAnswer });
+        answer = input({ message: displayText, default: defaultAnswer, validate });
       } else {
-        answer = await input({ message: displayText, default: defaultAnswer });
+        answer = await input({ message: displayText, default: defaultAnswer, validate });
       }
     }
 

@@ -6,14 +6,11 @@ import { type UpdateSpinner, useSpinners } from '../utils/spinners.js';
 import type { Metadata, SetInfo } from '../models/setInfo';
 import type { CropHints, ImageRecognitionResults } from '../models/cards';
 import type { Product } from '@medusajs/client-types';
-import { HfInference } from '@huggingface/inference';
 import { protos } from '@google-cloud/vision';
 
 const { showSpinner } = useSpinners('firebase', '#f4d02e');
 
 dotenv.config();
-
-const hf = new HfInference(process.env.HF_TOKEN);
 
 const detectionFeatures = [
   { type: 'LABEL_DETECTION' },
@@ -182,6 +179,75 @@ async function matchProductFromOCR(
   };
 }
 
+/**
+ * Match a product against structured card info extracted by the vision AI.
+ * More precise than matchProductFromOCR because the input is already structured.
+ */
+function matchProductFromCardInfo(
+  cardInfo: { player: string | null; team: string | null; card_number: string | null },
+  products: Product[],
+): ProductMatchResultWithPerfect {
+  type ProductScore = { product: Product; score: number; perfectMatch: boolean };
+  const scoredProducts: ProductScore[] = [];
+
+  const extractedNumber = cardInfo.card_number?.toLowerCase().trim() ?? null;
+  const extractedPlayer = cardInfo.player?.toLowerCase().trim() ?? null;
+
+  for (const product of products) {
+    let score = 0;
+    const meta = product.metadata || {};
+    const productCardNumber = ((meta.cardNumber as string) || '').toLowerCase().trim();
+    const productPlayers = ((meta.player as string[]) || []).map((p) => p.toLowerCase().trim());
+
+    // Card number match — most specific signal
+    let cardNumberMatched = false;
+    if (extractedNumber && productCardNumber) {
+      if (extractedNumber === productCardNumber) {
+        score += 2000;
+        cardNumberMatched = true;
+      }
+    }
+
+    // Player name match
+    let playerMatched = false;
+    if (extractedPlayer) {
+      for (const productPlayer of productPlayers) {
+        if (extractedPlayer === productPlayer) {
+          score += 1000;
+          playerMatched = true;
+          break;
+        } else if (extractedPlayer.includes(productPlayer) || productPlayer.includes(extractedPlayer)) {
+          score += 400;
+          playerMatched = true;
+          break;
+        }
+      }
+    }
+
+    // Perfect match: both card number and player matched with high confidence
+    const isPerfectMatch = cardNumberMatched && playerMatched;
+    if (isPerfectMatch) {
+      score += 3000;
+    }
+
+    scoredProducts.push({ product, score, perfectMatch: isPerfectMatch });
+  }
+
+  scoredProducts.sort((a, b) => b.score - a.score);
+
+  const perfectMatch = scoredProducts.find((item) => item.perfectMatch);
+  const bestMatch = scoredProducts[0];
+
+  return {
+    perfectMatch: perfectMatch && perfectMatch.score > 0
+      ? { product: perfectMatch.product, score: perfectMatch.score }
+      : null,
+    bestMatch: bestMatch && bestMatch.score > 0
+      ? { product: bestMatch.product, score: bestMatch.score }
+      : null,
+  };
+}
+
 async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
   const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
 
@@ -197,21 +263,21 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
     defaults.raw?.push(back);
   }
 
-  // New branch: If products exist, score them based on OCR results
-  // Using EasyOCR for FREE text extraction (cost-effective alternative to Google Vision)
+  // New branch: If products exist, extract structured card info and match against catalog
+  // Uses card_extractor.py (Ollama vision model or Claude Haiku) for structured extraction
   if (setData.products && setData.products.length > 0) {
     try {
-      update('Extracting text from card images using EasyOCR');
-      const { extractTextWithOCR } = await import('../image-processing/ocr-extractor.js');
-      
-      const imagePaths = back ? [front, back] : [front];
-      const ocrResults = await extractTextWithOCR(imagePaths);
-      
-      const frontText = ocrResults[0]?.text?.toLowerCase() || '';
-      const backText = back ? (ocrResults[1]?.text?.toLowerCase() || '') : '';
+      update('Extracting card info using vision AI (card extractor)');
+      const { extractCardInfo } = await import('../image-processing/card-extractor.js');
+      const { resizeImageForDisplay } = await import('../image-processing/imageProcessor.js');
 
-      // Score products and find matches
-      const matchResult = await matchProductFromOCR(frontText, backText, setData.products);
+      const backPath = back ?? front; // use front as fallback if no back image
+      const resizedFront = await resizeImageForDisplay(front);
+      const resizedBack = await resizeImageForDisplay(backPath);
+      const cardInfo = await extractCardInfo(resizedFront, resizedBack);
+
+      // Score products and find matches using structured card info
+      const matchResult = await matchProductFromCardInfo(cardInfo, setData.products);
 
       // Use perfect match if available, otherwise use best match for default
       const matchToUse = matchResult.perfectMatch || matchResult.bestMatch;
@@ -242,7 +308,7 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
 
       finish('No good product matches found, falling back to standard processing');
     } catch (e) {
-      error(String(e));
+      error(`Card extractor failed: ${String(e)}`);
       // Fall through to standard processing
     }
   }
@@ -409,7 +475,7 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
       await addSearch(frontResult, true);
     }
 
-    defaults = await extractData(searchParagraphs, defaults, setData.metadata || [], update);
+    defaults = await extractData(searchParagraphs, defaults, setData.metadata || {}, update);
 
     finish(`Image Recognition ${front} converted to ${JSON.stringify(defaults)}`);
   } catch (e) {
@@ -472,133 +538,18 @@ const getCropHints = async (client: ImageAnnotatorClient, image: string): Promis
   }
 };
 
-export const callNLP = async (text: string) => {
-  return await hf.tokenClassification({
-    model: 'dslim/bert-base-NER-uncased',
-    inputs: text,
-  });
+export const callNLP = async (_text: string) => {
+  // HuggingFace Inference API disabled — the old endpoint (api-inference.huggingface.co)
+  // is no longer supported. Player names are detected via EasyOCR product matching instead.
+  return [] as { entity_group: string; word: string; score: number }[];
 };
-export const runNLP = async (text: SearchableData[], setData: Metadata, update: UpdateSpinner) => {
-  const brands = await getBrands();
-  const inserts = await getInserts();
-  const sets = await getSets();
+export const runNLP = async (_text: SearchableData[], setData: Metadata, update: UpdateSpinner) => {
   if (setData.player) {
     update('Skipping NLP because player is already set');
-    return { player: setData.player };
-  } else {
-    update('Searching for a player name');
-    const countWords = (word: string): number => {
-      if (word) {
-        const search = word.toLowerCase();
-        return text.reduce((count, paragraph) => count + (paragraph.lowerCase?.includes(search) ? 1 : 0), 0);
-      } else {
-        return 0;
-      }
-    };
-    const wordCount = (name: string) => name.split(' ').length;
-    const results: Partial<ImageRecognitionResults> = {};
-    const textBlock = text.map((block) => block.word).join('. ');
-    update('Calling NLP engine');
-    const segments = await callNLP(textBlock);
-    update('Filtering results for PER type');
-    const persons = segments.filter((segment) => segment.entity_group === 'PER');
-    update(`Found ${persons.length} PER type results`);
-
-    if (persons.length === 1) {
-      results.player = titleCase(persons[0].word);
-      update(`Found player ${results.player}`);
-    } else if (persons.length > 1) {
-      update(`Found ${persons.length} PER type results, filtering for names`);
-      const names = persons
-        //replace # with wildcard regex search for letters only of the text input
-        .map((person) => {
-          let finalWord;
-          try {
-            if (person.word.includes('#') && !person.word.includes('/')) {
-              const rawWord = text.find((word) => word?.lowerCase?.match(person?.word?.replace(/#/g, "[A-Za-z.']+")));
-              if (rawWord) {
-                const end = person.word.replace(/#/g, '');
-                finalWord =
-                  rawWord && rawWord.word && rawWord.lowerCase
-                    ? rawWord.word.slice(0, rawWord.lowerCase.indexOf(end) + end.length)
-                    : undefined;
-              }
-            }
-          } catch (e) {
-            console.error(`Failed to process ${person} for wild card regexes`);
-          }
-          return { ...person, word: finalWord || person.word };
-        })
-        //remove any words that have a non-alphabetic character, also all spaces, periods and hyphens
-        .filter((person) => person.word.match(/^[A-Za-z\s.\-']+$/))
-        //names cannot start with a number or a symbol
-        .filter((person) => !person.word.match(/^[^A-Za-z]/))
-        //remove duplicates
-        .filter((person, index, self) => index === self.findIndex((p) => p.word === person.word))
-        //remove any names that are in the ignore list
-        .filter(
-          (person) => !brands.includes(person.word) && !inserts.includes(person.word) && !sets.includes(person.word),
-        )
-        //remove any names that are substrings of other names
-        .filter((person) => !persons.find((search) => search.word !== person.word && search.word.includes(person.word)))
-        //count the number of times that a name appears in the text
-        .map((name) => ({
-          ...name,
-          count: name.word.split(/\s/).reduce((count, word) => count + countWords(word), 0),
-          wordCount: wordCount(name.word),
-        }))
-        //sort first by count and then by score
-        .sort((a, b) => {
-          if (b.wordCount === 2 && a.wordCount !== 2) {
-            return 1;
-          } else if (a.wordCount === 2 && b.wordCount !== 2) {
-            return -1;
-          } else {
-            return b.count - a.count || b.score - a.score;
-          }
-        })
-        //remove all the excess info
-        .map((person) => person.word)
-        //remove any team names
-        .filter((name) => !isTeam(name));
-
-      update(`Checking ${names.length} names for a match`);
-      if (names[0]?.includes(' ')) {
-        results.player = titleCase(names[0]);
-      } else if (names[1]?.includes(' ')) {
-        results.player = titleCase(names[0]);
-      } else if (names.length === 3) {
-        const firstInitial = names.find((name) => name.length === 1);
-        const secondInitial = names.find((name) => name.length === 1 && name !== firstInitial);
-        const lastName = names.find((name) => name.length > 1);
-
-        if (countWords(`${firstInitial}${secondInitial} ${lastName}`) > 0) {
-          results.player = titleCase(`${firstInitial}${secondInitial} ${lastName}`);
-        } else if (countWords(`${firstInitial}.${secondInitial}. ${lastName}`) > 0) {
-          results.player = titleCase(`${firstInitial}.${secondInitial}. ${lastName}`);
-        } else if (countWords(`${firstInitial}. ${secondInitial}. ${lastName}`) > 0) {
-          results.player = titleCase(`${firstInitial}. ${secondInitial}. ${lastName}`);
-        } else {
-          results.player = titleCase(`${firstInitial} ${secondInitial} ${lastName}`);
-        }
-      } else {
-        //check to see if any of our options are exact 2 words that both have letters in them
-        const twoWords = names.filter((name) => {
-          const split = name.split(' ');
-          return split.length === 2 && split[0].match(/[A-Za-z]/) && split[1].match(/[A-Za-z]/);
-        });
-
-        if (twoWords.length === 1) {
-          results.player = titleCase(twoWords[0]);
-        } else {
-          results.player = titleCase(`${names[0]} ${names[1]}`);
-        }
-      }
-    }
-    update(`Found player ${results.player}`);
-
-    return results;
+    return { player: setData.player as string };
   }
+  update('Skipping NLP (HuggingFace disabled)');
+  return {};
 };
 
 const runFirstPass = async (
@@ -646,7 +597,7 @@ const runFirstPass = async (
           .slice(0, -1)
           .map((word) => word.toLowerCase())
           .join('');
-        if (prefix === setData.card_number_prefix.toLowerCase()) {
+        if (prefix === (setData.card_number_prefix as string).toLowerCase()) {
           results.cardNumber = block.words[block.words.length - 1];
           block.set = true;
         }

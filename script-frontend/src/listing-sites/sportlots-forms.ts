@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { type AxiosInstance } from 'axios';
 import { wrapper } from 'axios-cookiejar-support';
 import { CookieJar } from 'tough-cookie';
 import { load } from 'cheerio';
@@ -220,7 +220,7 @@ async function submitSetSelection(setsPageHtml: string, setId: string): Promise<
 }
 
 function parseCards(html: string): { cardNumber: string; title: string }[] {
-  const $ = cheerio.load(html);
+  const $ = load(html);
   const cards: { cardNumber: string; title: string }[] = [];
 
   // Target rows with at least 3 td's and not headers
@@ -319,7 +319,7 @@ export async function getSLSet(setInfo: SetInfo): Promise<SelectOption | undefin
     }
     const selected = await ask('SportLots Set', defaultAnswer, { selectOptions: allSets });
     finish();
-    return selected && (selected as unknown as SelectOption).value !== 'None'
+    return selected && selected !== 'None'
       ? (selected as unknown as SelectOption)
       : undefined;
   } catch (e) {

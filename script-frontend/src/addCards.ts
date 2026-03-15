@@ -103,8 +103,9 @@ try {
     log(` Displaying: ${files[0]}`);
     
     try {
-      // Try to display the image using term-img first (for iTerm2/supported terminals)
-      const imageOutput = await terminalImage(files[0], { height: 25 });
+      const { resizeImageForDisplay } = await import('./image-processing/imageProcessor.js');
+      const resizedPath = await resizeImageForDisplay(files[0]);
+      const imageOutput = await terminalImage(resizedPath, { height: 25 });
       log('  ' + imageOutput);
     } catch (error) {
       // If term-img fails, try multiple terminal image viewers for best quality

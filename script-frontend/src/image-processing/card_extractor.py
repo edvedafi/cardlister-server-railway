@@ -300,8 +300,8 @@ def extract_with_ollama(front_path: str, back_path: str) -> dict:
     with ThreadPoolExecutor(max_workers=2) as executor:
         front_future = executor.submit(_ollama_request, front_b64, prompt, ollama_host, ollama_model)
         back_future  = executor.submit(_ollama_request, back_b64,  prompt, ollama_host, ollama_model)
-        front_result = front_future.result()
-        back_result  = back_future.result()
+        front_result = front_future.result(timeout=90)
+        back_result  = back_future.result(timeout=90)
 
     return _merge_results(front_result, back_result)
 

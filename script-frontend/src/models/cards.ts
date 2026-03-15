@@ -84,4 +84,6 @@ export type ImageRecognitionResults = Card &
     player?: string;
     team?: string;
     cardNumber?: string;
+    _perfectMatch?: boolean;
+    _bestMatchPlayer?: string | string[];
   };

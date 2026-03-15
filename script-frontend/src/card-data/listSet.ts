@@ -44,7 +44,17 @@ const preProcessPair = async (front: string, back: string, setData: SetInfo, arg
     update(`Getting image recognition data`);
     const imageDefaults = await imageRecognition(front, back, setData);
     update(`Queueing next step`);
-    queueGatherData.push(() => processPair(front, back, imageDefaults, setData, args));
+    await new Promise<void>((resolve, reject) => {
+      queueGatherData.push(async () => {
+        try {
+          await processPair(front, back, imageDefaults, setData, args);
+          resolve();
+        } catch (e) {
+          reject(e);
+          throw e;
+        }
+      });
+    });
     finish();
   } catch (e) {
     error(e);
@@ -60,9 +70,12 @@ const processPair = async (
   args: ParsedArgs,
 ) => {
   try {
+    const { resizeImageForDisplay } = await import('../image-processing/imageProcessor.js');
+
     try {
       // Try to display the front image using term-img first
-      const frontImageOutput = await terminalImage(front, { height: 25 });
+      const resizedFront = await resizeImageForDisplay(front);
+      const frontImageOutput = await terminalImage(resizedFront, { height: 25 });
       log('  ' + frontImageOutput);
     } catch (error) {
       // If term-img fails, show image info
@@ -85,7 +98,8 @@ const processPair = async (
       log('  ');
       try {
         // Try to display the back image using term-img first
-        const backImageOutput = await terminalImage(back, { height: 25 });
+        const resizedBack = await resizeImageForDisplay(back);
+        const backImageOutput = await terminalImage(resizedBack, { height: 25 });
         log('  ' + backImageOutput);
       } catch (error) {
         // If term-img fails, show image info
@@ -126,7 +140,17 @@ const processPair = async (
       }
     }
 
-    queueImageFiles.push(() => processUploads(productVariant, images, quantity));
+    await new Promise<void>((resolve, reject) => {
+      queueImageFiles.push(async () => {
+        try {
+          await processUploads(productVariant, images, quantity);
+          resolve();
+        } catch (e) {
+          reject(e);
+          throw e;
+        }
+      });
+    });
 
     return { productVariant, quantity, images };
   } catch (e) {
@@ -447,7 +471,11 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
             pricingChoice = await ask('Select Pricing Option', defaultPricingChoice, { selectOptions: pricingOptions });
           }
 
+          // Normalize pricingChoice to ensure it's a string (ask returns the value directly)
+          pricingChoice = String(pricingChoice || 'original').trim();
+
           if (pricingChoice === 'reduced') {
+            log(`Using reduced pricing: eBay=${calculatedEbay}, MCP=${calculatedMCP}, BSC=${calculatedBSC}, SportLots=${calculatedSportLots}`);
             // Use calculated prices with reduction (using cached region IDs)
             newPrices = [
               { amount: calculatedEbay, region_id: ebayRegionId } as MoneyAmount,
@@ -493,10 +521,16 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
               { amount: manualBSC, region_id: bscRegionId } as MoneyAmount,
               { amount: manualSportLots, region_id: sportlotsRegionId } as MoneyAmount,
             ];
+          } else {
+            // Unexpected pricing choice - log warning and use original pricing
+            log(`${chalk.yellow(`Warning: Unexpected pricing choice "${pricingChoice}". Using original pricing.`)}`);
+            newPrices = currentPrices;
           }
 
           // Prompt for quantity (currentQuantity already fetched above)
-          const newQuantity = await ask('Quantity', currentQuantity || undefined);
+          const newQuantity = await ask('Quantity', currentQuantity || undefined, {
+            validate: (v) => v === '' || !isNaN(Number(v)) ? true : 'Must be a number',
+          });
 
           // Update prices and quantity if changed
           // Compare new prices with current prices to detect changes (using cached region IDs)
@@ -515,7 +549,9 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
             newBSCAmount !== currentBSC ||
             newSportLotsAmount !== currentSportLots
           );
-          const quantityChanged = newQuantity !== currentQuantity;
+          const parsedQuantity = Number(newQuantity);
+          const validQuantity = newQuantity != null && newQuantity !== '' && !isNaN(parsedQuantity);
+          const quantityChanged = validQuantity && parsedQuantity !== currentQuantity;
 
           if (pricesChanged || quantityChanged) {
             hasUpdated = true;
@@ -539,7 +575,7 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
               queuePriceUpdates.push(async () => {
                 try {
                   const inventoryItem = await getInventory(variant);
-                  await updateInventory(inventoryItem, newQuantity);
+                  await updateInventory(inventoryItem, parsedQuantity);
                 } catch (e) {
                   updateErrors.push({ variant: variantTitle, error: e as Error });
                   log(`${chalk.red(`Error updating quantity for ${variantTitle}:`)} ${e}`);
@@ -666,7 +702,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     }
 
     // Handle price mode - skip image processing
-    if (args['price']) {
+    if (args['price'] !== undefined) {
       updateSpinner('Processing Price Updates');
       await processPrice(setData, args);
       updateSpinner(`Kickoff Set Processing`);
@@ -688,15 +724,6 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       finish();
     }
 
-    while (i < files.length - 1) {
-      const front = files[i++];
-      let back: string;
-      if (i < files.length) {
-        back = files[i++];
-      }
-      queueReadImage.push(() => preProcessPair(front, back, setData, args));
-    }
-
     let hasQueueError = false;
     const watchForError = (name: string, queue: Queue) =>
       queue.addEventListener('error', (e) => {
@@ -711,34 +738,48 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     watchForError('Gather', queueGatherData);
     watchForError('Process Images', queueImageFiles);
 
-    const { finish: finishImage, error: errorImage } = showSpinner('image', `Waiting for Image Queue to finish`);
-    if (queueReadImage.length > 0 && !hasQueueError) {
-      await new Promise((resolve) => queueReadImage.addEventListener('end', resolve));
-      finishImage();
-    } else if (hasQueueError) {
-      errorImage(`Image Queue errored`);
-    } else {
-      finishImage();
+    // Collect per-item promises that resolve when the ENTIRE chain
+    // (readImage → gatherData → imageFiles) completes for each pair.
+    // This avoids the race condition where queue 'end' events fire
+    // prematurely when a downstream queue temporarily drains before
+    // all upstream items have been pushed to it.
+    const allJobPromises: Promise<void>[] = [];
+    let itemsPushed = 0;
+
+    while (i < files.length - 1) {
+      const front = files[i++];
+      let back: string;
+      if (i < files.length) {
+        back = files[i++];
+      }
+      const jobPromise = new Promise<void>((resolve, reject) => {
+        queueReadImage.push(async () => {
+          try {
+            await preProcessPair(front, back, setData, args);
+            resolve();
+          } catch (e) {
+            reject(e);
+            throw e;
+          }
+        });
+      });
+      allJobPromises.push(jobPromise);
+      itemsPushed++;
     }
 
-    const { finish: finishData, error: errorData } = showSpinner('data', `Waiting for Data Queue to finish`);
-    if (queueGatherData.length > 0 && !hasQueueError) {
-      await new Promise((resolve) => queueGatherData.addEventListener('end', resolve));
-      finishData();
+    const { finish: finishProcessing, error: errorProcessing } = showSpinner('processing', `Waiting for all cards to finish processing`);
+    if (itemsPushed > 0 && !hasQueueError) {
+      try {
+        await Promise.all(allJobPromises);
+        finishProcessing();
+      } catch (e) {
+        hasQueueError = true;
+        errorProcessing(e);
+      }
     } else if (hasQueueError) {
-      errorData(`Data Queue errored`);
+      errorProcessing(`Queue errored`);
     } else {
-      finishData();
-    }
-
-    const { finish: finishFile, error: errorFile } = showSpinner('file', `Waiting for File Queue to finish`);
-    if (queueImageFiles.length > 0 && !hasQueueError) {
-      await new Promise((resolve) => queueImageFiles.addEventListener('end', resolve));
-      finishFile();
-    } else if (hasQueueError) {
-      errorFile(`File Queue errored`);
-    } else {
-      finishFile();
+      finishProcessing();
     }
 
     //write the output
@@ -748,7 +789,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       if (args['select-bulk-cards']) {
         log('select-bulk-cards is not yet implemented');
       }
-      if (!args.countCardsFirst) {
+      if (!args.countCardsFirst && args['price'] === undefined) {
         const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
         if (addBulk) {
           updateSpinner(`Process Bulk`);

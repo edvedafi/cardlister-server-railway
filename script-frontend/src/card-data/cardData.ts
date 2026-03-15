@@ -36,7 +36,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   product.metadata = {
     cardNumber: card.cardNo,
     player: card.players,
-    teams: card.teamName || 'Unknown',
+    teams: card.teamName?.trim() || 'Unknown',
     sku: `${set.metadata?.bin}|${card.cardNo}`,
     size: 'Standard',
     thickness: '20pt',
@@ -467,7 +467,10 @@ async function getCardDataWithVariant(
 
   // Use the pre-fetched quantity (non-blocking for the prompt)
   const existingQty = (await quantityPromise) || 1;
-  const quantity = await ask('Quantity', existingQty);
+  const quantityRaw = await ask('Quantity', existingQty, {
+    validate: (v) => v === '' || !isNaN(Number(v)) ? true : 'Must be a number',
+  });
+  const quantity = quantityRaw === '' || quantityRaw == null ? 0 : Number(quantityRaw);
 
   return { productVariant, quantity };
 }

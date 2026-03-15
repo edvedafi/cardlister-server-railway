@@ -4,7 +4,7 @@ import unzip from 'decompress';
 import chalk from 'chalk';
 import { useSpinners } from './spinners.js';
 import { minimist } from 'zx';
-import ParsedArgs = minimist.ParsedArgs;
+import type { ParsedArgs } from 'minimist';
 import fs from 'fs/promises';
 import * as fsSync from 'fs';
 import path from 'path';

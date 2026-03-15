@@ -43,7 +43,7 @@ async function login() {
 
 async function loadAddInventoryScreen(year: string, brand: string, sport: string, bin?: string): Promise<void> {
   try {
-    const browser = await login();
+    const browser = (await login())!;
     await browser.url('https://www.sportlots.com/inven/dealbin/newinven.tpl');
     await browser.$('select[name="yr"]').selectByAttribute('value', year);
     await browser.$('select[name="brd"]').selectByAttribute('value', brand);
@@ -68,7 +68,7 @@ async function loadAddInventoryScreen(year: string, brand: string, sport: string
 }
 
 async function selectSet(setId: string): Promise<void> {
-  const browser = await login();
+  const browser = (await login())!;
   await browser.waitUntil(async () => (await browser.getUrl()).match(/dealsets.tpl/));
   await browser.$(`input[name="selset"][value="${setId}"]`).click();
   await browser.$('input[value="Get Cards"').click();
@@ -86,7 +86,7 @@ export async function getSLCards(
   const cards = [];
   const { finish, error } = showSpinner('getSLCards', 'Get Cards');
   try {
-    const browser = await login();
+    const browser = (await login())!;
     await loadAddInventoryScreen(
       setInfo.year.metadata?.sportlots,
       setInfo.brand.metadata?.sportlots,
@@ -137,19 +137,20 @@ export async function getSLCards(
             const table = await browser.$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody');
             await table.waitForDisplayed({ timeout: 2000 });
             const rows = await table.$$('tr:has(td):not(:has(th))');
-            return rows.length > 0;
+            return (await rows.length) > 0;
           } catch {
             return false;
           }
         }, { timeout: 10000 });
         
         const rows = await browser.$$('tr:has(td):not(:has(th))');
-        log(`Found ${rows.length} card rows in table`);
-        
+        const rowCount = await rows.length;
+        log(`Found ${rowCount} card rows in table`);
+
         // If we have rows, the page loaded successfully
         // Don't check pagination completeness here - that's a data issue, not a technical error
         // We'll collect all available cards and return them even if count < expected
-        if (rows.length > 0) {
+        if (rowCount > 0) {
           pageLoaded = true;
           log('Page loaded successfully - will collect all available cards');
         } else {
@@ -243,7 +244,7 @@ export async function getSLCards(
             const table = await browser.$('body > div > table:nth-child(2) > tbody > tr > td > form > table > tbody');
             await table.waitForDisplayed({ timeout: 2000 });
             const rows = await table.$$('tr:has(td):not(:has(th))');
-            return rows.length > 0;
+            return (await rows.length) > 0;
           } catch (e) {
             return false;
           }
@@ -278,7 +279,7 @@ const getOptions = async (
   selectName: string,
   displayName: string,
 ): Promise<SelectOption | undefined> => {
-  const browser = await login();
+  const browser = (await login())!;
   await browser.url(`inven/dealbin/newinven.tpl`);
   const options = await browser.$(`select[name="${selectName}"]`).$$('option');
   const values: { value: SelectOption; name: string }[] = [];
@@ -287,7 +288,7 @@ const getOptions = async (
       name: await option.getText(),
       value: {
         name: await option.getText(),
-        key: await option.getAttribute('value'),
+        key: (await option.getAttribute('value')) ?? '',
       },
     });
   }
@@ -313,7 +314,7 @@ export const getSLBrand = async (defaultName?: string): Promise<SelectOption | u
 export async function getSLSet(setInfo: SetInfo): Promise<SelectOption | undefined> {
   const { finish, error } = showSpinner('getSLSet', 'Finding Set');
   try {
-    const browser = await login();
+    const browser = (await login())!;
 
     if (!setInfo.year.metadata) throw new Error('Set Info (Year) Metadata not found');
     if (!setInfo.brand.metadata) throw new Error('Set Info (Brand) Metadata not found');

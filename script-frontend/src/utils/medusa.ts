@@ -280,7 +280,7 @@ export async function createProduct(product: Product, variations: Variation[] = 
               } else {
                 // Create new variant
                 try {
-                  const variantResponse = await medusa.admin.products.addVariant(existingProduct.id, {
+                  const variantResponse = await medusa.admin.products.createVariant(existingProduct.id, {
                     title: variation.title,
                     sku: variation.sku,
                     prices: [{ currency_code: 'usd', amount: 99 }],
@@ -407,6 +407,10 @@ export async function updateProductVariantMetadata(
   });
 
   return response.product;
+}
+
+export async function updateVariantTitle(productId: string, variantId: string, title: string): Promise<void> {
+  await medusa.admin.products.updateVariant(productId, variantId, { title });
 }
 
 export async function getProductCardNumbers(category: string): Promise<string[]> {
@@ -824,7 +828,11 @@ export async function deleteCardsFromSet(category: ProductCategory) {
         // log(`Deleting ${inventoryItem.sku} from inventory`);
         const { inventory_item } = await medusa.admin.inventoryItems.listLocationLevels(inventoryItem.id);
         for (const level of inventory_item.location_levels) {
-          await medusa.admin.inventoryItems.deleteLocationLevel(level.inventory_item_id, level.location_id);
+          try {
+            await medusa.admin.inventoryItems.deleteLocationLevel(level.inventory_item_id, level.location_id);
+          } catch (err: any) {
+            log(`Skipping location level deletion: ${err?.message ?? err}`);
+          }
         }
         await medusa.admin.inventoryItems.delete(inventoryItem.id);
       }

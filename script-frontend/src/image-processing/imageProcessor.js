@@ -2,10 +2,12 @@ import { ask } from '../utils/ask.ts';
 import terminalImage from 'term-img';
 import sharp from 'sharp';
 import fs from 'fs-extra';
+import path from 'path';
 import { useSpinners } from '../utils/spinners.ts';
 import chalk from 'chalk';
 import { $ } from 'zx';
 import { PDFDocument } from 'pdf-lib';
+import { cropCardsWithSAM, cropCardsWithOllama } from './card-cropper-wrapper.js';
 
 const { showSpinner, log } = useSpinners('images', chalk.white);
 
@@ -70,54 +72,122 @@ export const cropImage = async (
       input = `${tempDirectory}/temp.rotated.jpg`;
     }
 
-    const cropAttempts = [
-      async () => {
-        tempImage = `${tempDirectory}/CC.rotate.jpg`;
-        return await $`./CardCropper.rotate ${input} ${tempImage}`;
-      },
-      async () => {
-        tempImage = `${tempDirectory}/sharp.extract.jpg`;
-        return listing?.crop?.left ? await sharp(input).extract(listing.crop).toFile(tempImage) : false;
-      },
-      async () => {
-        tempImage = `${tempDirectory}/magick.fuzz.trim.jpg`;
+    // Synchronous crash-safe logger — writes to stderr AND a file so the last
+    // line is visible even if Node exits via SIGSEGV before buffers flush.
+    const cropLog = fs.openSync(`${tempDirectory}/crop-debug.log`, 'a');
+    const cropWrite = (msg) => {
+      const line = `[crop ${new Date().toISOString()}] ${msg}\n`;
+      process.stderr.write(line);
+      fs.writeSync(cropLog, line);
+    };
 
-        // Use ImageMagick's fuzz-based trim to cope with near-black backgrounds
-        return await $`magick ${input} -fuzz 18% -trim +repage -bordercolor black -border 10 ${tempImage}`;
+    const cropAttempts = [
+      {
+        name: 'CardCropper.rotate',
+        fn: async () => {
+          tempImage = `${tempDirectory}/CC.rotate.jpg`;
+          return await $`./CardCropper.rotate ${input} ${tempImage}`;
+        },
       },
-      async () => {
-        tempImage = `${tempDirectory}/sharp.trim.jpg`;
-        return await sharp(input)
-          .blur(0.3)
-          .trim({ threshold: 180, background: { r: 0, g: 0, b: 0 } })
-          .extend({ top: 10, bottom: 10, left: 10, right: 10, background: { r: 0, g: 0, b: 0 } })
-          .toFile(tempImage);
+      {
+        name: 'sharp.extract',
+        fn: async () => {
+          tempImage = `${tempDirectory}/sharp.extract.jpg`;
+          return listing?.crop?.left ? await sharp(input).extract(listing.crop).toFile(tempImage) : false;
+        },
       },
-      async () => {
-        tempImage = `${tempDirectory}/CC.crop.jpg`;
-        return await $`./CardCropper ${input} ${tempImage}`;
+      {
+        name: 'magick.fuzz.trim',
+        fn: async () => {
+          tempImage = `${tempDirectory}/magick.fuzz.trim.jpg`;
+          // Use ImageMagick's fuzz-based trim to cope with near-black backgrounds
+          return await $`magick ${input} -fuzz 18% -trim +repage -bordercolor black -border 10 ${tempImage}`;
+        },
       },
-      async () => {
-        tempImage = `${tempDirectory}/manual.jpg`;
-        const openCommand = await $`cp ${input} ${tempImage}; open -Wn ${tempImage}`;
-        // eslint-disable-next-line no-undef
-        process.on('SIGINT', () => openCommand?.kill());
-        return openCommand;
+      {
+        name: 'sharp.trim',
+        fn: async () => {
+          tempImage = `${tempDirectory}/sharp.trim.jpg`;
+          // Resize very large images before trim to avoid libvips segfault on 50MP+ files
+          const meta = await sharp(input).metadata();
+          cropWrite(`sharp.trim: input ${meta.width}x${meta.height} (${path.basename(input)})`);
+          const maxSide = 3000;
+          const longest = Math.max(meta.width || 0, meta.height || 0);
+          let pipeline = sharp(input);
+          if (longest > maxSide) {
+            cropWrite(`sharp.trim: resizing to max ${maxSide}px side`);
+            pipeline = pipeline.resize(
+              meta.width > meta.height ? maxSide : null,
+              meta.height >= meta.width ? maxSide : null,
+              { fit: 'inside', withoutEnlargement: true },
+            );
+          }
+          return await pipeline
+            .blur(0.3)
+            .trim({ threshold: 180, background: { r: 0, g: 0, b: 0 } })
+            .extend({ top: 10, bottom: 10, left: 10, right: 10, background: { r: 0, g: 0, b: 0 } })
+            .toFile(tempImage);
+        },
+      },
+      // ── SAM semantic segmentation (handles black-on-black backdrops) ──────────
+      {
+        name: 'SAM',
+        fn: async () => {
+          tempImage = `${tempDirectory}/sam.jpg`;
+          const results = await cropCardsWithSAM([input], tempDirectory);
+          if (!results.length) return false;
+          await $`mv ${results[0]} ${tempImage}`;
+          return true;
+        },
+      },
+      // ── Ollama vision bbox (standalone, no SAM) ───────────────────────────────
+      {
+        name: 'Ollama',
+        fn: async () => {
+          tempImage = `${tempDirectory}/ollama.jpg`;
+          const results = await cropCardsWithOllama([input], tempDirectory);
+          if (!results.length) return false;
+          await $`mv ${results[0]} ${tempImage}`;
+          return true;
+        },
+      },
+      {
+        name: 'CardCropper',
+        fn: async () => {
+          tempImage = `${tempDirectory}/CC.crop.jpg`;
+          return await $`./CardCropper ${input} ${tempImage}`;
+        },
+      },
+      {
+        name: 'manual',
+        fn: async () => {
+          tempImage = `${tempDirectory}/manual.jpg`;
+          const openCommand = await $`cp ${input} ${tempImage}; open -Wn ${tempImage}`;
+          // eslint-disable-next-line no-undef
+          process.on('SIGINT', () => openCommand?.kill());
+          return openCommand;
+        },
       },
     ];
     if (useImageFirst) {
-      cropAttempts.unshift(async () => {
-        tempImage = `${tempDirectory}/copy.jpg`;
-        return $`cp ${input} ${tempImage}`;
+      cropAttempts.unshift({
+        name: 'copy',
+        fn: async () => {
+          tempImage = `${tempDirectory}/copy.jpg`;
+          return $`cp ${input} ${tempImage}`;
+        },
       });
     }
     let found = false;
     let i = 0;
     while (!found && i < cropAttempts.length) {
+      const { name, fn } = cropAttempts[i];
+      cropWrite(`starting attempt ${i + 1}/${cropAttempts.length}: ${name}`);
       try {
-        update(`Attempting crop ${i}/${cropAttempts.length}`);
-        const cropped = await cropAttempts[i]();
+        update(`Attempting crop ${i + 1}/${cropAttempts.length}: ${name}`);
+        const cropped = await fn();
         if (cropped) {
+          cropWrite(`attempt ${name} succeeded → ${tempImage}`);
           try {
             // Try to display the image using term-img first
             const imageOutput = await terminalImage(tempImage, { height: 25 });
@@ -138,15 +208,21 @@ export const cropImage = async (
             }
           }
 
+          cropWrite(`prompting user after ${name}`);
           found = await ask('Did Image render correct?', true);
+          cropWrite(`user answered: ${found}`);
         } else {
+          cropWrite(`attempt ${name} returned false (no crop found)`);
           found = false;
         }
       } catch (e) {
+        cropWrite(`attempt ${name} threw: ${e?.message || e}`);
         log(e);
       }
       i++;
     }
+
+    fs.closeSync(cropLog);
 
     if (found) {
       const buffer = await sharp(tempImage).toBuffer();
@@ -170,6 +246,19 @@ export const cropImage = async (
 };
 
 const DPI = 600;
+
+export const resizeImageForDisplay = async (imagePath) => {
+  const tempDirectory = '/tmp/cardlister';
+  await fs.ensureDir(tempDirectory);
+  const ext = path.extname(imagePath) || '.jpg';
+  const basename = path.basename(imagePath, ext);
+  const tempPath = path.join(tempDirectory, `preview-${basename}${ext}`);
+  const metadata = await sharp(imagePath).metadata();
+  await sharp(imagePath)
+    .resize(Math.floor((metadata.width || 1000) * 0.5), Math.floor((metadata.height || 1400) * 0.5))
+    .toFile(tempPath);
+  return tempPath;
+};
 
 export async function buildPDF(images, outputFileName) {
   const { update, error, finish } = showSpinner('resize', 'Building PDF');

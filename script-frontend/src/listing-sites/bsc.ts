@@ -28,9 +28,9 @@ async function performLogin(): Promise<AxiosInstance> {
 
     await browser.$('#next').click();
     await browser.$('.=welcome back,').waitForExist({ timeout: 10000 });
-    const reduxAsString: string = await browser.execute(
+    const reduxAsString = await browser.execute(
       'return Object.values(localStorage).filter((value) => value.includes("secret")).find(value=>value.includes("Bearer"));',
-    );
+    ) as unknown as string;
     const redux = JSON.parse(reduxAsString);
 
     const api = axios.create({

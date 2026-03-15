@@ -1,5 +1,7 @@
-export function getBrowserlessConfig(baseUrl: string, logKey: string) {
-  const config = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getBrowserlessConfig(baseUrl: string, logKey: string): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const config: any = {
     capabilities: {
       browserName: 'chrome',
       'goog:chromeOptions': {
@@ -27,14 +29,12 @@ export function getBrowserlessConfig(baseUrl: string, logKey: string) {
     baseUrl: baseUrl,
   };
   if (process.env[logKey]) {
-    // @ts-expect-error Not really sure how to type this correctly
     config.logLevel = (process.env[logKey] as string).toLowerCase();
   }
   if (process.env.BROWSER_DOMAIN_PRIVATE) {
     config.path = '/webdriver';
     config.hostname = process.env.BROWSER_DOMAIN_PRIVATE;
     config.key = process.env.BROWSER_TOKEN;
-    // @ts-expect-error Browserless token is a special key that is added but not part of the type definition
     config.capabilities['browserless:token'] = process.env.BROWSER_TOKEN;
     if (process.env.BROWSER_PORT_PRIVATE === '443') {
       config.protocol = 'https';

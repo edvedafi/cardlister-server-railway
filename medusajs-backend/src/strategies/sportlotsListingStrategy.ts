@@ -95,7 +95,7 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
           const isVariation = await pup.hasClass(row, 'variation');
           const title = await pup.getText(row.$('td:nth-child(3)'));
           let variant: ProductVariant | undefined;
-          if (isVariation || title.match(/\[.*VAR.*]/)) {
+          if (isVariation || title.match(/\[.+\]/)) {
             variant = product?.variants.find((v) => v.metadata.sportlots === title);
           } else if (product?.variants.length == 1) {
             variant = product?.variants[0];

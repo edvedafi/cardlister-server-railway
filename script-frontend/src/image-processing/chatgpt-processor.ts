@@ -47,10 +47,10 @@ export class ChatGPTProcessor {
   const { update, finish, error } = showSpinner('chatGPT', 'Processing Cards with ChatGPT');
   const messages = [
       {
-        role: "user",
+        role: "user" as const,
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: `You'll see several photos of trading cards. For each photo, extract all cards as JSON objects matching this interface:  {
                     name?: string;
                     manufacturer?: string;
@@ -83,7 +83,7 @@ export class ChatGPTProcessor {
           },
           // Add each image as a separate image_url entry:
           ...imagePaths.map(imagePath => ({
-            type: "image_url",
+            type: "image_url" as const,
             image_url: { url: `data:image/jpeg;base64,${fs.readFileSync(imagePath, { encoding: "base64" })}` }
           }))
         ]

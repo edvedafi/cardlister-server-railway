@@ -25,6 +25,7 @@ const WORKER_STARTUP_TIMEOUT_MS = 60_000; // 1 min to emit ready
 let worker: ChildProcessWithoutNullStreams | null = null;
 let workerReady = false;
 let readline: ReadlineInterface | null = null;
+let spawnPromise: Promise<void> | null = null;
 
 type QueuedRequest = {
   payload: object;
@@ -157,7 +158,13 @@ function rejectPending(err: Error) {
 
 async function ensureWorker(): Promise<void> {
   if (worker && workerReady) return;
-  await spawnWorker();
+  // Deduplicate concurrent spawn attempts: if one is already in progress, wait for it
+  if (!spawnPromise) {
+    spawnPromise = spawnWorker().finally(() => {
+      spawnPromise = null;
+    });
+  }
+  await spawnPromise;
 }
 
 function processNextRequest(): void {

@@ -35,6 +35,14 @@ import _ from 'lodash';
 
 const { showSpinner, log } = useSpinners('setData', chalk.whiteBright);
 
+const MAX_CARD_NAME_LENGTH = 65;
+
+function truncateCardName(cardName: string): string {
+  cardName = cardName.replace(/ +/g, ' ').trim();
+  if (cardName.length <= MAX_CARD_NAME_LENGTH) return cardName;
+  return cardName.slice(0, MAX_CARD_NAME_LENGTH).trim();
+}
+
 export async function findSet(
   {
     allowParent,
@@ -80,8 +88,9 @@ export async function findSet(
     while (!setInfo.sport) {
       update('New Sport');
       const sportlots = await getSLSport();
+      if (!sportlots) continue;
       setInfo.handle = sportlots.name;
-      setInfo.sport = await createCategory(sportlots.name, root, setInfo.handle, {
+      setInfo.sport = await createCategory(sportlots.name, root, sportlots.name, {
         sportlots: sportlots.key,
       });
     }
@@ -179,15 +188,15 @@ export async function findSet(
     }
     while (!setInfo.set) {
       update('New Set');
-      const bscSet: { name: string; filter: unknown } = await getBSCSetFilter(setInfo);
-      let setName: string;
       if (onlySportlots) {
-        setName = await ask('Series 2 Title', bscSet.name);
+        const setName = await ask('Series 2 Title');
+        setInfo.handle = `${setInfo.brand.handle}-${setName}`;
+        setInfo.set = await createCategory(setName, setInfo.brand.id, setInfo.handle, {});
       } else {
-        setName = bscSet.name;
+        const bscSet: { name: string; filter: unknown } = await getBSCSetFilter(setInfo);
+        setInfo.handle = `${setInfo.brand.handle}-${bscSet.name}`;
+        setInfo.set = await createCategory(bscSet.name, setInfo.brand.id, setInfo.handle, { bsc: bscSet.filter });
       }
-      setInfo.handle = `${setInfo.brand.handle}-${setName}`;
-      setInfo.set = await createCategory(setName, setInfo.brand.id, setInfo.handle, { bsc: bscSet.filter });
     }
 
     update('Variant Type');
@@ -206,43 +215,65 @@ export async function findSet(
       }
     } else {
       update('New Variant Type');
-      const bscVariantType: BSCFilterResponse = await getBSCVariantTypeFilter(setInfo);
-      setInfo.handle = `${setInfo.set.handle}-${bscVariantType.name}`;
-      if (bscVariantType.name === 'Base') {
-        setInfo.handle = `${setInfo.set.handle}-${bscVariantType.name}-base`;
-        const description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name}`);
-        const metadata: Metadata = {
-          bsc: bscVariantType.filter,
-          sportlots: await getSLSet(setInfo as SetInfo),
-          bin: await getNextBin(),
-          // bin: (
-          //   await getGroup({
-          //     sport: setInfo.sport?.name,
-          //     manufacture: setInfo.brand.name,
-          //     year: setInfo.year.name,
-          //     setName: setInfo.set.name,
-          //   })
-          // ).bin,
-          isInsert: false,
-          isParallel: false,
-          sport: setInfo.sport?.name,
-          brand: setInfo.brand.name,
-          year: setInfo.year.name,
-          setName: setInfo.set.name,
-          ...(await updateSetDefaults()),
-        };
+      if (onlySportlots) {
+        const variantTypeName = await ask('Series 2 Variant Type', 'Base');
+        setInfo.handle = `${setInfo.set.handle}-${variantTypeName}`;
+        if (variantTypeName === 'Base') {
+          setInfo.handle = `${setInfo.set.handle}-${variantTypeName}-base`;
+          const description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name}`);
+          const metadata: Metadata = {
+            sportlots: await getSLSet(setInfo as SetInfo),
+            bin: await getNextBin(),
+            isInsert: false,
+            isParallel: false,
+            sport: setInfo.sport?.name,
+            brand: setInfo.brand.name,
+            year: setInfo.year.name,
+            setName: setInfo.set.name,
+            ...(await updateSetDefaults()),
+          };
 
-        setInfo.variantType = await createCategoryActive(
-          bscVariantType.name,
-          description,
-          setInfo.set.id,
-          setInfo.handle,
-          metadata,
-        );
+          setInfo.variantType = await createCategoryActive(
+            variantTypeName,
+            description,
+            setInfo.set.id,
+            setInfo.handle,
+            metadata,
+          );
+        } else {
+          setInfo.variantType = await createCategory(variantTypeName, setInfo.set.id, setInfo.handle, {});
+        }
       } else {
-        setInfo.variantType = await createCategory(bscVariantType.name, setInfo.set.id, setInfo.handle, {
-          bsc: bscVariantType.filter,
-        });
+        const bscVariantType: BSCFilterResponse = await getBSCVariantTypeFilter(setInfo);
+        setInfo.handle = `${setInfo.set.handle}-${bscVariantType.name}`;
+        if (bscVariantType.name === 'Base') {
+          setInfo.handle = `${setInfo.set.handle}-${bscVariantType.name}-base`;
+          const description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name}`);
+          const metadata: Metadata = {
+            bsc: bscVariantType.filter,
+            sportlots: await getSLSet(setInfo as SetInfo),
+            bin: await getNextBin(),
+            isInsert: false,
+            isParallel: false,
+            sport: setInfo.sport?.name,
+            brand: setInfo.brand.name,
+            year: setInfo.year.name,
+            setName: setInfo.set.name,
+            ...(await updateSetDefaults()),
+          };
+
+          setInfo.variantType = await createCategoryActive(
+            bscVariantType.name,
+            description,
+            setInfo.set.id,
+            setInfo.handle,
+            metadata,
+          );
+        } else {
+          setInfo.variantType = await createCategory(bscVariantType.name, setInfo.set.id, setInfo.handle, {
+            bsc: bscVariantType.filter,
+          });
+        }
       }
     }
 
@@ -268,51 +299,75 @@ export async function findSet(
         let insertName: string | undefined = undefined;
         let parallelName: string | undefined = undefined;
 
-        const bscVariantName: BSCFilterResponse = await getBSCVariantNameFilter(setInfo);
-        if (isInsert && !isParallel) {
-          isParallel = await ask('Is this a parallel of an insert?', false);
-        }
-        if (isInsert && !isParallel) {
-          insertName = bscVariantName.name;
-        } else if (isInsert && isParallel) {
-          const refractor = bscVariantName.name.indexOf('Refractor');
-          if (refractor > -1) {
-            insertName = bscVariantName.name.slice(0, refractor).trim();
-            parallelName = bscVariantName.name.slice(refractor).trim();
-          }
-          insertName = bscVariantName.name.substring(0, bscVariantName.name.lastIndexOf(' ')).trim();
-          insertName = await ask('Insert Name', insertName);
-          if (insertName) {
-            parallelName = bscVariantName.name.replace(insertName, '').trim();
-            parallelName = await ask('Parallel Name', parallelName);
-          }
-        } else {
-          parallelName = bscVariantName.name;
-        }
-
-        let variantName: string;
         if (onlySportlots) {
-          variantName = await ask('Series 2 Variant Name', bscVariantName.name);
+          const variantName = await ask('Series 2 Variant Name');
+          if (isInsert && !isParallel) {
+            isParallel = await ask('Is this a parallel of an insert?', false);
+          }
+          if (isInsert && !isParallel) {
+            insertName = variantName;
+          } else if (isInsert && isParallel) {
+            insertName = await ask('Insert Name');
+            parallelName = await ask('Parallel Name');
+          } else {
+            parallelName = variantName;
+          }
+
+          setInfo.handle = `${setInfo.variantType.handle}-${variantName}`;
+          const metaData: Metadata = {
+            isInsert,
+            isParallel,
+            bin: await getNextBin(),
+            sport: setInfo.sport?.name,
+            brand: setInfo.brand.name,
+            year: setInfo.year.name,
+            setName: setInfo.set.name,
+            insert: insertName,
+            parallel: parallelName,
+            ...(await updateSetDefaults()),
+          };
+
+          setInfo.variantName = await createCategory(variantName, setInfo.variantType.id, setInfo.handle, metaData);
         } else {
-          variantName = bscVariantName.name;
+          const bscVariantName: BSCFilterResponse = await getBSCVariantNameFilter(setInfo);
+          if (isInsert && !isParallel) {
+            isParallel = await ask('Is this a parallel of an insert?', false);
+          }
+          if (isInsert && !isParallel) {
+            insertName = bscVariantName.name;
+          } else if (isInsert && isParallel) {
+            const refractor = bscVariantName.name.indexOf('Refractor');
+            if (refractor > -1) {
+              insertName = bscVariantName.name.slice(0, refractor).trim();
+              parallelName = bscVariantName.name.slice(refractor).trim();
+            }
+            insertName = bscVariantName.name.substring(0, bscVariantName.name.lastIndexOf(' ')).trim();
+            insertName = await ask('Insert Name', insertName);
+            if (insertName) {
+              parallelName = bscVariantName.name.replace(insertName, '').trim();
+              parallelName = await ask('Parallel Name', parallelName);
+            }
+          } else {
+            parallelName = bscVariantName.name;
+          }
+
+          setInfo.handle = `${setInfo.variantType.handle}-${bscVariantName.name}`;
+          const metaData: Metadata = {
+            bsc: bscVariantName.filter,
+            isInsert,
+            isParallel,
+            bin: await getNextBin(),
+            sport: setInfo.sport?.name,
+            brand: setInfo.brand.name,
+            year: setInfo.year.name,
+            setName: setInfo.set.name,
+            insert: insertName,
+            parallel: parallelName,
+            ...(await updateSetDefaults()),
+          };
+
+          setInfo.variantName = await createCategory(bscVariantName.name, setInfo.variantType.id, setInfo.handle, metaData);
         }
-
-        setInfo.handle = `${setInfo.variantType.handle}-${variantName}`;
-        const metaData: Metadata = {
-          bsc: bscVariantName.filter,
-          isInsert,
-          isParallel,
-          bin: await getNextBin(),
-          sport: setInfo.sport?.name,
-          brand: setInfo.brand.name,
-          year: setInfo.year.name,
-          setName: setInfo.set.name,
-          insert: insertName,
-          parallel: parallelName,
-          ...(await updateSetDefaults()),
-        };
-
-        setInfo.variantName = await createCategory(variantName, setInfo.variantType.id, setInfo.handle, metaData);
       }
       if (!setInfo.variantName) throw new Error('Variant Name not found');
       const updates: Metadata = {};
@@ -959,7 +1014,7 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata.cardNumber = variations.find((v) => v.sku === `${category.metadata?.bin}|${variation.cardNo}`)
                   ? `${variation.cardNo}${counter}`
                   : variation.cardNo;
-                metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
+                metadata.cardName = truncateCardName(`${metadata.cardName} ${metadata.variationName}`);
                 metadata.bsc = card.id;
                 metadata.sku = `${category.metadata?.bin}|${variation.cardNo}`;
                 if (metadata.features) {
@@ -989,7 +1044,7 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 metadata.variationName = slVariation.title.match(/\[(.*?)\]/)?.[1];
 
                 metadata.cardNumber = slVariation.cardNumber + ['a', 'b', 'c', 'd', 'e', 'f', 'g'][variations.length];
-                metadata.cardName = `${metadata.cardName} ${metadata.variationName}`;
+                metadata.cardName = truncateCardName(`${metadata.cardName} ${metadata.variationName}`);
                 metadata.sku = `${category.metadata?.bin}|${metadata.cardNumber}`;
                 if (metadata.features) {
                   metadata.features = [...metadata.features, 'Variation'];
