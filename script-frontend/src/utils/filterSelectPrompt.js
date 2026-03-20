@@ -108,16 +108,18 @@ export default createPrompt((config, done) => {
       //   if (item != null && isSelectable(item)) {
       //     setActive(position);
       //   }
-    } else {
-      //search choices for the closest matches
-
-      // Change the pattern
-      const pattern = isBackspaceKey(key) ? searchTerm.slice(0, -1) : searchTerm + key.name;
+    } else if (isBackspaceKey(key)) {
+      const pattern = searchTerm.slice(0, -1);
       if (pattern === '') {
         setItems(config.choices);
       } else {
         setItems(defaultFuse.search(pattern).map((result) => result.item));
       }
+      setSearchTerm(pattern);
+      setActive(0);
+    } else if (key.sequence && /^[a-zA-Z0-9 ~`!@#$%^&*()\-_=+\[\]{}\\|;:'",.<>/?]$/.test(key.sequence)) {
+      const pattern = searchTerm + key.sequence;
+      setItems(defaultFuse.search(pattern).map((result) => result.item));
       setSearchTerm(pattern);
       setActive(0);
     }

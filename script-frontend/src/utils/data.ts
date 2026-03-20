@@ -1,5 +1,5 @@
-import { getCategories, getProduct, getProductVariant, getRootCategory } from './medusa';
-import type { Order, ProductCategory } from '@medusajs/client-types';
+import { getProduct, getProductVariant } from './medusa';
+import type { Order } from '@medusajs/client-types';
 import { useSpinners } from './spinners';
 import chalk, { type ChalkInstance } from 'chalk';
 import _ from 'lodash';
@@ -65,70 +65,6 @@ export const psaGrades: { [key: number]: string } = {
   0.5: 'PF',
   0: 'PO',
 };
-
-let _inserts: string[];
-
-export async function getInserts(): Promise<string[]> {
-  if (!_inserts) await cacheCategoryInfo();
-  if (!_inserts) throw new Error('Brands not found');
-  return _inserts;
-}
-
-let _brands: string[];
-
-export async function getBrands(): Promise<string[]> {
-  if (!_brands) await cacheCategoryInfo();
-  if (!_brands) throw new Error('Brands not found');
-  return _brands;
-}
-
-let _sets: string[];
-
-export async function getSets(): Promise<string[]> {
-  if (!_sets) await cacheCategoryInfo();
-  if (!_sets) throw new Error('Sets not found');
-  return _sets;
-}
-
-let _sports: string[];
-
-export async function getSports(): Promise<string[]> {
-  if (!_sports) await cacheCategoryInfo();
-  if (!_sports) throw new Error('Sports not found');
-  return _sports;
-}
-
-async function cacheCategoryInfo() {
-  _brands = [];
-  _sets = [];
-  _sports = [];
-  _inserts = [];
-  const root: string = await getRootCategory();
-  const sportCategories: ProductCategory[] = await getCategories(root);
-  for (const sport of sportCategories) {
-    _sports.push(sport.name.toLowerCase());
-    const yearCategories: ProductCategory[] = await getCategories(sport.id);
-    for (const year of yearCategories) {
-      const manufactureCategories: ProductCategory[] = await getCategories(year.id);
-      for (const manufacture of manufactureCategories) {
-        _brands.push(manufacture.name.toLowerCase());
-        const setCategories: ProductCategory[] = await getCategories(manufacture.id);
-        for (const set of setCategories) {
-          _sets.push(set.name.toLowerCase());
-          const subCategoriesOfSet: ProductCategory[] = await getCategories(set.id);
-          for (const subCategory of subCategoriesOfSet) {
-            if (subCategory.name.toLowerCase() === 'insert') {
-              const insertCategories: ProductCategory[] = await getCategories(subCategory.id);
-              for (const insert of insertCategories) {
-                _inserts.push(insert.name.toLowerCase());
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
 
 type DisplayableRow = {
   sport: string;

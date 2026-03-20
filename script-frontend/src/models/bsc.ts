@@ -27,7 +27,7 @@ export interface Card {
   setName: string;
   variantName: string;
   players: string[];
-  teamName: string; //TODO: remove this or the next line
+  teamName: string | string[]; //TODO: remove this or the next line
   teams: string;
   playerAttribute: string | string[];
   playerAttributeDesc: string;

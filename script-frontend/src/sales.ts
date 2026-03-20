@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import 'zx/globals';
 import { useSpinners } from './utils/spinners';
 import initializeFirebase from './utils/firebase';
-import { completeOrder, getOrders, getProductVariant, getSales } from './utils/medusa';
+import { completeOrder, getOrders, getProduct, getProductVariant, getSales, startSync } from './utils/medusa';
 import type { Order } from '@medusajs/client-types';
 import { parseArgs } from './utils/parseArgs';
 // @ts-expect-error - no types
@@ -17,11 +17,12 @@ dotenv.config();
 const args = parseArgs(
   {
     string: ['d', 's'],
-    boolean: ['o', 'n', 'r'],
+    boolean: ['o', 'n', 'r', 'y'],
     alias: {
       n: 'new-sales',
       d: 'days',
       s: 'sku',
+      y: 'sync',
     },
   },
   {
@@ -30,6 +31,7 @@ const args = parseArgs(
     n: 'Gather all new sales from platforms before processing',
     d: 'Get all of the orders from the last n days',
     s: 'Display all sales of a SKU',
+    y: 'Print pending orders and sync their categories to listing platforms',
   },
 );
 
@@ -122,6 +124,24 @@ try {
         output,
       ),
     );
+
+    if (args['sync']) {
+      const categoryIds = new Set<string>();
+      for (const order of orders) {
+        for (const item of order.items ?? []) {
+          const variant = item.variant;
+          if (variant?.product_id) {
+            const product = await getProduct(variant.product_id);
+            if (product.categories?.length) {
+              categoryIds.add(product.categories[0].id);
+            }
+          }
+        }
+      }
+      for (const categoryId of categoryIds) {
+        await startSync(categoryId);
+      }
+    }
   } else {
     finish('No orders to process');
   }

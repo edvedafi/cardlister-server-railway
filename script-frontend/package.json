@@ -17,6 +17,7 @@
     "sync": "tsx src/sync.ts",
     "fix": "tsx src/fix.ts",
     "keepers": "tsx src/keepers.ts",
+    "lookup": "tsx src/lookupCategory.ts",
     "test": "tsx test.ts",
     "services:start": "bash scripts/start-services.sh",
     "services:stop": "bash scripts/stop-services.sh"

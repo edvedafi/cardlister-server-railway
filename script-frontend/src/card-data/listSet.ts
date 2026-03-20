@@ -72,6 +72,9 @@ const processPair = async (
   try {
     const { resizeImageForDisplay } = await import('../image-processing/imageProcessor.js');
 
+    // Clear terminal to free iTerm2's inline image cache and prevent memory bloat
+    process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+
     try {
       // Try to display the front image using term-img first
       const resizedFront = await resizeImageForDisplay(front);

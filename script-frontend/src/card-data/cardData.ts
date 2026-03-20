@@ -20,6 +20,20 @@ import _ from 'lodash';
 
 const { log, showSpinner } = useSpinners('card-data', chalk.whiteBright);
 
+async function getTeamName(card: Card): Promise<string> {
+  let teamName: string | undefined;
+  if (Array.isArray(card.teamName)) {
+    teamName = card.teamName.join(', ');
+  } else if (typeof card.teamName === 'string') {
+    teamName = card.teamName.trim();
+  }
+  if (!teamName) {
+    const playerInfo = Array.isArray(card.players) ? card.players.join(', ') : card.players;
+    teamName = await ask(`Enter team name for ${card.cardNo} ${playerInfo || 'Unknown Player'}`);
+  }
+  return teamName || 'Unknown';
+}
+
 export async function buildProductFromBSCCard(card: Card, set: Category): Promise<Product> {
   const product: Partial<Product> = {
     // @ts-expect-error Lies!
@@ -36,7 +50,7 @@ export async function buildProductFromBSCCard(card: Card, set: Category): Promis
   product.metadata = {
     cardNumber: card.cardNo,
     player: card.players,
-    teams: card.teamName?.trim() || 'Unknown',
+    teams: await getTeamName(card),
     sku: `${set.metadata?.bin}|${card.cardNo}`,
     size: 'Standard',
     thickness: '20pt',

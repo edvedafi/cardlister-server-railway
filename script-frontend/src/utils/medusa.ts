@@ -497,7 +497,7 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
   );
 }
 
-export async function getAllBatchJobs(logStatus = true, filter = true, onlySales = false): Promise<BatchJob[]> {
+export async function getAllBatchJobs(logStatus = true, filter = true, onlySales = false, createdWithinDays?: number): Promise<BatchJob[]> {
   let spinners;
   if (logStatus) {
     spinners = showSpinner('jobs', 'Getting Batch Jobs');
@@ -509,8 +509,15 @@ export async function getAllBatchJobs(logStatus = true, filter = true, onlySales
   if (spinners) {
     spinners.update(`First ${limit}`);
   }
+  const listParams: Record<string, unknown> = { limit, offset };
+  if (createdWithinDays) {
+    const since = new Date();
+    since.setDate(since.getDate() - createdWithinDays);
+    listParams.created_at = { gte: since.toISOString() };
+  }
   while (count > offset) {
-    const response = await medusa.admin.batchJobs.list({ limit, offset });
+    listParams.offset = offset;
+    const response = await medusa.admin.batchJobs.list(listParams as any);
     if (filter) {
       jobs.push(
         ...response.batch_jobs.filter(
