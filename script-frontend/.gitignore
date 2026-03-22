@@ -5,3 +5,9 @@ CardCropper.rotate
 .env
 *error.png
 oldSales.json
+hold/
+debug/
+venv/
+*.dylib
+*.so
+*.pt

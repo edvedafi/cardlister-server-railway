@@ -5,5 +5,10 @@ node_modules
 script-frontend/input/
 script-frontend/output
 *.env*
-script-frontend/venv/*
+script-frontend/venv/
+script-frontend/hold/
+script-frontend/debug/
+*.dylib
+*.so
+*.pt
 script-frontend/log/
