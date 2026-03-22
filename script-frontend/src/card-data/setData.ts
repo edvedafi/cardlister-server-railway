@@ -48,10 +48,12 @@ export async function findSet(
     allowParent,
     onlySportlots,
     parentName,
+    seriesNumber,
   }: {
     allowParent?: boolean;
     onlySportlots?: boolean;
     parentName?: string;
+    seriesNumber?: number;
   } = {
     allowParent: false,
     onlySportlots: false,
@@ -189,7 +191,7 @@ export async function findSet(
     while (!setInfo.set) {
       update('New Set');
       if (onlySportlots) {
-        const setName = await ask('Series 2 Title');
+        const setName = await ask(`Series ${seriesNumber ?? 2} Title`);
         setInfo.handle = `${setInfo.brand.handle}-${setName}`;
         setInfo.set = await createCategory(setName, setInfo.brand.id, setInfo.handle, {});
       } else {
@@ -216,7 +218,7 @@ export async function findSet(
     } else {
       update('New Variant Type');
       if (onlySportlots) {
-        const variantTypeName = await ask('Series 2 Variant Type', 'Base');
+        const variantTypeName = await ask(`Series ${seriesNumber ?? 2} Variant Type`, 'Base');
         setInfo.handle = `${setInfo.set.handle}-${variantTypeName}`;
         if (variantTypeName === 'Base') {
           setInfo.handle = `${setInfo.set.handle}-${variantTypeName}-base`;
@@ -300,7 +302,7 @@ export async function findSet(
         let parallelName: string | undefined = undefined;
 
         if (onlySportlots) {
-          const variantName = await ask('Series 2 Variant Name');
+          const variantName = await ask(`Series ${seriesNumber ?? 2} Variant Name`);
           if (isInsert && !isParallel) {
             isParallel = await ask('Is this a parallel of an insert?', false);
           }
@@ -690,9 +692,8 @@ export async function buildSet(setInfo: SetInfo) {
       let setSelectionComplete = false;
       let allSlCards: { cardNumber: string; title: string }[] = [];
       let firstSetCount = 0;
-      let secondSetCount = 0;
-      let nextSeries: SetInfo | undefined;
-      
+      let additionalSeries: { setInfo: SetInfo; count: number; slCards: { cardNumber: string; title: string }[] }[] = [];
+
       while (!setSelectionComplete) {
         // Get first SportLots set
         update('Getting SportLots cards for first set');
@@ -701,111 +702,109 @@ export async function buildSet(setInfo: SetInfo) {
         firstSetCount = slCards.length;
         cards = findVariations(bscCards, allSlCards);
 
-        // Check if we need a second set - check both raw count and matched count
-        // Raw count check: did we get fewer cards than expected?
-        // Matched count check: after matching, do we have fewer matches?
-        const rawCountMismatch = slCards.length < bscCards.length;
-        const matchedCountMismatch = cards.slBase.length < cards.bscBase.length;
-        
-        log(`Card count check: SL raw=${slCards.length}, BSC=${bscCards.length}, SL matched=${cards.slBase.length}, BSC matched=${cards.bscBase.length}, rawMismatch=${rawCountMismatch}, matchedMismatch=${matchedCountMismatch}`);
-        
-        if (rawCountMismatch || matchedCountMismatch) {
-          const needsSecondSet = await ask(
-            `Is there a second set to include? (${slCards.length} SportLots cards retrieved, ${bscCards.length} BSC cards expected. After matching: ${cards.slBase.length} matched in SL, ${cards.bscBase.length} in BSC)`,
+        // Loop to add additional series as needed
+        let seriesIndex = 2;
+        while (true) {
+          const rawCountMismatch = allSlCards.length < bscCards.length;
+          const matchedCountMismatch = cards.slBase.length < cards.bscBase.length;
+
+          log(`Card count check: SL raw=${allSlCards.length}, BSC=${bscCards.length}, SL matched=${cards.slBase.length}, BSC matched=${cards.bscBase.length}, rawMismatch=${rawCountMismatch}, matchedMismatch=${matchedCountMismatch}`);
+
+          if (!rawCountMismatch && !matchedCountMismatch) {
+            // Counts match - done adding series
+            break;
+          }
+
+          const needsNextSet = await ask(
+            `Is there a Series ${seriesIndex} set to include? (${allSlCards.length} SportLots cards retrieved, ${bscCards.length} BSC cards expected. After matching: ${cards.slBase.length} matched in SL, ${cards.bscBase.length} in BSC)`,
             true
           );
-          
-          if (needsSecondSet) {
-            update('Looking for second set');
-            nextSeries = await findSet({ onlySportlots: true });
-            const nextSLCards = await getSLCardsWithRetry(
-              nextSeries,
-              nextSeries.category,
-              bscCards.length - cards.slBase.length
-            );
-            secondSetCount = nextSLCards.length;
-            
-            // Combine cards from both sets
-            allSlCards = [...slCards, ...nextSLCards];
-            cards = findVariations(bscCards, allSlCards);
-            
-            // Check combined count
-            const totalSlCount = cards.slBase.length;
-            const totalBSCCount = cards.bscBase.length;
-            
-            if (totalSlCount < totalBSCCount) {
-              // Still insufficient after combining sets
-              const useCount = await ask(
-                `Found ${totalSlCount} cards in SportLots (set 1: ${firstSetCount}, set 2: ${secondSetCount}) vs ${totalBSCCount} cards in BSC. Use this count or try again?`,
-                'Use this count',
-                { selectOptions: ['Use this count', 'Try again'] }
-              );
-              
-              if (useCount === 'Try again') {
-                // Loop back to re-select SportLots set
-                update('Retrying SportLots set selection');
-                // Re-select the SportLots set for the current category
-                const newSlSet = await getSLSet(setInfo);
-                if (newSlSet) {
-                  category = await updateCategory(category.id, {
-                    ...category.metadata,
-                    sportlots: newSlSet.key,
-                  });
-                  // Update the category reference in setInfo
-                  if (setInfo.variantName && setInfo.variantName.id === category.id) {
-                    setInfo.variantName = category;
-                  } else if (setInfo.variantType && setInfo.variantType.id === category.id) {
-                    setInfo.variantType = category;
-                  }
-                }
-                // Reset and continue loop
-                allSlCards = [];
-                firstSetCount = 0;
-                secondSetCount = 0;
-                nextSeries = undefined;
-                continue;
-              } else {
-                // User chose to use the count - proceed with combined sets
-                setSelectionComplete = true;
-              }
-            } else {
-              // Counts match or we have enough - proceed
-              setSelectionComplete = true;
-            }
-          } else {
-            // User said no second set - proceed with what we have
-            setSelectionComplete = true;
+
+          if (!needsNextSet) {
+            break;
           }
-        } else {
-          // Counts match - proceed
-          setSelectionComplete = true;
+
+          update(`Looking for Series ${seriesIndex} set`);
+          const nextSeriesInfo = await findSet({ onlySportlots: true, seriesNumber: seriesIndex });
+          const nextSLCards = await getSLCardsWithRetry(
+            nextSeriesInfo,
+            nextSeriesInfo.category,
+            bscCards.length - cards.slBase.length
+          );
+
+          additionalSeries.push({ setInfo: nextSeriesInfo, count: nextSLCards.length, slCards: nextSLCards });
+
+          // Combine cards from all sets
+          allSlCards = [...slCards, ...additionalSeries.flatMap(s => s.slCards)];
+          cards = findVariations(bscCards, allSlCards);
+          seriesIndex++;
         }
-      }
-      
-      // Now process the sets if we have a second set
-      if (nextSeries && secondSetCount > 0) {
-        // We have a second set, need to split BSC cards and process separately
-        const slCards = allSlCards.slice(0, firstSetCount);
-        const nextSLCards = allSlCards.slice(firstSetCount);
-        
-        const maxCardNumberString = _.maxBy(nextSLCards, 'cardNumber')?.cardNumber;
-        const minCardNumberString = _.minBy(nextSLCards, 'cardNumber')?.cardNumber;
-        const maxCardNumber = parseInt(maxCardNumberString?.replace(/\D/g, '') || '0');
-        const minCardNumber = parseInt(minCardNumberString?.replace(/\D/g, '') || '0');
-        const nextBSCCards: Card[] = [];
-        const prevBSC: Card[] = [];
-        bscCards.forEach((card) => {
-          const cardNo = parseInt(card.cardNo.replace(/\D/g, '') || '0');
-          if (cardNo >= minCardNumber && cardNo <= maxCardNumber) {
-            nextBSCCards.push(card);
-          } else {
-            prevBSC.push(card);
+
+        // Check if combined count is still insufficient
+        const totalSlCount = cards.slBase.length;
+        const totalBSCCount = cards.bscBase.length;
+
+        if (totalSlCount < totalBSCCount && additionalSeries.length > 0) {
+          const seriesSummary = [`set 1: ${firstSetCount}`, ...additionalSeries.map((s, i) => `set ${i + 2}: ${s.count}`)].join(', ');
+          const useCount = await ask(
+            `Found ${totalSlCount} cards in SportLots (${seriesSummary}) vs ${totalBSCCount} cards in BSC. Use this count or try again?`,
+            'Use this count',
+            { selectOptions: ['Use this count', 'Try again'] }
+          );
+
+          if (useCount === 'Try again') {
+            // Loop back to re-select SportLots set
+            update('Retrying SportLots set selection');
+            const newSlSet = await getSLSet(setInfo);
+            if (newSlSet) {
+              category = await updateCategory(category.id, {
+                ...category.metadata,
+                sportlots: newSlSet.key,
+              });
+              if (setInfo.variantName && setInfo.variantName.id === category.id) {
+                setInfo.variantName = category;
+              } else if (setInfo.variantType && setInfo.variantType.id === category.id) {
+                setInfo.variantType = category;
+              }
+            }
+            // Reset and continue loop
+            allSlCards = [];
+            firstSetCount = 0;
+            additionalSeries = [];
+            continue;
           }
-        });
-        bscCards = prevBSC;
-        const nextCards = findVariations(nextBSCCards, nextSLCards);
-        const nextProducts = await buildProducts(nextSeries.category, nextCards);
-        builtProducts += nextProducts.length;
+        }
+
+        setSelectionComplete = true;
+      }
+
+      // Now process additional series sets
+      if (additionalSeries.length > 0) {
+        const slCards = allSlCards.slice(0, firstSetCount);
+        let remainingBSC = [...bscCards];
+
+        for (const series of additionalSeries) {
+          const maxCardNumberString = _.maxBy(series.slCards, 'cardNumber')?.cardNumber;
+          const minCardNumberString = _.minBy(series.slCards, 'cardNumber')?.cardNumber;
+          const maxCardNumber = parseInt(maxCardNumberString?.replace(/\D/g, '') || '0');
+          const minCardNumber = parseInt(minCardNumberString?.replace(/\D/g, '') || '0');
+          const seriesBSCCards: Card[] = [];
+          const otherBSC: Card[] = [];
+          remainingBSC.forEach((card) => {
+            const cardNo = parseInt(card.cardNo.replace(/\D/g, '') || '0');
+            if (cardNo >= minCardNumber && cardNo <= maxCardNumber) {
+              seriesBSCCards.push(card);
+            } else {
+              otherBSC.push(card);
+            }
+          });
+          remainingBSC = otherBSC;
+          const seriesCards = findVariations(seriesBSCCards, series.slCards);
+          const seriesProducts = await buildProducts(series.setInfo.category, seriesCards);
+          builtProducts += seriesProducts.length;
+        }
+
+        bscCards = remainingBSC;
         cards = findVariations(bscCards, slCards);
       }
     } else {

@@ -2,6 +2,7 @@ import { configDotenv } from 'dotenv';
 import 'zx/globals';
 import initializeFirebase from './utils/firebase.js';
 import { shutdownSportLots, setSportlotsImplementation } from './listing-sites/sportlots-adapter.js';
+import { setExtractorMode, type ExtractorMode } from './card-data/imageRecognition.js';
 import chalk from 'chalk';
 import { useSpinners } from './utils/spinners.js';
 import { onShutdown } from 'node-graceful-shutdown';
@@ -19,7 +20,9 @@ configDotenv();
 $.verbose = false;
 
 const shutdown = async () => {
-  await Promise.all([shutdownSportLots()]);
+  const { shutdownOCR } = await import('./image-processing/ocr-extractor.js');
+  const { shutdownCardExtractor } = await import('./image-processing/card-extractor.js');
+  await Promise.all([shutdownSportLots(), shutdownOCR(), shutdownCardExtractor()]);
 };
 
 onShutdown(shutdown);
@@ -37,7 +40,7 @@ try {
   const args = parseArgs(
     {
       boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x'],
-      string: ['n', 'sl', 'p'],
+      string: ['n', 'sl', 'p', 'e'],
       alias: {
         s: 'select-bulk-cards',
         b: 'bulk',
@@ -52,6 +55,7 @@ try {
         o: 'no-sync',
         p: 'price',
         x: 'include-zero-images',
+        e: 'extractor',
       },
     },
     {
@@ -68,6 +72,7 @@ try {
       o: 'No Sync run after updating',
       p: 'Price Mode: Update pricing and quantity for cards in a set. Optional percentage reduction (e.g., -p 10 for 10% reduction, -p for 0% reduction)',
       x: 'Include cards with 0 inventory if they have stored images (only works with -p flag)',
+      e: 'Card extractor: ocr (default, free EasyOCR), ollama (local LLM), or haiku (Claude API). Example: --extractor=haiku',
     },
   );
 
@@ -75,6 +80,18 @@ try {
   if (args['include-zero-images'] && args['price'] === undefined) {
     error('The -x (include-zero-images) flag can only be used with the -p (price) flag');
     process.exit(1);
+  }
+
+  // Configure card extractor mode
+  const extractorArg = (args['extractor'] || args['e'] || 'ocr').toString().toLowerCase();
+  if (!['ocr', 'ollama', 'haiku'].includes(extractorArg)) {
+    error(`Invalid extractor "${extractorArg}". Must be one of: ocr, ollama, haiku`);
+    process.exit(1);
+  }
+  setExtractorMode(extractorArg as ExtractorMode);
+  if (extractorArg === 'ollama' || extractorArg === 'haiku') {
+    const { setCardExtractorBackend } = await import('./image-processing/card-extractor.js');
+    setCardExtractorBackend(extractorArg);
   }
 
   // Configure SportLots implementation before any SportLots calls

@@ -35,14 +35,21 @@ type QueuedRequest = {
 const requestQueue: QueuedRequest[] = [];
 let activeRequest: QueuedRequest | null = null;
 
+let backendMode: 'ollama' | 'haiku' = 'ollama';
+
+export function setCardExtractorBackend(mode: 'ollama' | 'haiku') {
+  backendMode = mode;
+}
+
 function getEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    // Default to local Ollama if OLLAMA_HOST not already set
-    OLLAMA_HOST: process.env.OLLAMA_HOST ?? 'http://localhost:11434',
-    // Suppress Python warnings
-    PYTHONWARNINGS: 'ignore',
-  };
+  const env: NodeJS.ProcessEnv = { ...process.env, PYTHONWARNINGS: 'ignore' };
+  if (backendMode === 'ollama') {
+    env.OLLAMA_HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
+  } else {
+    // Haiku mode: ensure OLLAMA_HOST is not set so Python falls through to Claude
+    delete env.OLLAMA_HOST;
+  }
+  return env;
 }
 
 function spawnWorker(): Promise<void> {
