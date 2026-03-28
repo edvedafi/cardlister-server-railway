@@ -15,6 +15,7 @@ import { buildSet } from './setData';
 import _ from 'lodash';
 import type { ParsedArgs } from 'minimist';
 import { getFiles, getInputs } from '../utils/inputs';
+import { orientAndClassifyCards, orderFrontBack } from '../image-processing/card-cropper-wrapper';
 import { getCommonPricing } from './pricing';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
@@ -38,9 +39,16 @@ const queueImageFiles = new Queue({
 
 let hasUpdated = false;
 
-const preProcessPair = async (front: string, back: string, setData: SetInfo, args: ParsedArgs) => {
-  const { update, finish, error } = showSpinner(`singles-preprocess-${front}`, `Pre-Processing ${front}/${back}`);
+const preProcessPair = async (imgA: string, imgB: string, setData: SetInfo, args: ParsedArgs) => {
+  const { update, finish, error } = showSpinner(`singles-preprocess-${imgA}`, `Pre-Processing ${imgA}/${imgB}`);
   try {
+    // Orient images and detect front/back via text density
+    update(`Fixing orientation & detecting front/back`);
+    const textDetections = await orientAndClassifyCards([imgA, imgB]);
+    const [front, back] = textDetections.size > 0
+      ? orderFrontBack(imgA, imgB, textDetections)
+      : [imgA, imgB];
+
     update(`Getting image recognition data`);
     const imageDefaults = await imageRecognition(front, back, setData);
     update(`Queueing next step`);
@@ -750,15 +758,15 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     let itemsPushed = 0;
 
     while (i < files.length - 1) {
-      const front = files[i++];
-      let back: string;
+      const imgA = files[i++];
+      let imgB: string = imgA;
       if (i < files.length) {
-        back = files[i++];
+        imgB = files[i++];
       }
       const jobPromise = new Promise<void>((resolve, reject) => {
         queueReadImage.push(async () => {
           try {
-            await preProcessPair(front, back, setData, args);
+            await preProcessPair(imgA, imgB, setData, args);
             resolve();
           } catch (e) {
             reject(e);

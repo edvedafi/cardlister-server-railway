@@ -1,7 +1,7 @@
 import { getFiles, getInputs } from './src/utils/inputs';
 import 'zx/globals';
 import { ChatGPTProcessor } from './src/image-processing/chatgpt-processor';
-import { cropCardsWithPython } from './src/image-processing/card-cropper-wrapper';
+import { cropCardsWithPython, orientAndClassifyCards, orderFrontBack } from './src/image-processing/card-cropper-wrapper';
 import { parseArgs } from './src/utils/parseArgs';
 import { useSpinners } from './src/utils/spinners';
 import initializeFirebase from './src/utils/firebase';
@@ -10,6 +10,65 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const { showSpinner, log } = useSpinners('chatGPT', chalk.cyan);
+
+async function testOrient() {
+  const args = parseArgs(
+    { boolean: ['o'], alias: { o: 'orient' } },
+    { o: 'Test orientation and front/back detection' },
+  );
+
+  const inputDir = args._[0] || 'input';
+  const files = await getFiles(inputDir);
+  if (files.length < 2) {
+    console.log('Need at least 2 images for orient test');
+    process.exit(1);
+  }
+
+  const imgA = files[0];
+  const imgB = files[1];
+  console.log(`\nImage A: ${path.basename(imgA)}`);
+  console.log(`Image B: ${path.basename(imgB)}`);
+
+  console.log('\nRunning orientation correction + text detection...\n');
+  const orientResults = await orientAndClassifyCards([imgA, imgB]);
+
+  const resultA = orientResults.get(imgA);
+  const resultB = orientResults.get(imgB);
+
+  const formatResult = (name: string, r: typeof resultA) => {
+    if (!r) return `  ${name}: (no data)`;
+    const rotated = r.rotation_applied !== 0 ? `rotated ${r.rotation_applied}°` : 'no rotation';
+    return `  ${name}: ${r.text_detection_count} text detections, ${rotated}`;
+  };
+
+  console.log(formatResult(path.basename(imgA), resultA));
+  console.log(formatResult(path.basename(imgB), resultB));
+
+  const [front, back] = orientResults.size > 0
+    ? orderFrontBack(imgA, imgB, orientResults)
+    : [imgA, imgB];
+
+  const swapped = front !== imgA;
+  console.log(`\nResult:`);
+  console.log(`  Front: ${path.basename(front)}`);
+  console.log(`  Back:  ${path.basename(back)}`);
+  if (swapped) {
+    console.log(`  → Order was swapped`);
+  } else {
+    console.log(`  → Original order kept`);
+  }
+
+  // Display both images
+  try {
+    const termImg = (await import('term-img')).default;
+    console.log(`\n--- FRONT: ${path.basename(front)} ---`);
+    termImg(front, { width: 40, fallback: () => console.log('(cannot display image in this terminal)') });
+    console.log(`\n--- BACK: ${path.basename(back)} ---`);
+    termImg(back, { width: 40, fallback: () => console.log('(cannot display image in this terminal)') });
+  } catch {
+    console.log('\n(term-img not available for image display)');
+  }
+}
 
 async function main() {
 
@@ -27,7 +86,7 @@ async function main() {
     update('Gathering Inputs');
     const args = parseArgs(
       {
-        boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o'],
+        boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x'],
         string: ['n'],
         alias: {
           s: 'select-bulk-cards',
@@ -39,7 +98,8 @@ async function main() {
           a: 'allBase',
           i: 'images',
           v: 'inventory',
-          o: 'no-sync',
+          o: 'orient',
+          x: 'no-sync',
         },
       },
       {
@@ -52,9 +112,16 @@ async function main() {
         a: 'All Cards are base pricing so skip the pricing questions',
         i: 'Attempt to use the image as is first',
         v: 'Inventory Mode: Will only show cards with a quantity greater than 0',
-        o: 'No Sync run after updating',
+        o: 'Test orientation and front/back detection',
+        x: 'No Sync run after updating',
       },
     );
+
+    if (args['orient']) {
+      finish('Running orient test');
+      await testOrient();
+      return;
+    }
 
     if (args['numbers'] || args['select-bulk-cards'] || args['inventory']) {
       args['bulk'] = true;

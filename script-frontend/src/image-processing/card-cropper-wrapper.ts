@@ -33,7 +33,9 @@ export async function cropCardsWithPython(imagePaths: string[], outputDir: strin
   try {
     const { stdout } = await $`python3 ${scriptPath} ${outputDir} ${absImagePaths}`;
     // card_cropper_yolo.py prints a JSON array of output image paths
-    return JSON.parse(stdout.trim());
+    const paths: string[] = JSON.parse(stdout.trim());
+    await orientCroppedCards(paths);
+    return paths;
   } catch (err: any) {
     // zx throws with stderr and stdout attached
     throw new Error(`card_cropper_yolo.py failed: ${err.stderr || err.message}`);
@@ -86,7 +88,9 @@ export async function cropCardsWithSAM(
         `Ollama: ${ollamaErr.stderr || ollamaErr.message}`,
       );
     }
-    return extractCroppedPaths(results);
+    const paths = extractCroppedPaths(results);
+    await orientCroppedCards(paths);
+    return paths;
   }
 
   // --- Per-image fallback: retry failed images with Ollama ---
@@ -109,7 +113,9 @@ export async function cropCardsWithSAM(
     }
   }
 
-  return extractCroppedPaths(results);
+  const finalPaths = extractCroppedPaths(results);
+  await orientCroppedCards(finalPaths);
+  return finalPaths;
 }
 
 /**
@@ -137,10 +143,90 @@ export async function cropCardsWithOllama(
   try {
     const { stdout } = await $`${VENV_PYTHON} ${ollamaScript} ${absOutputDir} ${absImagePaths}`;
     const results = JSON.parse(stdout.trim()) as CardCropResult[];
-    return extractCroppedPaths(results);
+    const paths = extractCroppedPaths(results);
+    await orientCroppedCards(paths);
+    return paths;
   } catch (err: any) {
     throw new Error(`card_cropper_ollama.py failed: ${err.stderr || err.message}`);
   }
+}
+
+/**
+ * Post-crop orientation correction: rotates cropped card images so text reads right-side-up.
+ * Uses EasyOCR confidence at 0°/90°/180°/270° to find the correct orientation.
+ * Images are overwritten in-place if rotation is needed.
+ *
+ * Set SKIP_ORIENTATION_CORRECTION=1 to bypass this step.
+ */
+async function orientCroppedCards(croppedPaths: string[]): Promise<void> {
+  if (croppedPaths.length === 0) return;
+  if (process.env.SKIP_ORIENTATION_CORRECTION === '1') return;
+
+  const scriptPath = path.join(__dirname, 'orient_cards.py');
+  try {
+    const { stdout } = await $`${VENV_PYTHON} ${scriptPath} ${croppedPaths}`;
+    JSON.parse(stdout.trim()) as OrientResult[];
+  } catch {
+    // Orientation correction is best-effort — don't fail the whole crop pipeline
+  }
+}
+
+type OrientResult = {
+  image_path: string;
+  rotation_applied: number;
+  confidence: number;
+  text_detection_count: number;
+  scores: Record<string, number>;
+  error?: string;
+};
+
+/**
+ * Batch pre-processing step: fix orientation on all images and return orient results
+ * for front/back classification. Call this BEFORE pairing images.
+ *
+ * @returns Map from image path to OrientResult
+ */
+export async function orientAndClassifyCards(imagePaths: string[]): Promise<Map<string, OrientResult>> {
+  const resultMap = new Map<string, OrientResult>();
+  if (imagePaths.length === 0) return resultMap;
+  if (process.env.SKIP_ORIENTATION_CORRECTION === '1') return resultMap;
+
+  const scriptPath = path.join(__dirname, 'orient_cards.py');
+  try {
+    const absPaths = imagePaths.map(p => path.isAbsolute(p) ? p : path.resolve(p));
+    const { stdout } = await $`${VENV_PYTHON} ${scriptPath} ${absPaths}`;
+    const results = JSON.parse(stdout.trim()) as OrientResult[];
+    // Map results back to the original paths the caller passed in (not the absolute paths
+    // sent to Python) so lookups work regardless of relative vs absolute input.
+    for (let i = 0; i < results.length && i < imagePaths.length; i++) {
+      resultMap.set(imagePaths[i], results[i]);
+    }
+  } catch {
+    // Best-effort — return empty map, caller falls back to original order
+  }
+
+  return resultMap;
+}
+
+/**
+ * Given two images from a pair, return [front, back] based on text detection counts.
+ * The image with MORE text is the back (stats, bio, copyright).
+ * If counts are equal or unavailable, keeps original order.
+ */
+export function orderFrontBack(
+  imageA: string,
+  imageB: string,
+  orientResults: Map<string, OrientResult>,
+): [front: string, back: string] {
+  const countA = orientResults.get(imageA)?.text_detection_count ?? 0;
+  const countB = orientResults.get(imageB)?.text_detection_count ?? 0;
+
+  if (countA > countB) {
+    // A has more text → A is the back
+    return [imageB, imageA];
+  }
+  // B has more text or equal → keep original order (A is front)
+  return [imageA, imageB];
 }
 
 function extractCroppedPaths(results: CardCropResult[]): string[] {
