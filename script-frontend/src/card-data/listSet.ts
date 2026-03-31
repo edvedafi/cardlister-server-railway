@@ -1,7 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { useSpinners } from '../utils/spinners';
 import chalk from 'chalk';
 import Queue from 'queue';
-import { getCardData, saveBulk, saveListing } from './cardData';
+import { selectCard, getCardDetails, saveBulk, saveListing } from './cardData';
 import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion, getInventoryQuantitiesBatch } from '../utils/medusa';
@@ -38,6 +40,35 @@ const queueImageFiles = new Queue({
 });
 
 let hasUpdated = false;
+
+// Scanned file tracking for session recovery
+let scannedFilePath = '';
+const scannedFiles = new Set<string>();
+
+function loadScannedFiles(inputDir: string): void {
+  scannedFilePath = path.join(inputDir, 'scanned.txt');
+  scannedFiles.clear();
+  try {
+    const content = fs.readFileSync(scannedFilePath, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed) scannedFiles.add(trimmed);
+    }
+  } catch {
+    // File doesn't exist yet — that's fine
+  }
+}
+
+function markScanned(front: string, back: string): void {
+  const names = [path.basename(front)];
+  if (back && back !== front) names.push(path.basename(back));
+  for (const name of names) {
+    if (!scannedFiles.has(name)) {
+      scannedFiles.add(name);
+      fs.appendFileSync(scannedFilePath, name + '\n');
+    }
+  }
+}
 
 const preProcessPair = async (imgA: string, imgB: string, setData: SetInfo, args: ParsedArgs) => {
   const { update, finish, error } = showSpinner(`singles-preprocess-${imgA}`, `Pre-Processing ${imgA}/${imgB}`);
@@ -130,23 +161,38 @@ const processPair = async (
       }
     }
 
-    const { productVariant, quantity } = await getCardData(setData, imageDefaults, args);
+    // Phase 1: Select the card (auto or user-selected)
+    const { product, productVariant } = await selectCard(setData, imageDefaults);
     if (!productVariant.product) throw new Error('Must set Product on the Variant before processing');
 
+    // Check backend inventory — if > 0, this is a duplicate, auto-increment
+    const currentQty = await getInventoryQuantity(productVariant);
+    if (currentQty > 0) {
+      const newQty = currentQty + 1;
+      const inventoryItem = await getInventory(productVariant);
+      await updateInventory(inventoryItem, newQty);
+      markScanned(front, back);
+      log(chalk.green(`Duplicate detected: ${productVariant.product.title} — quantity incremented to ${newQty}`));
+      return { productVariant, quantity: String(newQty), images: [] };
+    }
+
+    // Phase 2: New card — ask pricing, quantity
+    const { productVariant: pv, quantity } = await getCardDetails(setData, imageDefaults, args, product, productVariant);
+
     const images: ProductImage[] = [];
-    const frontImage = await prepareImageFile(front, productVariant, setData, 1, args.i);
+    const frontImage = await prepareImageFile(front, pv, setData, 1, args.i);
     if (frontImage) {
       images.push({
         file: frontImage,
-        url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product.handle}1.jpg}?alt=media`,
+        url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${pv.product!.handle}1.jpg}?alt=media`,
       });
     }
     if (back) {
-      const backImage = await prepareImageFile(back, productVariant, setData, 2, args.i);
+      const backImage = await prepareImageFile(back, pv, setData, 2, args.i);
       if (backImage) {
         images.push({
           file: backImage,
-          url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product.handle}2.jpg}?alt=media`,
+          url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${pv.product!.handle}2.jpg}?alt=media`,
         });
       }
     }
@@ -154,7 +200,7 @@ const processPair = async (
     await new Promise<void>((resolve, reject) => {
       queueImageFiles.push(async () => {
         try {
-          await processUploads(productVariant, images, quantity);
+          await processUploads(pv, images, String(quantity));
           resolve();
         } catch (e) {
           reject(e);
@@ -163,7 +209,8 @@ const processPair = async (
       });
     });
 
-    return { productVariant, quantity, images };
+    markScanned(front, back);
+    return { productVariant: pv, quantity, images };
   } catch (e) {
     console.error(e);
     throw e;
@@ -685,7 +732,7 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
   }
 };
 
-export async function processSet(setData: SetInfo, files: string[] = [], args: ParsedArgs) {
+export async function processSet(setData: SetInfo, files: string[] = [], args: ParsedArgs, inputDirectory?: string) {
   const {
     update: updateSpinner,
     finish: finishSpinner,
@@ -735,6 +782,17 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       finish();
     }
 
+    // Load previously scanned files to skip on restart
+    if (inputDirectory) {
+      loadScannedFiles(inputDirectory);
+      const beforeCount = files.length;
+      files = files.filter((f) => !scannedFiles.has(path.basename(f)));
+      const skipped = beforeCount - files.length;
+      if (skipped > 0) {
+        log(chalk.yellow(`Skipped ${skipped} already-scanned file(s)`));
+      }
+    }
+
     let hasQueueError = false;
     const watchForError = (name: string, queue: Queue) =>
       queue.addEventListener('error', (e) => {
@@ -778,8 +836,67 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       itemsPushed++;
     }
 
+    // Watch mode: keep alive and watch for new file pairs
+    if (args['watch'] && inputDirectory && !hasQueueError) {
+      const { watchForNewPairs } = await import('../utils/watchDirectory.js');
+      const knownFiles = new Set(files);
+
+      const watcher = watchForNewPairs(
+        inputDirectory,
+        knownFiles,
+        (imgA, imgB) => {
+          const jobPromise = new Promise<void>((resolve, reject) => {
+            queueReadImage.push(async () => {
+              try {
+                await preProcessPair(imgA, imgB, setData, args);
+                resolve();
+              } catch (e) {
+                reject(e);
+                throw e;
+              }
+            });
+          });
+          allJobPromises.push(jobPromise);
+          itemsPushed++;
+          return jobPromise;
+        },
+        scannedFiles,
+      );
+
+      // Wait for initial files to finish, then show idle prompt
+      if (itemsPushed > 0) {
+        const { finish: finishInitial, error: errorInitial } = showSpinner('processing-initial', 'Processing initial cards');
+        try {
+          await Promise.all(allJobPromises);
+          finishInitial();
+        } catch (e) {
+          hasQueueError = true;
+          errorInitial(e);
+        }
+      }
+
+      if (!hasQueueError) {
+        // Show idle prompt and listen for 'c' + Enter or new files
+        watcher.startListeningForComplete();
+        await watcher.completionPromise;
+      }
+
+      // Always stop the watcher
+      watcher.stop();
+
+      // Drain any jobs that were added by the watcher
+      if (allJobPromises.length > 0 && !hasQueueError) {
+        log(chalk.yellow('Completing... waiting for remaining cards to finish processing.'));
+        try {
+          await Promise.all(allJobPromises);
+        } catch (e) {
+          hasQueueError = true;
+        }
+      }
+    }
+
     const { finish: finishProcessing, error: errorProcessing } = showSpinner('processing', `Waiting for all cards to finish processing`);
-    if (itemsPushed > 0 && !hasQueueError) {
+    if (!args['watch'] && itemsPushed > 0 && !hasQueueError) {
       try {
         await Promise.all(allJobPromises);
         finishProcessing();

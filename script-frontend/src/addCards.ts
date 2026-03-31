@@ -39,7 +39,7 @@ try {
   update('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x'],
+      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x', 'w'],
       string: ['n', 'sl', 'p', 'e'],
       alias: {
         s: 'select-bulk-cards',
@@ -56,6 +56,7 @@ try {
         p: 'price',
         x: 'include-zero-images',
         e: 'extractor',
+        w: 'watch',
       },
     },
     {
@@ -73,6 +74,7 @@ try {
       p: 'Price Mode: Update pricing and quantity for cards in a set. Optional percentage reduction (e.g., -p 10 for 10% reduction, -p for 0% reduction)',
       x: 'Include cards with 0 inventory if they have stored images (only works with -p flag)',
       e: 'Card extractor: ocr (default, free EasyOCR), ollama (local LLM), or haiku (Claude API). Example: --extractor=haiku',
+      w: 'Watch mode: keep running and watch for new card images in the input directory. Type c + Enter to complete.',
     },
   );
 
@@ -112,7 +114,7 @@ try {
   let files: string[] = [];
   // Skip file listing in bulk/price mode (files aren't needed for price updates)
   if (input_directory !== 'input/bulk' && input_directory !== 'input/bulk/') {
-    files = await getFiles(input_directory);
+    files = await getFiles(input_directory, !args['watch']);
   }
 
     update('Gathering Set Data');
@@ -239,7 +241,7 @@ try {
   if (handledParentSync) {
     // Already processed all leaf categories, exit early
   } else if (setData.category && setData.category.category_children.length === 0) {
-    await processSet(setData, files, args);
+    await processSet(setData, files, args, input_directory);
   } else {
     const processChildren = async (productCategory: ProductCategory, data: SetInfo) => {
       const categories = productCategory.category_children.sort((a, b) =>

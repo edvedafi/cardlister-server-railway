@@ -2,10 +2,13 @@ import { getFiles, getInputs } from './src/utils/inputs';
 import 'zx/globals';
 import { ChatGPTProcessor } from './src/image-processing/chatgpt-processor';
 import { cropCardsWithPython, orientAndClassifyCards, orderFrontBack } from './src/image-processing/card-cropper-wrapper';
+import { cropImage } from './src/image-processing/imageProcessor.js';
 import { parseArgs } from './src/utils/parseArgs';
 import { useSpinners } from './src/utils/spinners';
 import initializeFirebase from './src/utils/firebase';
 import dotenv from 'dotenv';
+import fs from 'fs-extra';
+import type { ParsedArgs } from 'minimist';
 
 dotenv.config();
 
@@ -70,6 +73,33 @@ async function testOrient() {
   }
 }
 
+async function testCrop(args: ParsedArgs) {
+  const inputDir = await getInputs(args);
+  const files = await getFiles(inputDir, false);
+  if (files.length === 0) {
+    console.log('No files found in', inputDir);
+    process.exit(1);
+  }
+
+  console.log(`\nFound ${files.length} file(s) in ${inputDir}`);
+  console.log('Running crop pipeline on each file...\n');
+
+  const outputDir = 'input/tmp';
+  await fs.ensureDir(outputDir);
+
+  for (const file of files) {
+    const basename = path.basename(file);
+    const outputFile = path.join(outputDir, `cropped-${basename}`);
+    console.log(`\nCropping: ${basename}`);
+    try {
+      const result = await cropImage(file, null, outputDir, outputFile, true, false);
+      console.log(`  -> ${result}`);
+    } catch (e: any) {
+      console.error(`  -> Failed: ${e.message}`);
+    }
+  }
+}
+
 async function main() {
 
   const { update, finish, error } = showSpinner('chatGPT', 'Processing Cards');
@@ -86,7 +116,7 @@ async function main() {
     update('Gathering Inputs');
     const args = parseArgs(
       {
-        boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x'],
+        boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x', 'r'],
         string: ['n'],
         alias: {
           s: 'select-bulk-cards',
@@ -100,6 +130,7 @@ async function main() {
           v: 'inventory',
           o: 'orient',
           x: 'no-sync',
+          r: 'crop',
         },
       },
       {
@@ -114,12 +145,19 @@ async function main() {
         v: 'Inventory Mode: Will only show cards with a quantity greater than 0',
         o: 'Test orientation and front/back detection',
         x: 'No Sync run after updating',
+        r: 'Test cropping on all images in input directory',
       },
     );
 
     if (args['orient']) {
       finish('Running orient test');
       await testOrient();
+      return;
+    }
+
+    if (args['crop']) {
+      finish('Running crop test');
+      await testCrop(args);
       return;
     }
 

@@ -289,7 +289,7 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
   return cardName;
 }
 
-export async function getCardData(setData: SetInfo, imageDefaults: Metadata, args: ParsedArgs) {
+export async function selectCard(setData: SetInfo, imageDefaults: Metadata): Promise<{ product: Product; productVariant: ProductVariant }> {
   if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
   const product = await matchCard(setData, imageDefaults);
   if (!product.variants) {
@@ -323,6 +323,24 @@ export async function getCardData(setData: SetInfo, imageDefaults: Metadata, arg
       }
     }
   }
+  if (!productVariant.product) {
+    productVariant.product = product;
+  }
+  return { product, productVariant };
+}
+
+export async function getCardDetails(
+  setData: SetInfo,
+  imageDefaults: Metadata,
+  args: ParsedArgs,
+  product: Product,
+  productVariant: ProductVariant,
+) {
+  return getCardDataWithVariant(setData, imageDefaults, args, product, productVariant);
+}
+
+export async function getCardData(setData: SetInfo, imageDefaults: Metadata, args: ParsedArgs) {
+  const { product, productVariant } = await selectCard(setData, imageDefaults);
   return getCardDataWithVariant(setData, imageDefaults, args, product, productVariant);
 }
 
