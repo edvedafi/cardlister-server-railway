@@ -41,6 +41,7 @@ export const cropImage = async (
   outputFile,
   useMaxSize = true,
   useImageFirst = false,
+  nonInteractive = false,
 ) => {
   const { update, error, finish } = showSpinner('crop', 'Preparing Image');
   let input = image;
@@ -55,7 +56,7 @@ export const cropImage = async (
   // }
   //if the output file already exists, skip it
   if (fs.existsSync(outputFile)) {
-    log('Image already exists, skipping');
+    // Already cropped — skip silently
   } else {
     await $`mkdir -p ${outputLocation}`;
 
@@ -63,7 +64,9 @@ export const cropImage = async (
       fs.removeSync(outputFile);
     }
 
-    const tempDirectory = '/tmp/cardlister';
+    const inputStem = path.basename(image, path.extname(image));
+    const uniqueId = `${inputStem}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempDirectory = `/tmp/cardlister/${uniqueId}`;
     await fs.ensureDir(tempDirectory);
     let tempImage = `${tempDirectory}/temp.jpg`;
 
@@ -77,7 +80,6 @@ export const cropImage = async (
     const cropLog = fs.openSync(`${tempDirectory}/crop-debug.log`, 'a');
     const cropWrite = (msg) => {
       const line = `[crop ${new Date().toISOString()}] ${msg}\n`;
-      process.stderr.write(line);
       fs.writeSync(cropLog, line);
     };
 
@@ -169,8 +171,12 @@ export const cropImage = async (
         },
       },
     ];
+    // Skip manual fallback in non-interactive mode
+    const attempts = nonInteractive
+      ? cropAttempts.filter(a => a.name !== 'manual')
+      : cropAttempts;
     if (useImageFirst) {
-      cropAttempts.unshift({
+      attempts.unshift({
         name: 'copy',
         fn: async () => {
           tempImage = `${tempDirectory}/copy.jpg`;
@@ -179,38 +185,54 @@ export const cropImage = async (
       });
     }
     let found = false;
+    let cropMethod = null;
     let i = 0;
-    while (!found && i < cropAttempts.length) {
-      const { name, fn } = cropAttempts[i];
-      cropWrite(`starting attempt ${i + 1}/${cropAttempts.length}: ${name}`);
+    while (!found && i < attempts.length) {
+      const { name, fn } = attempts[i];
+      cropWrite(`starting attempt ${i + 1}/${attempts.length}: ${name}`);
       try {
-        update(`Attempting crop ${i + 1}/${cropAttempts.length}: ${name}`);
+        update(`Attempting crop ${i + 1}/${attempts.length}: ${name}`);
         const cropped = await fn();
         if (cropped) {
           cropWrite(`attempt ${name} succeeded → ${tempImage}`);
-          try {
-            // Try to display the image using term-img first
-            const imageOutput = await terminalImage(tempImage, { height: 25 });
-            log('  ' + imageOutput);
-          } catch (error) {
-            // If term-img fails, show image info
-            log('  📷 [Image display failed, showing details]');
-            log(`     File: ${tempImage.split('/').pop()}`);
 
-            // Try to get image dimensions using sharp
+          if (nonInteractive) {
+            // Auto-accept the first successful crop
+            cropWrite(`auto-accepting ${name} (non-interactive)`);
+            found = true;
+            cropMethod = name;
+          } else if (useImageFirst) {
+            cropWrite(`auto-accepting ${name} (pre-cropped / useImageFirst)`);
+            found = true;
+            cropMethod = name;
+          } else {
             try {
-              const metadata = await sharp(tempImage).metadata();
-              log(`     Dimensions: ${metadata.width} x ${metadata.height}`);
-              log(`     Format: ${metadata.format}`);
-              log(`     Size: ${metadata.size ? (metadata.size / 1024 / 1024).toFixed(2) : 'Unknown'} MB`);
-            } catch (sharpError) {
-              log('     [Could not read image metadata]');
+              // Try to display the image using term-img first
+              const imageOutput = await terminalImage(tempImage, { height: 25 });
+              log('  ' + imageOutput);
+            } catch (error) {
+              // If term-img fails, show image info
+              log('  📷 [Image display failed, showing details]');
+              log(`     File: ${tempImage.split('/').pop()}`);
+
+              // Try to get image dimensions using sharp
+              try {
+                const metadata = await sharp(tempImage).metadata();
+                log(`     Dimensions: ${metadata.width} x ${metadata.height}`);
+                log(`     Format: ${metadata.format}`);
+                log(`     Size: ${metadata.size ? (metadata.size / 1024 / 1024).toFixed(2) : 'Unknown'} MB`);
+              } catch (sharpError) {
+                log('     [Could not read image metadata]');
+              }
+            }
+
+            {
+              cropWrite(`prompting user after ${name}`);
+              found = await ask(`Did Image ${path.basename(image)} render correct?`, true);
+              cropWrite(`user answered: ${found}`);
+              if (found) cropMethod = name;
             }
           }
-
-          cropWrite(`prompting user after ${name}`);
-          found = await ask('Did Image render correct?', true);
-          cropWrite(`user answered: ${found}`);
         } else {
           cropWrite(`attempt ${name} returned false (no crop found)`);
           found = false;
@@ -234,6 +256,7 @@ export const cropImage = async (
       } else {
         await $`mv ${tempImage} ${outputFile}`;
       }
+      await fs.remove(tempDirectory);
     } else {
       const e = new Error('Failed to crop image');
       error(e);
@@ -252,7 +275,7 @@ export const resizeImageForDisplay = async (imagePath) => {
   await fs.ensureDir(tempDirectory);
   const ext = path.extname(imagePath) || '.jpg';
   const basename = path.basename(imagePath, ext);
-  const tempPath = path.join(tempDirectory, `preview-${basename}${ext}`);
+  const tempPath = path.join(tempDirectory, `preview-${basename}-${Date.now()}${ext}`);
   const metadata = await sharp(imagePath).metadata();
   await sharp(imagePath)
     .resize(Math.floor((metadata.width || 1000) * 0.5), Math.floor((metadata.height || 1400) * 0.5))

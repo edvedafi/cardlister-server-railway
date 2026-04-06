@@ -14,6 +14,9 @@ import { processSet, processPrice } from './card-data/listSet';
 import type { ProductCategory } from '@medusajs/client-types';
 import { getCategory, getAllLeafCategories, startSync, getProducts } from './utils/medusa';
 import type { SetInfo } from './models/setInfo';
+import { createLogger } from './utils/logger.js';
+
+const debug = createLogger('addCards');
 
 configDotenv();
 
@@ -27,16 +30,22 @@ const shutdown = async () => {
 
 onShutdown(shutdown);
 
-const { showSpinner, log } = useSpinners('addCards', chalk.cyan);
-
-const { update, finish, error } = showSpinner('addCards', 'Adding Cards');
+const { log } = useSpinners('addCards', chalk.cyan);
+const error = (info: unknown) => {
+  if (info instanceof Error) {
+    log(chalk.red(info.message));
+    log(info);
+  } else {
+    log(chalk.red(String(info)));
+  }
+};
 
 try {
-  update('Logging in');
+  debug('Logging in');
   initializeFirebase();
 
   // Set up full run information
-  update('Gathering Inputs');
+  debug('Gathering Inputs');
   const args = parseArgs(
     {
       boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x', 'w'],
@@ -117,9 +126,9 @@ try {
     files = await getFiles(input_directory, !args['watch']);
   }
 
-    update('Gathering Set Data');
+  debug('Gathering Set Data');
   if (files && files[0]) {
-    log(` Displaying: ${files[0]}`);
+    debug(`Displaying: ${files[0]}`);
     
     try {
       const { resizeImageForDisplay } = await import('./image-processing/imageProcessor.js');
@@ -177,7 +186,6 @@ try {
     }
   }
   const setData = await findSet({ allowParent: args['inventory'] || args['price'] !== undefined, parentName: 'All' });
-  update('Processing Singles');
   // log(setData);
   
   // Handle parent selection in price mode - iterate through all children and sync in background
@@ -189,7 +197,7 @@ try {
     
     // Check if this is a parent category (has children)
     if (categoryWithChildren.category_children && categoryWithChildren.category_children.length > 0) {
-      update('Getting all leaf categories for parent sync...');
+      debug('Getting all leaf categories for parent sync');
       const leafCategories = await getAllLeafCategories(setData.category.id);
       // Sort categories alphabetically by name
       leafCategories.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -227,12 +235,12 @@ try {
       // Wait for all sync initialization calls to complete before proceeding
       // This ensures HTTP connections are properly established before process exit
       if (syncPromises.length > 0) {
-        update('Initializing sync operations...');
+        debug('Initializing sync operations');
         await Promise.allSettled(syncPromises);
         log(`Started sync for ${syncPromises.length} categories`);
       }
-      
-      finish('Completed all parent price updates');
+
+      log(chalk.green('Completed all parent price updates'));
       handledParentSync = true;
     }
   }
@@ -248,7 +256,6 @@ try {
         a.name?.indexOf('Retail') > -1 ? 1 : b.name?.indexOf('Retail') > 1 ? -1 : a.name.localeCompare(b.name),
       );
       for (const category of categories) {
-        update(`Processing ${category.name}`);
         log(`Processing ${category.name}`);
         await processSet({ ...data, category, metadata: category.metadata }, files, args);
       }
@@ -302,7 +309,7 @@ try {
       }
     };
     if (setData.variantType) {
-      log(setData.variantType);
+      debug('variantType', setData.variantType);
       await processChildren(setData.variantType, setData);
     } else if (setData.set) {
       await processSetData(setData.set, setData);
@@ -331,6 +338,6 @@ try {
   process.exit(1);
 } finally {
   await shutdown();
-  finish('Completed Processing');
+  log(chalk.green('Completed Processing'));
   process.exit(0);
 }

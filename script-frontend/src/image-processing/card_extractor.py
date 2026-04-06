@@ -10,16 +10,19 @@ Backend selection (auto-detected at runtime):
   else                    → use Claude Haiku 4.5 API (~$0.001/card pair)
 
 Protocol (newline-delimited JSON over stdin/stdout):
-  Request:  {"front": "/path/to/front.jpg", "back": "/path/to/back.jpg", "id": "optional-id"}
-  Response: {"id": "...", "player": "Patrick Mahomes", "team": "Kansas City Chiefs", "card_number": "BC-15"}
-  Error:    {"id": "...", "error": "description"}
+  Pair request:   {"front": "/path/to/front.jpg", "back": "/path/to/back.jpg", "id": "optional-id"}
+  Single request: {"image": "/path/to/card.jpg", "id": "optional-id"}
+  Pair response:   {"id": "...", "player": "Patrick Mahomes", "team": "Kansas City Chiefs", "card_number": "BC-15"}
+  Single response: {"id": "...", "player": "...", "team": "...", "card_number": "...", "side": "front"|"back"}
+  Error:           {"id": "...", "error": "description"}
 
   Special:  {"cmd": "ping"}   ->  {"status": "ok"}
             {"cmd": "quit"}   ->  process exits
 
-CLI mode (single card):
-  python card_extractor.py <front_image> <back_image>
-  Output: {"player": "...", "team": "...", "card_number": "..."}
+CLI mode:
+  python card_extractor.py <front_image> <back_image>     # pair extraction
+  python card_extractor.py --single <image>                # single-image extraction
+  Output: {"player": "...", "team": "...", "card_number": "...", "side": "front"|"back"}
 """
 
 import sys
@@ -90,9 +93,23 @@ def encode_image(image_path: str):
     return base64.standard_b64encode(data).decode('utf-8'), media_type
 
 
-# ── Result cache ─────────────────────────────────────────────────────────────
+# ── Result cache (bounded LRU) ───────────────────────────────────────────────
 
-_cache: dict = {}
+from collections import OrderedDict
+
+MAX_CACHE_SIZE = 200
+
+
+class _LRUCache(OrderedDict):
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        if len(self) > MAX_CACHE_SIZE:
+            self.popitem(last=False)
+
+
+_cache = _LRUCache()
 
 
 def _cache_key(front: str, back: str) -> str:
@@ -117,11 +134,21 @@ USER_PROMPT = (
     "Examine these trading card images (front and back) and extract:\n"
     "1. player: The player's full name (null if not identifiable)\n"
     "2. team: The team name (null if not identifiable)\n"
-    "3. card_number: The card number as printed (e.g. \"BC-15\", \"123\") (null if not visible)\n\n"
+    "3. card_number: The card number as printed on the BACK of the card (e.g. \"BC-15\", \"123\") (null if not visible). Do not use jersey numbers or stats from the front.\n\n"
     "Be precise. Only return what is clearly visible on the card."
 )
 
-# Tool schema for structured extraction
+SINGLE_IMAGE_PROMPT = (
+    "Examine this single trading card image and extract:\n"
+    "1. player: The player's full name (null if not identifiable)\n"
+    "2. team: The team name (null if not identifiable)\n"
+    "3. card_number: The card number as printed (e.g. \"BC-15\", \"123\") (null if not visible)\n"
+    "4. side: \"front\" if this shows the player photo/action shot, \"back\" if this shows "
+    "statistics, biography text, or copyright information\n\n"
+    "Be precise. Only return what is clearly visible on the card."
+)
+
+# Tool schema for structured extraction (pair mode)
 _EXTRACT_TOOL = {
     "name": "extract_card_info",
     "description": "Extract player name, team, and card number from trading card images",
@@ -142,6 +169,35 @@ _EXTRACT_TOOL = {
             },
         },
         "required": ["player", "team", "card_number"],
+    },
+}
+
+# Tool schema for single-image extraction (includes side classification)
+_EXTRACT_SINGLE_TOOL = {
+    "name": "extract_single_card_info",
+    "description": "Extract player name, team, card number, and front/back classification from a single trading card image",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "player": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "description": "Full name of the player, or null if not identifiable",
+            },
+            "team": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "description": "Team name, or null if not identifiable",
+            },
+            "card_number": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "description": 'Card number as printed (e.g. "BC-15", "123"), or null if not visible',
+            },
+            "side": {
+                "type": "string",
+                "enum": ["front", "back"],
+                "description": "Whether this is the front (player photo) or back (stats/bio) of the card",
+            },
+        },
+        "required": ["player", "team", "card_number", "side"],
     },
 }
 
@@ -208,6 +264,53 @@ def extract_with_claude(front_path: str, back_path: str) -> dict:
     raise RuntimeError("No tool_use block in Claude response")
 
 
+def extract_single_with_claude(image_path: str) -> dict:
+    """Extract card info + side from a single image using Claude Haiku 4.5."""
+    try:
+        import anthropic
+    except ImportError:
+        raise RuntimeError("anthropic package not installed. Run: pip install anthropic")
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    img_b64, img_mt = encode_image(image_path)
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=256,
+        system=SYSTEM_PROMPT,
+        tools=[_EXTRACT_SINGLE_TOOL],
+        tool_choice={"type": "tool", "name": "extract_single_card_info"},
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": img_mt, "data": img_b64},
+                },
+                {"type": "text", "text": SINGLE_IMAGE_PROMPT},
+            ],
+        }],
+    )
+
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "extract_single_card_info":
+            inp = block.input
+            side = inp.get("side", "front")
+            return {
+                "player": inp.get("player") or None,
+                "team": inp.get("team") or None,
+                # Card numbers are only on the back; ignore any value from fronts
+                "card_number": (inp.get("card_number") or None) if side == "back" else None,
+                "side": side,
+            }
+
+    raise RuntimeError("No tool_use block in Claude response")
+
+
 # ── Ollama backend ───────────────────────────────────────────────────────────
 
 def _ollama_request(image_b64: str, prompt: str, ollama_host: str, ollama_model: str) -> dict:
@@ -257,11 +360,9 @@ def _ollama_request(image_b64: str, prompt: str, ollama_host: str, ollama_model:
 def _merge_results(front: dict, back: dict) -> dict:
     """
     Merge extraction results from front and back images.
-    Prefers the front for player/team (usually clearer there) and the back
-    for card_number (usually printed there), but falls back to whichever
-    side has the value when the preferred side has none.
-    If both sides found a value and they differ, prefer front for player/team
-    and back for card_number.
+    Prefers the front for player/team (usually clearer there).
+    Card number is taken exclusively from the back — it is not printed on
+    card fronts, and vision models often hallucinate jersey numbers or stats.
     """
     def pick(front_val, back_val, prefer_front: bool):
         if front_val and back_val:
@@ -271,7 +372,7 @@ def _merge_results(front: dict, back: dict) -> dict:
     return {
         "player":      pick(front.get("player"),      back.get("player"),      prefer_front=True),
         "team":        pick(front.get("team"),         back.get("team"),        prefer_front=True),
-        "card_number": pick(front.get("card_number"),  back.get("card_number"), prefer_front=False),
+        "card_number": back.get("card_number") or None,
     }
 
 
@@ -306,10 +407,113 @@ def extract_with_ollama(front_path: str, back_path: str) -> dict:
     return _merge_results(front_result, back_result)
 
 
+def _ollama_request_raw(image_b64: str, prompt: str, ollama_host: str, ollama_model: str) -> dict:
+    """Send a single image to Ollama and return the full parsed JSON result (all fields)."""
+    import urllib.request
+
+    payload = {
+        "model": ollama_model,
+        "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0},
+    }
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(
+        f"{ollama_host}/api/chat",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        raise RuntimeError(f"Failed to connect to Ollama at {ollama_host}: {e}")
+
+    content = result.get("message", {}).get("content", "")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Ollama returned non-JSON content: {content!r}")
+
+
+def extract_single_with_ollama(image_path: str) -> dict:
+    """Extract card info + side from a single image using local Ollama."""
+    ollama_host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+    ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2-vision:11b')
+
+    prompt = (
+        SINGLE_IMAGE_PROMPT + "\n\n"
+        "Respond with ONLY a JSON object in this exact format (no markdown, no explanation):\n"
+        '{"player": "Full Name or null", "team": "Team Name or null", '
+        '"card_number": "BC-15 or null", "side": "front or back"}'
+    )
+
+    img_b64, _ = encode_image(image_path)
+    parsed = _ollama_request_raw(img_b64, prompt, ollama_host, ollama_model)
+
+    side = parsed.get("side", "front")
+    if side not in ("front", "back"):
+        side = "front"
+
+    return {
+        "player": parsed.get("player") or None,
+        "team": parsed.get("team") or None,
+        # Card numbers are only on the back; ignore any value from fronts
+        "card_number": (parsed.get("card_number") or None) if side == "back" else None,
+        "side": side,
+    }
+
+
 # ── Core extraction with caching and retries ─────────────────────────────────
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds
+
+
+def _single_cache_key(image_path: str) -> str:
+    """Cache key for a single image based on path and modification time."""
+    try:
+        sig = f"{image_path}:{os.stat(image_path).st_mtime}"
+    except OSError:
+        sig = image_path
+    return hashlib.md5(sig.encode()).hexdigest()
+
+
+def extract_single_card_info(image_path: str) -> dict:
+    """
+    Extract card info + front/back side from a single image.
+    Results are cached by file path + mtime. Transient errors are retried.
+    """
+    key = _single_cache_key(image_path)
+    if key in _cache:
+        return _cache[key]
+
+    if not Path(image_path).exists():
+        raise FileNotFoundError(f"Image not found: {image_path}")
+
+    use_ollama = bool(os.environ.get('OLLAMA_HOST'))
+    backend_fn = extract_single_with_ollama if use_ollama else extract_single_with_claude
+
+    last_error: Exception = RuntimeError("No attempts made")
+    for attempt in range(MAX_RETRIES):
+        try:
+            result = backend_fn(image_path)
+            _cache[key] = result
+            return result
+        except (FileNotFoundError, RuntimeError) as e:
+            msg = str(e)
+            if "not found" in msg.lower() or "API_KEY" in msg or "not installed" in msg:
+                raise
+            last_error = e
+        except Exception as e:
+            last_error = e
+
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(RETRY_BASE_DELAY * (2 ** attempt))
+
+    raise last_error
 
 
 def extract_card_info(front_path: str, back_path: str) -> dict:
@@ -358,6 +562,15 @@ def run_worker():
     Read newline-delimited JSON from stdin, write JSON responses to stdout.
     Keeps the process (and any warmed-up state) alive between requests.
     """
+    # Warm up heavy native libraries BEFORE signaling ready.
+    # This avoids a massive dlopen storm on the first request that can crash dyld
+    # on macOS Sequoia with large venvs (torch, cv2, scipy, etc.).
+    try:
+        from PIL import Image  # noqa: F401
+        sys.stderr.write("[card-extractor] PIL loaded\n")
+    except ImportError:
+        pass
+
     sys.stdout.write(json.dumps({"status": "ready"}) + "\n")
     sys.stdout.flush()
 
@@ -382,27 +595,36 @@ def run_worker():
         if cmd == "quit":
             break
 
+        req_id = request.get("id")
+        single_image = request.get("image", "")
         front = request.get("front", "")
         back = request.get("back", "")
-        req_id = request.get("id")
 
-        if not front or not back:
-            response: dict = {"error": "Both 'front' and 'back' image paths are required"}
-            if req_id is not None:
-                response["id"] = req_id
-            sys.stdout.write(json.dumps(response) + "\n")
-            sys.stdout.flush()
-            continue
-
-        try:
-            result = extract_card_info(front, back)
-            response = {
-                "player": result.get("player"),
-                "team": result.get("team"),
-                "card_number": result.get("card_number"),
-            }
-        except Exception as e:
-            response = {"error": str(e)}
+        if single_image:
+            # Single-image extraction mode
+            try:
+                result = extract_single_card_info(single_image)
+                response: dict = {
+                    "player": result.get("player"),
+                    "team": result.get("team"),
+                    "card_number": result.get("card_number"),
+                    "side": result.get("side"),
+                }
+            except Exception as e:
+                response = {"error": str(e)}
+        elif front and back:
+            # Pair extraction mode
+            try:
+                result = extract_card_info(front, back)
+                response = {
+                    "player": result.get("player"),
+                    "team": result.get("team"),
+                    "card_number": result.get("card_number"),
+                }
+            except Exception as e:
+                response = {"error": str(e)}
+        else:
+            response = {"error": "Provide 'image' for single extraction or both 'front' and 'back' for pair extraction"}
 
         if req_id is not None:
             response["id"] = req_id
@@ -414,6 +636,21 @@ def run_worker():
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == '--single':
+        # CLI mode: python card_extractor.py --single <image>
+        if len(sys.argv) < 3:
+            print(json.dumps({"error": "Usage: card_extractor.py --single <image>"}))
+            os._exit(1)
+        image_path = sys.argv[2]
+        try:
+            result = extract_single_card_info(image_path)
+            print(json.dumps(result))
+            sys.stdout.flush()
+            os._exit(0)
+        except Exception as e:
+            print(json.dumps({"error": str(e)}))
+            os._exit(1)
+
     if len(sys.argv) >= 3:
         # CLI mode: python card_extractor.py <front> <back>
         front_path = sys.argv[1]
@@ -425,17 +662,19 @@ def main():
                 "team": result.get("team"),
                 "card_number": result.get("card_number"),
             }))
+            sys.stdout.flush()
+            os._exit(0)
         except Exception as e:
             print(json.dumps({"error": str(e)}))
-            sys.exit(1)
-        return
+            os._exit(1)
 
     if len(sys.argv) == 2:
-        print(json.dumps({"error": "Usage: card_extractor.py <front_image> <back_image>"}))
-        sys.exit(1)
+        print(json.dumps({"error": "Usage: card_extractor.py [--single] <image> | <front_image> <back_image>"}))
+        os._exit(1)
 
     # No args → persistent worker mode
     run_worker()
+    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup
 
 
 if __name__ == "__main__":

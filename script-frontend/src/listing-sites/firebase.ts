@@ -1,7 +1,9 @@
 import { useSpinners } from '../utils/spinners';
 import { getFirestore, getStorage } from '../utils/firebase';
+import { createLogger } from '../utils/logger';
 
 const { showSpinner } = useSpinners('firebase', '#ffc107');
+const debug = createLogger('firebase');
 
 const _cachedGroups: { [key: string]: any } = {};
 
@@ -23,11 +25,12 @@ export async function getGroupByBin(bin: string) {
 }
 
 export async function processImageFile(outputFile: string, filename: string) {
-  const { finish, error } = showSpinner(`upload-${filename}`, `Uploading ${filename}`);
   try {
+    debug(`Uploading ${filename}`);
     await getStorage().bucket().upload(outputFile, { destination: filename });
-    finish(`Uploaded ${filename} to Firebase`);
+    debug(`Uploaded ${filename} to Firebase`);
   } catch (e) {
-    error(e);
+    debug(`Failed to upload ${filename}: ${e}`);
+    throw e;
   }
 }

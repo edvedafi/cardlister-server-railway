@@ -39,6 +39,8 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
 
 faulthandler.enable()
 
@@ -106,8 +108,8 @@ def load_model():
 
     import torch
 
-    print(f"[sam_cropper] Loading SAM model ({SAM_MODEL_ID})...", file=sys.stderr)
-
+    import transformers
+    transformers.logging.set_verbosity_error()
     from transformers import SamModel, SamProcessor
 
     # Try to load from local cache first (avoids network check; works offline / cloud servers).
@@ -115,15 +117,12 @@ def load_model():
     try:
         _processor = SamProcessor.from_pretrained(SAM_MODEL_ID, local_files_only=True)
         _model = SamModel.from_pretrained(SAM_MODEL_ID, local_files_only=True)
-        print(f"[sam_cropper] Loaded from local cache.", file=sys.stderr)
     except Exception:
-        print(f"[sam_cropper] Not in cache, downloading...", file=sys.stderr)
         _processor = SamProcessor.from_pretrained(SAM_MODEL_ID)
         _model = SamModel.from_pretrained(SAM_MODEL_ID)
 
     _model.eval()
     # Keep on CPU — avoids MPS float64 incompatibility and is fast enough for inference
-    print(f"[sam_cropper] Model loaded (device=cpu).", file=sys.stderr)
     return _model, _processor
 
 
@@ -203,7 +202,6 @@ def generate_masks(pil_image, model, processor):
             score = float(iou_scores[0, 0, k].item())
             results.append((mask_np, score))
 
-    print(f"[sam_cropper] Generated {len(results)} mask candidates from {len(probe_pts)} probe points.", file=sys.stderr)
     return results
 
 
@@ -284,12 +282,6 @@ def pick_card_mask(mask_candidates, pil_size):
     # Best = lowest aspect error, then highest IOU score
     candidates.sort(key=lambda x: (x['aspect_err'], -x['score']))
     best = candidates[0]
-
-    print(
-        f"[sam_cropper] Best mask: area={best['area_frac']:.1%}, "
-        f"aspect_err={best['aspect_err']:.3f}, iou={best['score']:.3f}",
-        file=sys.stderr,
-    )
 
     box = cv2.boxPoints(best['rect']).astype(np.float32)
     return box, best['score']
@@ -421,7 +413,6 @@ def contour_fallback(image):
             box = cv2.boxPoints(rect)
             return box.astype(np.float32)
 
-    print("[sam_cropper] Contour fallback: no card found by edge detection.", file=sys.stderr)
     return None
 
 
@@ -430,8 +421,6 @@ def contour_fallback(image):
 def process_image(img_path: str, output_dir: str, model, processor) -> dict:
     import cv2
     import numpy as np
-
-    print(f"[sam_cropper] Processing: {img_path}", file=sys.stderr)
 
     try:
         img = cv2.imread(img_path)
@@ -442,23 +431,11 @@ def process_image(img_path: str, output_dir: str, model, processor) -> dict:
 
         # ── Step 1: Resize for SAM ────────────────────────────────────────────
         pil_img, orig_w, orig_h, scale_ratio = open_and_resize_pil(img_path)
-        pil_w, pil_h = pil_img.size
-        print(
-            f"[sam_cropper] Image {orig_w}×{orig_h} → SAM input {pil_w}×{pil_h} "
-            f"(scale={scale_ratio:.3f})",
-            file=sys.stderr,
-        )
-
         # ── Step 2: Generate SAM masks ────────────────────────────────────────
         mask_candidates = generate_masks(pil_img, model, processor)
 
         # ── Step 3: Pick the card mask ────────────────────────────────────────
         card_pts_sam, iou_score = pick_card_mask(mask_candidates, pil_img.size)
-
-        if card_pts_sam is not None:
-            print(f"[sam_cropper] SAM found card mask (IOU={iou_score:.3f}).", file=sys.stderr)
-        else:
-            print("[sam_cropper] SAM mask selection failed; using contour fallback.", file=sys.stderr)
 
         # ── Step 4: Determine final corner points ─────────────────────────────
         if card_pts_sam is not None:
@@ -486,7 +463,6 @@ def process_image(img_path: str, output_dir: str, model, processor) -> dict:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         out_path = os.path.join(output_dir, f"{img_stem}_card.jpg")
         cv2.imwrite(out_path, cropped)
-        print(f"[sam_cropper] Saved: {out_path}", file=sys.stderr)
 
         return {
             "success": True,
@@ -500,9 +476,6 @@ def process_image(img_path: str, output_dir: str, model, processor) -> dict:
         }
 
     except Exception as e:
-        print(f"[sam_cropper] ERROR for {img_path}: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
         return {
             "success": False,
             "image_path": img_path,
@@ -531,6 +504,8 @@ def main():
 
     # Only JSON goes to stdout
     print(json.dumps(results))
+    sys.stdout.flush()
+    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup
 
 
 if __name__ == "__main__":

@@ -193,6 +193,8 @@ def main():
         output_paths.extend(card_paths)
         idx_offset += len(card_paths)
     print(json.dumps(output_paths))
+    sys.stdout.flush()
+    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup
 
 if __name__ == "__main__":
     main()

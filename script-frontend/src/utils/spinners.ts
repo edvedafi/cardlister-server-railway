@@ -15,39 +15,51 @@ type Messages = { name: string; message: string }[];
 let _paused: Spinners = [];
 let _pausedFinishes: Messages = [];
 let _pausedErrors: Messages = [];
-let isPaused: boolean = false;
+let pauseDepth: number = 0;
+const isPaused = () => pauseDepth > 0;
 
 export const showSpinner = (spinnerName: string, message: string) => {
+  if (isPaused()) {
+    // While paused, record the spinner in the buffer but don't render it.
+    const existing = _paused.find((s) => s.name === spinnerName);
+    if (existing) {
+      existing.spinner.text = message;
+    } else {
+      _paused.push({ name: spinnerName, spinner: { text: message } as Spinnies.SpinnerOptions });
+    }
+    return;
+  }
   if (getSpinners().pick(spinnerName)) {
     updateSpinner(spinnerName, message);
   } else {
     getSpinners().add(spinnerName, { text: message });
-    if (isPaused) {
-      _paused.push({ name: spinnerName, spinner: getSpinners().pick(spinnerName) });
-      pauseSpinners();
-    }
   }
 };
 
 export const updateSpinner = (spinnerName: string, message: string) => {
+  if (isPaused()) {
+    const pausedSpinner = _paused.find((s) => s.name === spinnerName);
+    if (pausedSpinner) {
+      pausedSpinner.spinner.text = message;
+    } else {
+      showSpinner(spinnerName, message);
+    }
+    return;
+  }
   const spinner = getSpinners().pick(spinnerName);
   if (spinner) {
-    if (isPaused) {
-      const pausedSpinner = _paused.find((s) => s.name === spinnerName);
-      if (pausedSpinner) {
-        pausedSpinner.spinner.text = message;
-      } else {
-        showSpinner(spinnerName, message);
-      }
-    } else {
-      getSpinners().update(spinnerName, { text: message });
-    }
+    getSpinners().update(spinnerName, { text: message });
   } else {
     showSpinner(spinnerName, message);
   }
 };
 
 export const pauseSpinners = () => {
+  pauseDepth++;
+  if (pauseDepth > 1) {
+    // Already paused — nothing new to capture or stop.
+    return [];
+  }
   const spinners = getSpinners();
   const paused: Spinners = [];
   // @ts-expect-error - Using an internal property, yes I know it's a bad idea, but it must be done
@@ -61,31 +73,40 @@ export const pauseSpinners = () => {
   });
 
   spinners.stopAll();
-  isPaused = true;
   return paused;
 };
 
-export const resumeSpinners = (pausedSpinners = _paused) => {
-  pausedSpinners.forEach((spinner) => {
+export const resumeSpinners = () => {
+  if (pauseDepth === 0) return;
+  pauseDepth--;
+  if (pauseDepth > 0) {
+    // Still inside an outer pause — don't actually resume yet.
+    return;
+  }
+  const toResume = _paused;
+  _paused = [];
+  toResume.forEach((spinner) => {
     getSpinners().remove(spinner.name);
     getSpinners().add(spinner.name, { ...spinner.spinner });
   });
-  _paused = [];
-  _pausedFinishes.forEach((finish) => finishSpinner(finish.name, finish.message));
+  const finishes = _pausedFinishes;
   _pausedFinishes = [];
-  _pausedErrors.forEach((error) => errorSpinner(error.name, error.message));
+  finishes.forEach((finish) => finishSpinner(finish.name, finish.message));
+  const errors = _pausedErrors;
   _pausedErrors = [];
-  isPaused = false;
+  errors.forEach((error) => errorSpinner(error.name, error.message));
 };
 
 export const finishSpinner = (spinnerName: string, message: string) => {
-  const s = getSpinners().pick(spinnerName);
-  if (isPaused) {
+  if (isPaused()) {
     _paused = _paused.filter((s) => s.name !== spinnerName);
     if (message) {
       _pausedFinishes.push({ name: spinnerName, message });
     }
-  } else if (message) {
+    return message;
+  }
+  const s = getSpinners().pick(spinnerName);
+  if (message) {
     if (!s) {
       getSpinners().add(spinnerName, { text: message });
     }
@@ -100,28 +121,27 @@ export const finishSpinner = (spinnerName: string, message: string) => {
 };
 
 export const errorSpinner = (spinnerName: string, message: string) => {
-  if (isPaused) {
+  if (isPaused()) {
     _paused = _paused.filter((s) => s.name !== spinnerName);
     _pausedErrors.push({ name: spinnerName, message: message });
-  } else {
-    if (!getSpinners().pick(spinnerName)) {
-      getSpinners().add(spinnerName, { text: message });
-    }
-    getSpinners().fail(spinnerName, { text: message });
+    return;
   }
+  if (!getSpinners().pick(spinnerName)) {
+    getSpinners().add(spinnerName, { text: message });
+  }
+  getSpinners().fail(spinnerName, { text: message });
 };
 
 const log = (color: ChalkInstance, ...args: unknown[]) => {
+  const formatted = args.map((arg) => {
+    if (arg instanceof Error) {
+      return arg;
+    } else {
+      return typeof arg === 'string' ? color(arg) : color(JSON.stringify(arg, null, 2));
+    }
+  });
   pauseSpinners();
-  console.log(
-    ...args.map((arg) => {
-      if (arg instanceof Error) {
-        return arg;
-      } else {
-        return typeof arg === 'string' ? color(arg) : color(JSON.stringify(arg, null, 2));
-      }
-    }),
-  );
+  console.log(...formatted);
   resumeSpinners();
 };
 

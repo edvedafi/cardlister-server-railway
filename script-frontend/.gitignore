@@ -11,3 +11,4 @@ venv/
 *.dylib
 *.so
 *.pt
+logs/

@@ -3,11 +3,13 @@ import { type App, cert, initializeApp } from 'firebase-admin/app';
 import { getFirestore as getFirestoreAdmin } from 'firebase-admin/firestore';
 import { useSpinners } from './spinners.js';
 import { getStorage as getFirebaseStorage, type Storage } from 'firebase-admin/storage';
+import { createLogger } from './logger.js';
 
 let _db: FirebaseFirestore.Firestore;
 let _firebase: App;
 let _storage: Storage | null;
 const { showSpinner } = useSpinners('firebase', '#ffc107');
+const debug = createLogger('firebase');
 export default function initializeFirebase() {
   const { update, finish } = showSpinner('firebase', 'Firebase');
   update('Configuring');
@@ -32,9 +34,9 @@ export default function initializeFirebase() {
 }
 
 export const initializeStorage = (app: App) => {
-  const {finish} = showSpinner('storage', 'Initializing Firebase Storage');
+  debug('Initializing Firebase Storage');
   _storage = getFirebaseStorage(app);
-  finish('Using Firebase Storage');
+  debug('Using Firebase Storage');
 };
 
 export function getFirestore() {

@@ -68,17 +68,17 @@ except ImportError:
     sys.stdout = _real_stdout
     sys.stderr = _real_stderr
     print("Error: easyocr not found. Install with: pip install easyocr", file=sys.stderr)
-    sys.exit(1)
+    os._exit(1)
 except Exception:
     sys.stdout = _real_stdout
     sys.stderr = _real_stderr
-    sys.exit(1)
+    os._exit(1)
 
 import cv2
 import numpy as np
 
 # ── Constants ──────────────────────────────────────────────────────────────
-MAX_SIDE_FOR_OCR = 640          # downscale for faster OCR (orientation only)
+MAX_SIDE_FOR_OCR = 1024         # downscale for faster OCR (orientation only)
 EARLY_EXIT_AVG_CONF = 0.90     # avg confidence threshold to skip other rotations
 EARLY_EXIT_MIN_DETECTIONS = 3  # minimum text detections to trust early exit
 MIN_MEANINGFUL_DETECTIONS = 1  # at least this many to consider any rotation valid
@@ -106,6 +106,8 @@ def get_reader():
         finally:
             sys.stdout = _real_stdout
             sys.stderr = _real_stderr
+            buf_out.close()
+            buf_err.close()
     return _reader
 
 
@@ -130,6 +132,8 @@ def ocr_score(img, reader):
     finally:
         sys.stdout = _real_stdout
         sys.stderr = _real_stderr
+        buf_out.close()
+        buf_err.close()
 
     # Filter out very low confidence noise
     meaningful = [d for d in results if d[2] >= MIN_MEANINGFUL_CONF]
@@ -239,6 +243,8 @@ def main():
         results.append(result)
 
     print(json.dumps(results), file=sys.stdout)
+    sys.stdout.flush()
+    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup
 
 
 if __name__ == '__main__':

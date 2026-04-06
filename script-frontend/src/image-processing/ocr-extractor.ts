@@ -14,6 +14,15 @@ type OCRExtractResult = {
   error?: string;
 };
 
+export type OrientResult = {
+  image_path: string;
+  rotation_applied: number;
+  confidence: number;
+  text_detection_count: number;
+  scores: Record<string, number>;
+  error?: string;
+};
+
 // ── Configuration ───────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 2;
@@ -26,6 +35,7 @@ const WORKER_STARTUP_TIMEOUT_MS = 180_000; // 3 min max for model load
 let worker: ChildProcessWithoutNullStreams | null = null;
 let workerReady = false;
 let readline: ReadlineInterface | null = null;
+let spawnPromise: Promise<void> | null = null;
 
 /** Queue to serialize requests to the worker (only one in-flight at a time). */
 type QueuedRequest = {
@@ -187,7 +197,12 @@ function rejectPending(err: Error) {
  */
 async function ensureWorker(): Promise<void> {
   if (worker && workerReady) return;
-  await spawnWorker();
+  if (!spawnPromise) {
+    spawnPromise = spawnWorker().finally(() => {
+      spawnPromise = null;
+    });
+  }
+  await spawnPromise;
 }
 
 /**
@@ -302,6 +317,47 @@ export async function extractTextFromImage(imagePath: string): Promise<OCRExtrac
 export async function extractTextFromImages(imagePaths: string[]): Promise<string> {
   const results = await extractTextWithOCR(imagePaths);
   return results.map((r) => r.text).join(' ');
+}
+
+/**
+ * Detect and correct orientation of cropped card images using the persistent
+ * EasyOCR worker. Images are rotated in-place if needed.
+ *
+ * This replaces the standalone orient_cards.py script, avoiding a duplicate
+ * ~300MB EasyOCR model load.
+ */
+export async function orientImages(imagePaths: string[]): Promise<OrientResult[]> {
+  if (imagePaths.length === 0) return [];
+
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await ensureWorker();
+
+      const responseLine = await Promise.race([
+        sendRequest({ cmd: 'orient', images: imagePaths }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Orient request timed out')), REQUEST_TIMEOUT_MS),
+        ),
+      ]);
+
+      return JSON.parse(responseLine) as OrientResult[];
+    } catch (err) {
+      lastError = err as Error;
+      killWorker();
+
+      if (lastError.message.startsWith('Failed to start OCR worker')) {
+        throw lastError;
+      }
+
+      if (attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RESTART_DELAY_MS * (attempt + 1)));
+      }
+    }
+  }
+
+  throw lastError!;
 }
 
 /**

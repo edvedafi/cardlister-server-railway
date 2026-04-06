@@ -289,3 +289,5 @@ if __name__ == '__main__':
     with contextlib.redirect_stdout(sys.stderr):
         results = detect_and_crop_cards(image_paths, output_dir)
     print(json.dumps(results))
+    sys.stdout.flush()
+    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup

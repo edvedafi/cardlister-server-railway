@@ -38,6 +38,7 @@
     "typescript-eslint": "^8.7.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
     "@google-cloud/vision": "^5.3.4",
     "@huggingface/inference": "^4.13.15",
     "@inquirer/core": "^11.1.5",

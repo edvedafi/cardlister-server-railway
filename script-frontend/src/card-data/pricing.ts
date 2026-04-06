@@ -295,6 +295,43 @@ export async function getPricing(
   return prices;
 }
 
+/**
+ * Get default pricing without user prompts.
+ * Uses existing variant prices if available, otherwise falls back to base pricing.
+ * Returns both the MoneyAmount array and a display-friendly price object.
+ */
+export async function getDefaultPricing(
+  currentPrices: MoneyAmount[] = [],
+  allBase = false,
+): Promise<{ prices: MoneyAmount[]; display: { ebay: number; mcp: number; bsc: number; sportlots: number } }> {
+  const basePrices = await getBasePricing();
+  const prices = (allBase || !currentPrices || currentPrices.length <= 1)
+    ? basePrices
+    : currentPrices;
+
+  const ebayRegionId = await getRegion('ebay');
+  const mcpRegionId = await getRegion('MCP');
+  const bscRegionId = await getRegion('BSC');
+  const sportlotsRegionId = await getRegion('SportLots');
+
+  const getAmount = (regionId: string, fallback: number): number => {
+    const found = prices.find(p => p.region_id === regionId);
+    const amount = found?.amount;
+    if (amount && typeof amount === 'number') return amount;
+    return fallback;
+  };
+
+  return {
+    prices,
+    display: {
+      ebay: getAmount(ebayRegionId, 99),
+      mcp: getAmount(mcpRegionId, 100),
+      bsc: getAmount(bscRegionId, 25),
+      sportlots: getAmount(sportlotsRegionId, 18),
+    },
+  };
+}
+
 let basePricing: MoneyAmount[];
 
 export async function getBasePricing(): Promise<MoneyAmount[]> {

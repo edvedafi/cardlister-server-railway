@@ -30,12 +30,36 @@ type ProductMatchResultWithPerfect = {
 function matchProductFromCardInfo(
   cardInfo: { player: string | null; team: string | null; card_number: string | null },
   products: Product[],
+  poolPriors?: PoolPriors,
 ): ProductMatchResultWithPerfect {
   type ProductScore = { product: Product; score: number; perfectMatch: boolean };
   const scoredProducts: ProductScore[] = [];
 
-  const extractedNumber = cardInfo.card_number?.toLowerCase().trim() ?? null;
-  const extractedPlayer = cardInfo.player?.toLowerCase().trim() ?? null;
+  // Use pool priors as fallback if vision AI returned null
+  const visionNumber = cardInfo.card_number?.toLowerCase().trim() || null;
+  const visionPlayer = cardInfo.player?.toLowerCase().trim() || null;
+  const priorNumber = poolPriors?.cardNumber?.toLowerCase().trim() || null;
+  const priorPlayer = poolPriors?.player?.toLowerCase().trim() || null;
+  const extractedPlayer = visionPlayer || priorPlayer;
+
+  // Validate extracted card number against the product catalog.
+  // If the vision AI number doesn't match ANY product's card number, it's likely
+  // a misread (e.g. a stat from a table). If pool priors disagree and theirs is
+  // valid, prefer the pool prior (it was extracted from a single image with less noise).
+  const knownNumbers = new Set(
+    products.map(p => ((p.metadata?.cardNumber as string) || '').toLowerCase().trim()).filter(Boolean)
+  );
+  let validatedNumber: string | null = null;
+  if (priorNumber && knownNumbers.has(priorNumber)) {
+    // Pool prior is valid — prefer it (single-image extraction is more reliable)
+    validatedNumber = priorNumber;
+  } else if (visionNumber && knownNumbers.has(visionNumber)) {
+    // Vision AI number is valid — use it
+    validatedNumber = visionNumber;
+  } else {
+    // Try either as-is (may still match via prefix logic downstream)
+    validatedNumber = priorNumber || visionNumber;
+  }
 
   for (const product of products) {
     let score = 0;
@@ -45,8 +69,8 @@ function matchProductFromCardInfo(
 
     // Card number match — most specific signal
     let cardNumberMatched = false;
-    if (extractedNumber && productCardNumber) {
-      if (extractedNumber === productCardNumber) {
+    if (validatedNumber && productCardNumber) {
+      if (validatedNumber === productCardNumber) {
         score += 2000;
         cardNumberMatched = true;
       }
@@ -175,13 +199,17 @@ function applyMatchResult(
   const bestProduct = matchToUse.product;
   const bestMetadata = bestProduct.metadata || {};
 
+  // Only overwrite player/cardNumber from product metadata on perfect matches.
+  // For best-match-only, keep the originally extracted values so autoMatchCard
+  // can evaluate independently (prevents a weak match from self-reinforcing).
+  const isPerfect = matchResult.perfectMatch !== null;
   const result = {
     ...defaults,
-    player: bestMetadata.player || defaults.player,
-    cardNumber: bestMetadata.cardNumber || defaults.cardNumber,
+    player: isPerfect ? (bestMetadata.player || defaults.player) : defaults.player,
+    cardNumber: isPerfect ? (bestMetadata.cardNumber || defaults.cardNumber) : defaults.cardNumber,
     printRun: bestMetadata.printRun || defaults.printRun,
     features: (bestMetadata.features || defaults.features) as string[],
-    _perfectMatch: matchResult.perfectMatch !== null,
+    _perfectMatch: isPerfect,
     _bestMatchPlayer: matchResult.bestMatch?.product.metadata?.player || defaults.player,
   };
 
@@ -194,7 +222,13 @@ function applyMatchResult(
   return result;
 }
 
-async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}) {
+export type PoolPriors = {
+  player?: string | null;
+  team?: string | null;
+  cardNumber?: string | null;
+};
+
+async function getTextFromImage(front: string, back: string | undefined = undefined, setData: Partial<SetInfo> = {}, poolPriors?: PoolPriors) {
   const { update, error, finish } = showSpinner(`image-recognition-${front}`, `Image Recognition ${front}`);
 
   let defaults: Partial<ImageRecognitionResults> = {
@@ -205,6 +239,13 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
     insert: setData.metadata?.insert,
     raw: [front],
   };
+
+  // Seed defaults with pool matching priors (extracted during single-image classification)
+  if (poolPriors) {
+    if (poolPriors.player) defaults.player = poolPriors.player;
+    if (poolPriors.cardNumber) defaults.cardNumber = poolPriors.cardNumber;
+    if (poolPriors.team) defaults.team = poolPriors.team;
+  }
   if (back) {
     defaults.raw?.push(back);
   }
@@ -245,7 +286,7 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
         const resizedBack = await resizeImageForDisplay(backPath);
         const cardInfo = await extractCardInfo(resizedFront, resizedBack);
 
-        const matchResult = matchProductFromCardInfo(cardInfo, setData.products);
+        const matchResult = matchProductFromCardInfo(cardInfo, setData.products, poolPriors);
         const result = applyMatchResult(matchResult, defaults, finish);
         if (result) return result;
 

@@ -359,6 +359,17 @@ export async function addOptions(product: Product): Promise<Product> {
   return response.product;
 }
 
+function cleanPricesForUpdate(prices: MoneyAmount[]) {
+  return prices.map(({ id, currency_code, amount, region_id, min_quantity, max_quantity }) => ({
+    ...(id && { id }),
+    currency_code,
+    amount,
+    ...(region_id && { region_id }),
+    ...(min_quantity != null && { min_quantity }),
+    ...(max_quantity != null && { max_quantity }),
+  }));
+}
+
 export async function updateProductVariant(productVariant: ProductVariant): Promise<Product> {
   if (!productVariant.prices) throw 'No prices to update';
   if (!productVariant.product) throw 'No product to update';
@@ -367,7 +378,7 @@ export async function updateProductVariant(productVariant: ProductVariant): Prom
   if (productVariant.prices.length > 0) {
     try {
       response = await medusa.admin.products.updateVariant(productVariant.product.id, productVariant.id, {
-        prices: productVariant.prices,
+        prices: cleanPricesForUpdate(productVariant.prices),
         metadata: productVariant.metadata,
       });
     } catch (e) {
@@ -470,6 +481,16 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
         `batch-${job.id}`,
         `${job.type}::${job.id}::${product_category ? product_category.description : JSON.stringify(job.context)}`,
       );
+      // Wait for pre-processing, then confirm to start actual processing
+      while (!['pre_processed', 'completed', 'failed'].includes(job.status)) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const res = await medusa.admin.batchJobs.retrieve(job.id);
+        job = res.batch_job;
+      }
+      if (job.status === 'pre_processed') {
+        const confirmed = await medusa.admin.batchJobs.confirm(job.id);
+        job = confirmed.batch_job;
+      }
       while (!['completed', 'failed'].includes(job.status)) {
         update(job.status);
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -727,7 +748,7 @@ export async function updateInventory(
 
 export async function updatePrices(productId: string, variantId: string, prices: MoneyAmount[]): Promise<Product> {
   const response = await medusa.admin.products.updateVariant(productId, variantId, {
-    prices: prices,
+    prices: cleanPricesForUpdate(prices),
   });
   return response.product;
 }

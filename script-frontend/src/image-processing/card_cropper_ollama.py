@@ -543,6 +543,8 @@ def main():
     with contextlib.redirect_stdout(sys.stderr):
         pass
     print(json.dumps(results))
+    sys.stdout.flush()
+    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup
 
 
 if __name__ == "__main__":

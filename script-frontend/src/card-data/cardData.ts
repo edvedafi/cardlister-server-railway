@@ -289,6 +289,181 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
   return cardName;
 }
 
+/**
+ * Auto-select a card without user prompts. Returns the best match with confidence score.
+ * Used by the review menu flow — the user sees the result and can override with `m` hotkey.
+ */
+export async function autoSelectCard(setData: SetInfo, imageDefaults: Metadata): Promise<{
+  product: Product | null;
+  productVariant: ProductVariant | null;
+  confidence: number;
+}> {
+  if (!setData.products || setData.products.length === 0) {
+    return { product: null, productVariant: null, confidence: 0 };
+  }
+
+  const result = autoMatchCard(setData, imageDefaults);
+  if (!result.product) {
+    return { product: null, productVariant: null, confidence: result.confidence };
+  }
+
+  const product = result.product;
+  if (!product.variants) product.variants = [];
+
+  let productVariant: ProductVariant;
+  if (product.variants.length === 1) {
+    productVariant = product.variants[0];
+    if (!productVariant.prices || productVariant.prices.length === 0) {
+      try {
+        productVariant = await getProductVariant(productVariant.id);
+      } catch {
+        // use existing
+      }
+    }
+  } else if (product.variants.length > 1) {
+    // Pick the first (base) variant as default — user can override via review menu
+    productVariant = product.variants[0];
+    if (!productVariant.prices || productVariant.prices.length === 0) {
+      try {
+        productVariant = await getProductVariant(productVariant.id);
+      } catch {
+        // use existing
+      }
+    }
+  } else {
+    return { product, productVariant: null, confidence: result.confidence };
+  }
+
+  if (!productVariant.product) {
+    productVariant.product = product;
+  }
+  return { product, productVariant, confidence: result.confidence };
+}
+
+/**
+ * Non-interactive card matching. Returns the best match and a confidence score
+ * without ever prompting the user.
+ */
+function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): { product: Product | null; confidence: number } {
+  const matchesPlayerLocal = (productPlayer: unknown, searchPlayer: unknown): boolean => {
+    if (!productPlayer || !searchPlayer) return false;
+    const productPlayers: string[] = Array.isArray(productPlayer)
+      ? productPlayer.map(p => typeof p === 'string' ? p : String(p))
+      : typeof productPlayer === 'string' ? [productPlayer] : [String(productPlayer)];
+    const searchPlayers: string[] = Array.isArray(searchPlayer)
+      ? searchPlayer.map(s => typeof s === 'string' ? s : String(s))
+      : typeof searchPlayer === 'string' ? [searchPlayer] : [String(searchPlayer)];
+    return productPlayers.some((productStr) =>
+      searchPlayers.some((searchStr) =>
+        productStr.includes(searchStr) || searchStr.includes(productStr)
+      )
+    );
+  };
+
+  const matchesCardNumberLocal = (productCardNumber: unknown, searchCardNumber: unknown, exact = false): boolean => {
+    if (!productCardNumber || !searchCardNumber) return false;
+    const productCardNumberStr = typeof productCardNumber === 'string' ? productCardNumber : String(productCardNumber);
+    const searchCardNumberStr = typeof searchCardNumber === 'string' ? searchCardNumber : String(searchCardNumber);
+    const prefix = setInfo.metadata?.card_number_prefix || '';
+    const searchWithPrefix = `${prefix}${searchCardNumberStr}`;
+    if (exact) {
+      return productCardNumberStr === searchCardNumberStr ||
+        productCardNumberStr === searchWithPrefix ||
+        (!!prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr);
+    }
+    return productCardNumberStr === searchCardNumberStr ||
+      productCardNumberStr === searchWithPrefix ||
+      (!!prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr) ||
+      productCardNumberStr.includes(searchCardNumberStr) ||
+      searchCardNumberStr.includes(productCardNumberStr);
+  };
+
+  const exactMatchesPlayerLocal = (productPlayer: unknown, searchPlayer: unknown): boolean => {
+    if (!productPlayer || !searchPlayer) return false;
+    const productPlayers: string[] = Array.isArray(productPlayer)
+      ? productPlayer.map(p => typeof p === 'string' ? p.toLowerCase().trim() : String(p).toLowerCase().trim())
+      : typeof productPlayer === 'string' ? [productPlayer.toLowerCase().trim()] : [String(productPlayer).toLowerCase().trim()];
+    const searchPlayers: string[] = Array.isArray(searchPlayer)
+      ? searchPlayer.map(s => typeof s === 'string' ? s.toLowerCase().trim() : String(s).toLowerCase().trim())
+      : typeof searchPlayer === 'string' ? [searchPlayer.toLowerCase().trim()] : [String(searchPlayer).toLowerCase().trim()];
+    return productPlayers.some((productStr) =>
+      searchPlayers.some((searchStr) =>
+        productStr === searchStr || productStr.includes(searchStr) || searchStr.includes(productStr)
+      )
+    );
+  };
+
+  const perfectMatch = imageDefaults._perfectMatch === true;
+  const bestMatchPlayer = imageDefaults._bestMatchPlayer || imageDefaults.player;
+
+  // Tier 1: Perfect match — exact card number + exact player
+  if (perfectMatch && imageDefaults.cardNumber && imageDefaults.player) {
+    const card = setInfo.products?.find(
+      (product) =>
+        matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber, true) &&
+        exactMatchesPlayerLocal(product.metadata?.player, imageDefaults.player),
+    );
+    if (card) return { product: card, confidence: 5000 };
+  }
+
+  // Tier 2: Substring match — card number + player
+  let card = setInfo.products?.find(
+    (product) =>
+      matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
+      matchesPlayerLocal(product.metadata?.player, imageDefaults.player),
+  );
+  if (card) {
+    return { product: card, confidence: perfectMatch ? 4000 : 2000 };
+  }
+
+  // Tier 3: Cleaned player match
+  if (imageDefaults.player) {
+    let cleanedPlayer: string | string[];
+    if (Array.isArray(imageDefaults.player)) {
+      cleanedPlayer = imageDefaults.player.map(p => {
+        const playerStr = typeof p === 'string' ? p : String(p || '');
+        return playerStr.replace(/[^a-zA-Z ]/g, '');
+      });
+    } else {
+      const playerStr = typeof imageDefaults.player === 'string' ? imageDefaults.player : String(imageDefaults.player || '');
+      cleanedPlayer = playerStr.replace(/[^a-zA-Z ]/g, '');
+    }
+    card = setInfo.products?.find(
+      (product) =>
+        matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
+        matchesPlayerLocal(product.metadata?.player, cleanedPlayer),
+    );
+    if (card) {
+      return { product: card, confidence: perfectMatch ? 3500 : 1500 };
+    }
+  }
+
+  // Tier 4: Best available match
+  let defaultCard: Product | undefined;
+  if (imageDefaults.cardNumber && bestMatchPlayer) {
+    defaultCard = setInfo.products?.find(
+      (product) =>
+        matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
+        matchesPlayerLocal(product.metadata?.player, bestMatchPlayer),
+    );
+  }
+  if (!defaultCard && imageDefaults.cardNumber) {
+    defaultCard = setInfo.products?.find(
+      (product) => matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber),
+    );
+  }
+  if (!defaultCard && bestMatchPlayer) {
+    defaultCard = setInfo.products?.find(
+      (product) => matchesPlayerLocal(product.metadata?.player, bestMatchPlayer),
+    );
+  }
+  if (defaultCard) {
+    return { product: defaultCard, confidence: 500 };
+  }
+
+  return { product: null, confidence: 0 };
+}
+
 export async function selectCard(setData: SetInfo, imageDefaults: Metadata): Promise<{ product: Product; productVariant: ProductVariant }> {
   if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
   const product = await matchCard(setData, imageDefaults);

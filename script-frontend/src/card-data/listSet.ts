@@ -1,49 +1,59 @@
 import fs from 'fs';
 import path from 'path';
 import { useSpinners } from '../utils/spinners';
+import { createLogger } from '../utils/logger';
 import chalk from 'chalk';
 import Queue from 'queue';
-import { selectCard, getCardDetails, saveBulk, saveListing } from './cardData';
+import { selectCard, getCardDetails, autoSelectCard, saveBulk, saveListing } from './cardData';
 import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion, getInventoryQuantitiesBatch } from '../utils/medusa';
 import { ask, type AskSelectOption } from '../utils/ask';
+import { submitUITask, wasCtrlCPressed } from '../utils/uiQueue';
 import type { SetInfo } from '../models/setInfo';
 import type { ProductImage } from '../models/cards';
 import { processImageFile } from '../listing-sites/firebase';
-import imageRecognition from './imageRecognition';
+import imageRecognition, { type PoolPriors } from './imageRecognition';
 import type { InventoryItemDTO, Product, ProductVariant, MoneyAmount } from '@medusajs/client-types';
 import { buildSet } from './setData';
 import _ from 'lodash';
 import type { ParsedArgs } from 'minimist';
 import { getFiles, getInputs } from '../utils/inputs';
 import { orientAndClassifyCards, orderFrontBack } from '../image-processing/card-cropper-wrapper';
-import { getCommonPricing } from './pricing';
+import { getCommonPricing, getDefaultPricing, getPricing } from './pricing';
+import { showReviewMenu, type ReviewMenuState } from '../utils/reviewMenu';
+import type { UnmatchedCard } from '../utils/cardPool';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
+const debug = createLogger('listSet');
 
 const listings: ProductVariant[] = [];
-const queueReadImage = new Queue({
+const cardProcessorQueue = new Queue({
   results: [],
   autostart: true,
   concurrency: 3,
 });
-const queueGatherData = new Queue({
-  results: [],
-  autostart: true,
-  concurrency: 1,
-});
-const queueImageFiles = new Queue({
+// NOTE: the review queue has been replaced by the single serial UI queue in
+// src/utils/uiQueue.ts. All interactive work — review menu, pool walk, idle
+// waiting — runs as tasks on that queue.
+const uploadQueue = new Queue({
   results: listings,
   autostart: true,
   concurrency: 3,
 });
 
 let hasUpdated = false;
+let watchModeCropEnabled = false;
 
-// Scanned file tracking for session recovery
+// Maps cropped image basename → original image basename for markScanned tracking
+const cropOriginalNames = new Map<string, string>();
+
+// Scanned file tracking for session recovery.
+// Map of basename → mtimeMs recorded at scan time. A value of 0 means the
+// entry came from a legacy scanned.txt line (filename only) and should be
+// treated as "always skip" for backward compatibility.
 let scannedFilePath = '';
-const scannedFiles = new Set<string>();
+const scannedFiles = new Map<string, number>();
 
 function loadScannedFiles(inputDir: string): void {
   scannedFilePath = path.join(inputDir, 'scanned.txt');
@@ -52,23 +62,68 @@ function loadScannedFiles(inputDir: string): void {
     const content = fs.readFileSync(scannedFilePath, 'utf-8');
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
-      if (trimmed) scannedFiles.add(trimmed);
+      if (!trimmed) continue;
+      const tabIdx = trimmed.indexOf('\t');
+      if (tabIdx === -1) {
+        // Legacy line: filename only, no mtime known.
+        scannedFiles.set(trimmed, 0);
+      } else {
+        const name = trimmed.slice(0, tabIdx);
+        const mtime = Number(trimmed.slice(tabIdx + 1)) || 0;
+        scannedFiles.set(name, mtime);
+      }
     }
   } catch {
     // File doesn't exist yet — that's fine
   }
 }
 
+/**
+ * Returns true if `filePath` is already recorded in scanned.txt AND the file
+ * on disk hasn't been rewritten since. Files with the same name but a newer
+ * mtime are treated as new (the user dropped a replacement scan).
+ */
+export function isFileScanned(filePath: string): boolean {
+  const recorded = scannedFiles.get(path.basename(filePath));
+  if (recorded === undefined) return false;
+  if (recorded === 0) return true; // legacy entry — no mtime, always skip
+  try {
+    return fs.statSync(filePath).mtimeMs <= recorded;
+  } catch {
+    // Can't stat (file moved/deleted) — treat as scanned to avoid re-processing.
+    return true;
+  }
+}
+
 function markScanned(front: string, back: string): void {
   const names = [path.basename(front)];
   if (back && back !== front) names.push(path.basename(back));
+  const inputDir = path.dirname(scannedFilePath);
   for (const name of names) {
-    if (!scannedFiles.has(name)) {
-      scannedFiles.add(name);
-      fs.appendFileSync(scannedFilePath, name + '\n');
+    // Resolve cropped name back to the original scan filename
+    const originalName = cropOriginalNames.get(name) ?? name;
+    if (scannedFiles.has(originalName)) continue;
+    let mtimeMs = 0;
+    try {
+      mtimeMs = fs.statSync(path.join(inputDir, originalName)).mtimeMs;
+    } catch {
+      // Original file may already have been moved/deleted — record 0
+      // so the entry acts as a legacy "always skip" marker.
     }
+    scannedFiles.set(originalName, mtimeMs);
+    fs.appendFileSync(scannedFilePath, `${originalName}\t${mtimeMs}\n`);
   }
 }
+
+const confirmCardSide = async (imagePath: string, detectedSide: 'front' | 'back'): Promise<'front' | 'back' | 'skip'> => {
+  const options = detectedSide === 'front'
+    ? ['front', 'back', 'skip']
+    : ['back', 'front', 'skip'];
+  const answer = await ask('Side:', undefined, {
+    selectOptions: options,
+  });
+  return answer as 'front' | 'back' | 'skip';
+};
 
 const preProcessPair = async (imgA: string, imgB: string, setData: SetInfo, args: ParsedArgs) => {
   const { update, finish, error } = showSpinner(`singles-preprocess-${imgA}`, `Pre-Processing ${imgA}/${imgB}`);
@@ -76,23 +131,31 @@ const preProcessPair = async (imgA: string, imgB: string, setData: SetInfo, args
     // Orient images and detect front/back via text density
     update(`Fixing orientation & detecting front/back`);
     const textDetections = await orientAndClassifyCards([imgA, imgB]);
-    const [front, back] = textDetections.size > 0
+    let [front, back] = textDetections.size > 0
       ? orderFrontBack(imgA, imgB, textDetections)
       : [imgA, imgB];
+
+    // Let the user confirm or flip front/back assignment
+    update(`Confirming front/back`);
+    const sideA = await confirmCardSide(front, 'front');
+    const sideB = await confirmCardSide(back, 'back');
+
+    // If user flipped both or confirmed, apply the result
+    if (sideA === 'back' && sideB === 'front') {
+      [front, back] = [back, front];
+    } else if (sideA === 'back') {
+      // User says the detected front is actually the back — swap
+      [front, back] = [back, front];
+    } else if (sideB === 'front') {
+      // User says the detected back is actually the front — swap
+      [front, back] = [back, front];
+    }
 
     update(`Getting image recognition data`);
     const imageDefaults = await imageRecognition(front, back, setData);
     update(`Queueing next step`);
-    await new Promise<void>((resolve, reject) => {
-      queueGatherData.push(async () => {
-        try {
-          await processPair(front, back, imageDefaults, setData, args);
-          resolve();
-        } catch (e) {
-          reject(e);
-          throw e;
-        }
-      });
+    await submitUITask('review', async () => {
+      await processPair(front, back, imageDefaults, setData, args);
     });
     finish();
   } catch (e) {
@@ -100,6 +163,205 @@ const preProcessPair = async (imgA: string, imgB: string, setData: SetInfo, args
     throw e;
   }
 };
+
+/** Context passed from the card processor queue to the review and upload queues. */
+interface CardProcessedState {
+  menuState: ReviewMenuState;
+  setData: SetInfo;
+  args: ParsedArgs;
+  imageDefaults: Partial<Product>;
+  front: string;
+  back: string;
+}
+
+/** Phase 1: Automated card identification — runs on cardProcessorQueue (concurrency 3). */
+const buildCardState = async (front: string, back: string, setData: SetInfo, args: ParsedArgs, poolPriors?: PoolPriors): Promise<CardProcessedState> => {
+  const { update, finish, error } = showSpinner(`singles-preprocess-${front}`, `Pre-Processing ${path.basename(front)}/${path.basename(back)}`);
+  try {
+    update(`Fixing orientation`);
+    await orientAndClassifyCards([front, back]);
+
+    update(`Getting image recognition data`);
+    const imageDefaults = await imageRecognition(front, back, setData, poolPriors);
+
+    update(`Auto-selecting card`);
+    const autoResult = await autoSelectCard(setData, imageDefaults);
+
+    update(`Getting default pricing`);
+    const currentPrices = autoResult.productVariant?.prices ?? setData.category?.metadata?.prices ?? [];
+    const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
+
+    const features = autoResult.productVariant?.metadata?.features
+      ?? autoResult.product?.metadata?.features
+      ?? ['Base Set'];
+    const thickness = autoResult.productVariant?.metadata?.thickness
+      ?? autoResult.product?.metadata?.thickness
+      ?? '20pt';
+
+    let existingQuantity = 0;
+    if (autoResult.productVariant) {
+      try {
+        existingQuantity = await getInventoryQuantity(autoResult.productVariant);
+      } catch {
+        // best-effort — default to 0
+      }
+    }
+
+    const menuState: ReviewMenuState = {
+      cardTitle: autoResult.productVariant?.title
+        ?? autoResult.product?.title
+        ?? `#${imageDefaults.cardNumber ?? '?'} ${Array.isArray(imageDefaults.player) ? imageDefaults.player.join(', ') : imageDefaults.player ?? 'Unknown'}`,
+      quantity: existingQuantity,
+      prices: pricingResult.display,
+      priceMoneyAmounts: pricingResult.prices,
+      frontCrop: { file: front, method: 'auto' },
+      backCrop: { file: back, method: 'auto' },
+      details: { thickness: String(thickness), features: Array.isArray(features) ? features : [features] },
+      matchedProduct: autoResult.product,
+      matchedVariant: autoResult.productVariant,
+      matchConfidence: autoResult.confidence,
+      frontPath: front,
+      backPath: back,
+      sidesSwapped: false,
+      queuedCount: 0,
+    };
+
+    finish(`Ready for review: ${menuState.cardTitle}`);
+    return { menuState, setData, args, imageDefaults, front, back };
+  } catch (e) {
+    error(e);
+    throw e;
+  }
+};
+
+/** Phase 2: Interactive review — runs on the UI queue (concurrency 1). Returns reviewed state. */
+const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> => {
+  const { menuState, setData, args, imageDefaults, front } = state;
+
+  menuState.queuedCount = cardProcessorQueue.length;
+
+  const reviewed = await showReviewMenu(menuState, {
+    onPrice: async () => {
+      const cardMetadata = {
+        year: setData.category?.metadata?.year,
+        setName: setData.category?.metadata?.setName,
+        insert: setData.metadata?.insert,
+        parallel: setData.metadata?.parallel,
+        player: menuState.matchedVariant?.metadata?.player ?? imageDefaults.player,
+        cardName: menuState.matchedVariant?.metadata?.cardName ?? menuState.matchedProduct?.title,
+      };
+      const prices = await getPricing(
+        menuState.priceMoneyAmounts,
+        args['skipSafetyCheck'],
+        args['allBase'],
+        cardMetadata,
+      );
+      const newPricingResult = await getDefaultPricing(prices, false);
+      return { prices, display: newPricingResult.display };
+    },
+    onCrop: async (side) => {
+      const targetPath = side === 'front' ? menuState.frontPath : menuState.backPath;
+      const { cropImage } = await import('../image-processing/imageProcessor.js');
+      const cropDir = path.resolve(path.dirname(front), 'crop');
+      fs.mkdirSync(cropDir, { recursive: true });
+      const reCroppedPath = path.join(cropDir, `recrop-${Date.now()}.tmp.jpg`);
+      await cropImage(targetPath, null, cropDir, reCroppedPath, false);
+      cropOriginalNames.set(path.basename(reCroppedPath), path.basename(targetPath));
+      if (side === 'front') {
+        menuState.frontPath = reCroppedPath;
+      } else {
+        menuState.backPath = reCroppedPath;
+      }
+      return { file: reCroppedPath, method: 'manual' };
+    },
+    onRotate: async (side) => {
+      const targetPath = side === 'front' ? menuState.frontPath : menuState.backPath;
+      const sharp = (await import('sharp')).default;
+      const buffer = await sharp(targetPath).rotate(90).toBuffer();
+      fs.writeFileSync(targetPath, buffer);
+    },
+    onDetails: async () => {
+      const newThickness = await ask('Thickness', menuState.details.thickness);
+      const newFeatures = await ask('Features', menuState.details.features, { isArray: true });
+      return {
+        thickness: newThickness || menuState.details.thickness,
+        features: (newFeatures && newFeatures.length > 0) ? newFeatures : menuState.details.features,
+      };
+    },
+    onSwapSides: async () => {
+      // Paths get swapped in the review menu handler
+    },
+    onManualSelect: async () => {
+      // Force interactive selection — override _perfectMatch so matchCard always prompts
+      const { product, productVariant } = await selectCard(setData, { ...imageDefaults, _perfectMatch: false });
+      let quantity = 0;
+      try {
+        quantity = await getInventoryQuantity(productVariant);
+      } catch {
+        // best-effort
+      }
+      const currentPrices = productVariant.prices ?? setData.category?.metadata?.prices ?? [];
+      const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
+      return { product, variant: productVariant, quantity, prices: pricingResult.prices, priceDisplay: pricingResult.display };
+    },
+  });
+
+  return reviewed;
+};
+
+/** Phase 3: Post-review upload & listing — runs on uploadQueue (concurrency 3). */
+const finalizeCard = async (reviewed: ReviewMenuState, setData: SetInfo): Promise<void> => {
+  const product = reviewed.matchedProduct;
+  const productVariant = reviewed.matchedVariant;
+  if (!product || !productVariant) {
+    throw new Error('No card selected — cannot process');
+  }
+  if (!productVariant.product) {
+    productVariant.product = product;
+  }
+
+  // Apply reviewed prices
+  productVariant.prices = reviewed.priceMoneyAmounts as MoneyAmount[];
+
+  // Apply reviewed details
+  if (!productVariant.metadata) productVariant.metadata = {};
+  productVariant.metadata.thickness = reviewed.details.thickness;
+  productVariant.metadata.features = reviewed.details.features;
+
+  // Duplicate — increment by 1
+  const currentQty = await getInventoryQuantity(productVariant);
+  if (currentQty > 0) {
+    const newQty = currentQty + 1;
+    const inventoryItem = await getInventory(productVariant);
+    await updateInventory(inventoryItem, newQty);
+    debug(`Duplicate: ${productVariant.product!.title} — quantity ${currentQty} → ${newQty}`);
+    markScanned(reviewed.frontPath, reviewed.backPath);
+    return;
+  }
+
+  // Prepare and upload images
+  const images: ProductImage[] = [];
+  const frontImage = await prepareImageFile(reviewed.frontPath, productVariant, setData, 1, true);
+  if (frontImage) {
+    images.push({
+      file: frontImage,
+      url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product!.handle}1.jpg}?alt=media`,
+    });
+  }
+  if (reviewed.backPath) {
+    const backImage = await prepareImageFile(reviewed.backPath, productVariant, setData, 2, true);
+    if (backImage) {
+      images.push({
+        file: backImage,
+        url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product!.handle}2.jpg}?alt=media`,
+      });
+    }
+  }
+
+  await processUploads(productVariant, images, String(reviewed.quantity));
+  markScanned(reviewed.frontPath, reviewed.backPath);
+};
+
 
 const processPair = async (
   front: string,
@@ -172,7 +434,7 @@ const processPair = async (
       const inventoryItem = await getInventory(productVariant);
       await updateInventory(inventoryItem, newQty);
       markScanned(front, back);
-      log(chalk.green(`Duplicate detected: ${productVariant.product.title} — quantity incremented to ${newQty}`));
+      debug(`Duplicate: ${productVariant.product.title} — quantity ${currentQty} → ${newQty}`);
       return { productVariant, quantity: String(newQty), images: [] };
     }
 
@@ -180,7 +442,7 @@ const processPair = async (
     const { productVariant: pv, quantity } = await getCardDetails(setData, imageDefaults, args, product, productVariant);
 
     const images: ProductImage[] = [];
-    const frontImage = await prepareImageFile(front, pv, setData, 1, args.i);
+    const frontImage = await prepareImageFile(front, pv, setData, 1, args.i || watchModeCropEnabled);
     if (frontImage) {
       images.push({
         file: frontImage,
@@ -188,7 +450,7 @@ const processPair = async (
       });
     }
     if (back) {
-      const backImage = await prepareImageFile(back, pv, setData, 2, args.i);
+      const backImage = await prepareImageFile(back, pv, setData, 2, args.i || watchModeCropEnabled);
       if (backImage) {
         images.push({
           file: backImage,
@@ -198,7 +460,7 @@ const processPair = async (
     }
 
     await new Promise<void>((resolve, reject) => {
-      queueImageFiles.push(async () => {
+      uploadQueue.push(async () => {
         try {
           await processUploads(pv, images, String(quantity));
           resolve();
@@ -241,10 +503,7 @@ const processBulk = async (setData: SetInfo, args: ParsedArgs) => {
     if (args.numbers) {
       if (args.numbers.includes(',')) {
         const numbers = args.numbers.split(',');
-        products = products.filter((p) => {
-          console.log(`Checking ${p.metadata?.cardNumber} in ${numbers}`);
-          return numbers.includes(p.metadata?.cardNumber);
-        });
+        products = products.filter((p) => numbers.includes(p.metadata?.cardNumber));
       } else if (args.numbers.startsWith('<')) {
         const number = parseInt(args.numbers.replace('<', ''));
         products = products.filter((p) => parseInt(p.metadata?.cardNumber) < number);
@@ -350,10 +609,7 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
     if (args.numbers) {
       if (args.numbers.includes(',')) {
         const numbers = args.numbers.split(',');
-        products = products.filter((p) => {
-          console.log(`Checking ${p.metadata?.cardNumber} in ${numbers}`);
-          return numbers.includes(p.metadata?.cardNumber);
-        });
+        products = products.filter((p) => numbers.includes(p.metadata?.cardNumber));
       } else if (args.numbers.startsWith('<')) {
         const number = parseInt(args.numbers.replace('<', ''));
         products = products.filter((p) => parseInt(p.metadata?.cardNumber) < number);
@@ -733,20 +989,15 @@ export const processPrice = async (setData: SetInfo, args: ParsedArgs) => {
 };
 
 export async function processSet(setData: SetInfo, files: string[] = [], args: ParsedArgs, inputDirectory?: string) {
-  const {
-    update: updateSpinner,
-    finish: finishSpinner,
-    error: errorSpinner,
-  } = showSpinner('list-set', `Processing Images`);
   const count = files.length || 0 / 2;
   let current = 0;
   hasUpdated = false;
-  queueReadImage.addEventListener('success', () => {
+  cardProcessorQueue.addEventListener('success', () => {
     current++;
-    updateSpinner(`${current}/${count}`);
+    debug(`Card processor progress: ${current}/${count}`);
   });
 
-  updateSpinner('Prepping Queues for AI');
+  debug('Prepping queues for AI');
   try {
     let i = 0;
     // log(setData);
@@ -761,13 +1012,13 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
 
     // Handle price mode - skip image processing
     if (args['price'] !== undefined) {
-      updateSpinner('Processing Price Updates');
+      debug('Processing price updates');
       await processPrice(setData, args);
-      updateSpinner(`Kickoff Set Processing`);
+      debug('Kicking off set processing');
       if (!args['no-sync']) {
         await startSync(setData.category.id);
       }
-      finishSpinner('Completed Set Processing');
+      debug('Completed set processing');
       return;
     }
 
@@ -786,7 +1037,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     if (inputDirectory) {
       loadScannedFiles(inputDirectory);
       const beforeCount = files.length;
-      files = files.filter((f) => !scannedFiles.has(path.basename(f)));
+      files = files.filter((f) => !isFileScanned(f));
       const skipped = beforeCount - files.length;
       if (skipped > 0) {
         log(chalk.yellow(`Skipped ${skipped} already-scanned file(s)`));
@@ -798,14 +1049,12 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       queue.addEventListener('error', (e) => {
         hasQueueError = true;
         log(`${name} Queue error: ${e.detail.error}`, e);
-        queueReadImage.stop();
-        queueGatherData.stop();
-        queueImageFiles.stop();
+        cardProcessorQueue.stop();
+        uploadQueue.stop();
         throw new Error('Queue Error');
       });
-    watchForError('Read', queueReadImage);
-    watchForError('Gather', queueGatherData);
-    watchForError('Process Images', queueImageFiles);
+    watchForError('Card Processor', cardProcessorQueue);
+    watchForError('Upload', uploadQueue);
 
     // Collect per-item promises that resolve when the ENTIRE chain
     // (readImage → gatherData → imageFiles) completes for each pair.
@@ -815,69 +1064,259 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     const allJobPromises: Promise<void>[] = [];
     let itemsPushed = 0;
 
-    while (i < files.length - 1) {
-      const imgA = files[i++];
-      let imgB: string = imgA;
-      if (i < files.length) {
-        imgB = files[i++];
-      }
-      const jobPromise = new Promise<void>((resolve, reject) => {
-        queueReadImage.push(async () => {
-          try {
-            await preProcessPair(imgA, imgB, setData, args);
-            resolve();
-          } catch (e) {
-            reject(e);
-            throw e;
-          }
+    // Non-watch mode: pair files sequentially
+    if (!args['watch']) {
+      while (i < files.length - 1) {
+        const imgA = files[i++];
+        let imgB: string = imgA;
+        if (i < files.length) {
+          imgB = files[i++];
+        }
+        const jobPromise = new Promise<void>((resolve, reject) => {
+          cardProcessorQueue.push(async () => {
+            try {
+              await preProcessPair(imgA, imgB, setData, args);
+              resolve();
+            } catch (e) {
+              reject(e);
+              throw e;
+            }
+          });
         });
-      });
-      allJobPromises.push(jobPromise);
-      itemsPushed++;
+        allJobPromises.push(jobPromise);
+        itemsPushed++;
+      }
     }
 
-    // Watch mode: keep alive and watch for new file pairs
+    // Watch mode: feed ALL files (initial + new) through smart matching
+    // so every card gets a confirmSide prompt.
     if (args['watch'] && inputDirectory && !hasQueueError) {
-      const { watchForNewPairs } = await import('../utils/watchDirectory.js');
-      const knownFiles = new Set(files);
+      const { watchWithSmartMatching } = await import('../utils/watchDirectory.js');
+      const { extractSingleCardInfo } = await import('../image-processing/card-extractor.js');
+      const { extractTextFromImage } = await import('../image-processing/ocr-extractor.js');
+      const { orientAndClassifyCards: orientSingle } = await import('../image-processing/card-cropper-wrapper.js');
+      const { cropImage } = await import('../image-processing/imageProcessor.js');
+      // Don't mark initial files as "known" — let the watcher process them
+      const knownFiles = new Set<string>();
 
-      const watcher = watchForNewPairs(
-        inputDirectory,
+      // Set up early cropping: crop images immediately on detection before OCR
+      const cropOutputDir = path.resolve(inputDirectory, 'crop');
+      fs.mkdirSync(cropOutputDir, { recursive: true });
+      watchModeCropEnabled = true;
+
+      // Forward ref so onPairReady can call watcher.reAddToPool after the
+      // initializer finishes. The closure is only invoked later when pairs match.
+      let watcher!: import('../utils/watchDirectory.js').DirectoryWatcher;
+      watcher = watchWithSmartMatching({
+        directory: inputDirectory,
         knownFiles,
-        (imgA, imgB) => {
+        scannedFiles,
+        initialFiles: files,
+
+        // ── Automated callbacks (intake queue, concurrency 3) ─────────────
+        autoCrop: async (imagePath: string) => {
+          const croppedPath = path.join(cropOutputDir, path.basename(imagePath));
+
+          try {
+            // Non-interactive: auto-accept first successful crop, skip manual fallback
+            await cropImage(imagePath, null, cropOutputDir, croppedPath, false, false, true);
+          } catch {
+            return null; // crop failed — review queue will handle it
+          }
+
+          // Track original name for scanned-file bookkeeping
+          cropOriginalNames.set(path.basename(croppedPath), path.basename(imagePath));
+          return croppedPath;
+        },
+        autoOrient: async (imagePath: string) => {
+          const results = await orientSingle([imagePath]);
+          return results.get(imagePath)?.text_detection_count ?? 0;
+        },
+        classifyAndExtract: async (imagePath: string, textDetectionCount: number) => {
+          // Extract card info + front/back classification via vision AI
+          const extracted = await extractSingleCardInfo(imagePath);
+
+          return {
+            path: imagePath,
+            side: extracted.side ?? (textDetectionCount >= 5 ? 'back' : 'front'),
+            player: extracted.player,
+            team: extracted.team,
+            cardNumber: extracted.card_number,
+            textDetectionCount,
+            timestamp: Date.now(),
+          };
+        },
+
+        // ── OCR fallback for pool matching ─────────────────────────────
+        ocrResolver: async (imagePath: string) => {
+          const result = await extractTextFromImage(imagePath);
+          if (result.error || !result.text) return null;
+          return {
+            text: result.text,
+            words: result.words ?? [],
+          };
+        },
+
+        // ── Non-interactive review callbacks ─────────────────────────────
+        // All user interaction now happens in the review menu after pair matching.
+        // These callbacks auto-accept the automated results.
+        confirmCrop: async (_originalPath: string, croppedPath: string | null) => {
+          // Auto-accept the crop — user can re-crop via 'c' in the review menu
+          return croppedPath ?? _originalPath;
+        },
+        confirmRotation: async (_imagePath: string) => {
+          // Auto-accept orientation — already handled by autoOrient
+        },
+        confirmPlayer: async (_imagePath, detectedPlayer) => {
+          // Auto-accept detected player — user can override via 'm' in review menu
+          return detectedPlayer;
+        },
+        confirmSide: async (_imagePath, detectedSide) => {
+          // Auto-accept detected side — user can swap via 's' in review menu
+          return detectedSide;
+        },
+        renderCardPreview: async (imagePath: string) => {
+          try {
+            const imgOutput = await terminalImage(imagePath, { height: 10 });
+            return '    ' + imgOutput;
+          } catch {
+            // best-effort — filename already shown by caller
+          }
+        },
+        onResolvePool: async (cards) => {
+          // This callback is invoked from inside the UI-queue waiting task, which
+          // means we already own the UI thread for the entire walk. Inner ask()
+          // calls run inline (reentrant via uiTaskActive) — no per-card queueing,
+          // no risk of interleaving with a review menu.
+          const updatedCards: typeof cards = [];
+          for (const card of cards) {
+            // eslint-disable-next-line no-console
+            console.log('');
+            try {
+              const imgOutput = await terminalImage(card.path, { height: 15 });
+              process.stdout.write('  ' + imgOutput + '\n');
+            } catch {
+              // eslint-disable-next-line no-console
+              console.log(chalk.dim(`  [Image: ${path.basename(card.path)}]`));
+            }
+            // eslint-disable-next-line no-console
+            console.log(chalk.cyan(`  Current: side=${card.side}, player=${card.player ?? '(none)'}, team=${card.team ?? '(none)'}, #${card.cardNumber ?? '(none)'}`));
+
+            const playerAnswer = await ask('Player name', card.player);
+            const sideAnswer = await ask('Side', card.side, {
+              selectOptions: [
+                { name: 'front', value: 'front' },
+                { name: 'back', value: 'back' },
+              ],
+            });
+
+            updatedCards.push({
+              ...card,
+              player: playerAnswer || null,
+              side: sideAnswer as 'front' | 'back',
+            });
+          }
+          return updatedCards;
+        },
+        onSkip: (imagePath) => {
+          markScanned(imagePath, imagePath);
+        },
+        onPairReady: async (front, back, match) => {
+          // Build pool priors from the match — merge front+back extraction data.
+          // Prefer front for player (usually has the name), back for cardNumber.
+          const priors: PoolPriors = {
+            player: match.front.player ?? match.back.player,
+            team: match.front.team ?? match.back.team,
+            cardNumber: match.front.cardNumber ?? match.back.cardNumber,
+          };
           const jobPromise = new Promise<void>((resolve, reject) => {
-            queueReadImage.push(async () => {
+            // Phase 1: Automated card identification (concurrency 3).
+            // The queue slot is released as soon as buildCardState finishes
+            // so new cards can start processing while earlier ones wait for
+            // user review.
+            cardProcessorQueue.push(async () => {
               try {
-                await preProcessPair(imgA, imgB, setData, args);
-                resolve();
-              } catch (e) {
-                reject(e);
-                throw e;
-              }
+                const state = await buildCardState(front, back, setData, args, priors);
+                // Detach review+upload so the processor slot is freed.
+                // resolve/reject are captured by the closure and called when
+                // the full chain completes.
+                void (async () => {
+                  try {
+                    // Phase 2: Interactive review on the UI queue (concurrency 1).
+                    // submitUITask automatically wakes any idling waiting task.
+                    // If the session is already complete, the task is dropped and
+                    // the returned promise resolves with undefined — we treat that
+                    // as "skip finalize" so the job promise still resolves.
+                    const reviewed = await submitUITask('review', async () => reviewCard(state));
+                    if (reviewed === undefined) {
+                      resolve();
+                      return;
+                    }
+                    if (reviewed.rejected) {
+                      // User rejected one side — mark only that scan as scanned
+                      // (so the watcher doesn't re-ingest it) and put the kept
+                      // side back into the pool so a fresh rescan pairs with it.
+                      // Use the *current* menuState paths for the kept side — the
+                      // user may have re-cropped or rotated it in the menu, and
+                      // match.front/back still hold the stale intake-time path.
+                      const rejectedPath = reviewed.rejected === 'front' ? reviewed.frontPath : reviewed.backPath;
+                      markScanned(rejectedPath, rejectedPath);
+                      const sourceCard = reviewed.rejected === 'front' ? match.back : match.front;
+                      const currentKeptPath = reviewed.rejected === 'front' ? reviewed.backPath : reviewed.frontPath;
+                      const keptCard: UnmatchedCard = { ...sourceCard, path: currentKeptPath, timestamp: Date.now() };
+                      log(chalk.yellow(`Rejected ${reviewed.rejected} — returned ${keptCard.side} to pool, waiting for rescan`));
+                      await watcher.reAddToPool(keptCard);
+                      resolve();
+                      return;
+                    }
+                    // Phase 3: Upload & listing (concurrency 3) — background.
+                    uploadQueue.push(async () => {
+                      try {
+                        await finalizeCard(reviewed, setData);
+                        resolve();
+                      } catch (e) {
+                        // Surface upload errors to the user via the UI queue.
+                        submitUITask('log', async () => {
+                          // eslint-disable-next-line no-console
+                          console.log(chalk.red(`Upload failed: ${e instanceof Error ? e.message : String(e)}`));
+                        });
+                        reject(e);
+                        throw e;
+                      }
+                    });
+                  } catch (e) { reject(e); }
+                })();
+              } catch (e) { reject(e); throw e; }
             });
           });
           allJobPromises.push(jobPromise);
           itemsPushed++;
+          // Return jobPromise so the watcher can track when the full chain completes,
+          // but the intake queue in watchDirectory does NOT await it.
           return jobPromise;
         },
-        scannedFiles,
-      );
+      });
 
       // Wait for initial files to finish, then show idle prompt
       if (itemsPushed > 0) {
-        const { finish: finishInitial, error: errorInitial } = showSpinner('processing-initial', 'Processing initial cards');
+        debug('Processing initial cards');
         try {
           await Promise.all(allJobPromises);
-          finishInitial();
+          debug('Initial cards processed');
         } catch (e) {
           hasQueueError = true;
-          errorInitial(e);
+          debug(`Initial cards processing failed: ${e instanceof Error ? e.message : String(e)}`);
+          log(chalk.red(`Initial cards processing failed: ${e instanceof Error ? e.message : String(e)}`));
         }
       }
 
       if (!hasQueueError) {
-        // Show idle prompt and listen for 'c' + Enter or new files
-        watcher.startListeningForComplete();
+        // Wait for the intake queue to finish processing initial files before
+        // starting the UI waiting loop. startUILoop registers this watcher's
+        // waiting-task body with the shared UI queue and pushes the first
+        // iteration; the UI queue self-perpetuates via its 'end' handler.
+        await watcher.intakeIdlePromise;
+        watcher.startUILoop();
         await watcher.completionPromise;
       }
 
@@ -895,44 +1334,50 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       }
     }
 
-    const { finish: finishProcessing, error: errorProcessing } = showSpinner('processing', `Waiting for all cards to finish processing`);
     if (!args['watch'] && itemsPushed > 0 && !hasQueueError) {
+      debug('Waiting for all cards to finish processing');
       try {
         await Promise.all(allJobPromises);
-        finishProcessing();
+        debug('All cards finished processing');
       } catch (e) {
         hasQueueError = true;
-        errorProcessing(e);
+        debug(`Queue errored: ${e instanceof Error ? e.message : String(e)}`);
+        log(chalk.red(`Queue errored: ${e instanceof Error ? e.message : String(e)}`));
       }
     } else if (hasQueueError) {
-      errorProcessing(`Queue errored`);
-    } else {
-      finishProcessing();
+      debug('Queue errored');
+      log(chalk.red('Queue errored'));
+    }
+
+    // If Ctrl+C was pressed, skip bulk/sync and exit gracefully
+    if (wasCtrlCPressed()) {
+      debug('Ctrl+C pressed — exiting after queue drain');
+      return;
     }
 
     //write the output
-    if (hasQueueError) {
-      errorSpinner(hasQueueError);
-    } else {
+    if (!hasQueueError) {
       if (args['select-bulk-cards']) {
         log('select-bulk-cards is not yet implemented');
       }
       if (!args.countCardsFirst && args['price'] === undefined) {
         const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
         if (addBulk) {
-          updateSpinner(`Process Bulk`);
+          debug('Processing bulk listings');
           setData.products = await getProducts(setData.category.id);
           await processBulk(setData, args);
         }
       }
-      updateSpinner(`Kickoff Set Processing`);
+      debug('Kicking off set processing');
       if (!args['no-sync'] && (!args['inventory'] || hasUpdated)) {
         await startSync(setData.category.id);
       }
     }
-    finishSpinner('Completed Set Processing');
+    debug('Completed set processing');
   } catch (error) {
-    errorSpinner(error);
+    debug(`processSet error: ${error instanceof Error ? error.message : String(error)}`);
+    log(chalk.red(`processSet error: ${error instanceof Error ? error.message : String(error)}`));
+    throw error;
   }
 }
 
