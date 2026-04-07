@@ -11,12 +11,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse): Promise<voi
   const syncService: SyncService = req.scope.resolve('syncService');
 
   // @ts-expect-error body is untyped
-  const body: SyncRequest = req.body || {
-    category: 'Error: Category or bin or sku is Required',
-    bin: 'Error: Category or bin or sku is Required',
-    sku: 'Error: Category or bin or sku is Required',
-    only: [],
-  };
+  const body: SyncRequest = req.body || {};
+
+  if (!body.category && !body.bin && !body.sku) {
+    res.status(400).json({ status: 'error', message: 'At least one of category, bin, or sku is required' });
+    return;
+  }
 
   const syncResult = await syncService.sync({ ...body, user: req.user.id });
 

@@ -33,6 +33,9 @@ class SyncService extends TransactionBaseService {
 
     const responses: BatchJob[] = [];
     const categories = await this.batchCategoryService.getCategories(request);
+    if (categories.length === 0) {
+      throw new Error('No categories resolved from sync request — at least one category, bin, or sku is required');
+    }
     for (const category of categories) {
       if (process.env.NODE_ENV === 'development' && !request.only) {
         // update('Running TEST Sync because we are in development mode');
