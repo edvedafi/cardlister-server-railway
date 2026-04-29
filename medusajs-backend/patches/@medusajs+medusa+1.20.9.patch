@@ -1,0 +1,121 @@
+diff --git a/node_modules/@medusajs/medusa/dist/loaders/helpers/subscribers/index.js b/node_modules/@medusajs/medusa/dist/loaders/helpers/subscribers/index.js
+index 338cade..9e6ef52 100644
+--- a/node_modules/@medusajs/medusa/dist/loaders/helpers/subscribers/index.js
++++ b/node_modules/@medusajs/medusa/dist/loaders/helpers/subscribers/index.js
+@@ -181,12 +181,16 @@ var SubscriberLoader = /** @class */ (function () {
+                     case 0: return [4 /*yield*/, (_b = absolutePath, Promise.resolve().then(function () { return __importStar(require(_b)); })).then(function (module_) {
+                             var isValid = _this.validateSubscriber(module_, absolutePath);
+                             if (!isValid) {
++                                console.warn("[SUBLOAD/v2] invalid " + absolutePath + " (validateSubscriber returned false)");
+                                 return;
+                             }
+                             _this.subscriberDescriptors_.set(absolutePath, {
+                                 config: module_.config,
+                                 handler: module_.default,
+                             });
++                            console.log("[SUBLOAD/v2] descriptor " + absolutePath);
++                        }).catch(function (err) {
++                            console.error("[SUBLOAD/v2] FAILED " + absolutePath + " at require: " + (err && err.stack ? err.stack : err));
+                         })];
+                     case 1: return [2 /*return*/, _a.sent()];
+                 }
+@@ -325,11 +329,17 @@ var SubscriberLoader = /** @class */ (function () {
+                         try {
+                             for (_a = __values(map.entries()), _b = _a.next(); !_b.done; _b = _a.next()) {
+                                 _c = __read(_b.value, 2), fileName = _c[0], _d = _c[1], config = _d.config, handler = _d.handler;
+-                                this.createSubscriber({
+-                                    fileName: fileName,
+-                                    config: config,
+-                                    handler: handler,
+-                                });
++                                try {
++                                    this.createSubscriber({
++                                        fileName: fileName,
++                                        config: config,
++                                        handler: handler,
++                                    });
++                                    console.log("[SUBLOAD/v2] subscribed " + fileName);
++                                }
++                                catch (innerErr) {
++                                    console.error("[SUBLOAD/v2] FAILED " + fileName + " at createSubscriber: " + (innerErr && innerErr.stack ? innerErr.stack : innerErr));
++                                }
+                             }
+                         }
+                         catch (e_2_1) { e_2 = { error: e_2_1 }; }
+diff --git a/node_modules/@medusajs/medusa/dist/loaders/plugins.js b/node_modules/@medusajs/medusa/dist/loaders/plugins.js
+index ea22d0a..6f2ebf2 100644
+--- a/node_modules/@medusajs/medusa/dist/loaders/plugins.js
++++ b/node_modules/@medusajs/medusa/dist/loaders/plugins.js
+@@ -564,11 +564,31 @@ function registerSubscribers(pluginDetails, container, activityId) {
+                     loadedFiles = _b.sent();
+                     normalizedLoadedFiles = (_a = loadedFiles === null || loadedFiles === void 0 ? void 0 : loadedFiles.map(function (file) { return file.replace(/\\/g, "/"); })) !== null && _a !== void 0 ? _a : [];
+                     files = glob_1.default.sync("".concat(pluginDetails.resolve, "/subscribers/*.js"), {});
++                    console.log("[SUBLOAD/plugin] resolve=" + pluginDetails.resolve + " v2Loaded=" + normalizedLoadedFiles.length + " legacyCandidates=" + files.length);
+                     files
+                         .filter(function (file) { return !normalizedLoadedFiles.includes(file); })
+                         .forEach(function (fn) {
+-                        var loaded = require(fn).default;
+-                        container.build((0, awilix_1.asFunction)(function (cradle) { return new loaded(cradle, pluginDetails.options); }).singleton());
++                        var base = path_1.default.basename(fn);
++                        var loaded;
++                        try {
++                            loaded = require(fn).default;
++                            console.log("[SUBLOAD/plugin] required " + base + " hasDefault=" + (typeof loaded === "function") + " plugin=" + pluginDetails.resolve);
++                        }
++                        catch (err) {
++                            console.error("[SUBLOAD/plugin] FAILED " + base + " at require (plugin=" + pluginDetails.resolve + "): " + (err && err.stack ? err.stack : err));
++                            return;
++                        }
++                        if (typeof loaded !== "function") {
++                            console.error("[SUBLOAD/plugin] FAILED " + base + " at require: default export is not a function (typeof=" + typeof loaded + ", plugin=" + pluginDetails.resolve + ")");
++                            return;
++                        }
++                        try {
++                            container.build((0, awilix_1.asFunction)(function (cradle) { return new loaded(cradle, pluginDetails.options); }).singleton());
++                            console.log("[SUBLOAD/plugin] built " + base + " plugin=" + pluginDetails.resolve);
++                        }
++                        catch (err) {
++                            console.error("[SUBLOAD/plugin] FAILED " + base + " at build (plugin=" + pluginDetails.resolve + "): " + (err && err.stack ? err.stack : err));
++                        }
+                     });
+                     return [2 /*return*/];
+             }
+diff --git a/node_modules/@medusajs/medusa/dist/loaders/subscribers.js b/node_modules/@medusajs/medusa/dist/loaders/subscribers.js
+index 25e6c5f..276bf29 100644
+--- a/node_modules/@medusajs/medusa/dist/loaders/subscribers.js
++++ b/node_modules/@medusajs/medusa/dist/loaders/subscribers.js
+@@ -17,9 +17,31 @@ exports.default = (function (_a) {
+         : "../subscribers/*.js";
+     var coreFull = path_1.default.join(__dirname, corePath);
+     var core = glob_1.default.sync(coreFull, { cwd: __dirname });
++    var basenames = core.map(function (f) { return path_1.default.basename(f); });
++    console.log("[SUBLOAD/core] glob result count=" + core.length + " files=" + JSON.stringify(basenames));
+     core.forEach(function (fn) {
+-        var loaded = require(fn).default;
+-        container.build((0, awilix_1.asFunction)(function (cradle) { return new loaded(cradle); }).singleton());
++        var base = path_1.default.basename(fn);
++        var loaded;
++        try {
++            loaded = require(fn).default;
++            console.log("[SUBLOAD/core] required " + base + " hasDefault=" + (typeof loaded === "function"));
++        }
++        catch (err) {
++            console.error("[SUBLOAD/core] FAILED " + base + " at require: " + (err && err.stack ? err.stack : err));
++            return;
++        }
++        if (typeof loaded !== "function") {
++            console.error("[SUBLOAD/core] FAILED " + base + " at require: default export is not a function (typeof=" + typeof loaded + ")");
++            return;
++        }
++        try {
++            container.build((0, awilix_1.asFunction)(function (cradle) { return new loaded(cradle); }).singleton());
++            console.log("[SUBLOAD/core] built " + base);
++        }
++        catch (err) {
++            console.error("[SUBLOAD/core] FAILED " + base + " at build: " + (err && err.stack ? err.stack : err));
++        }
+     });
++    console.log("[SUBLOAD/core] done");
+ });
+ //# sourceMappingURL=subscribers.js.map
+\ No newline at end of file
