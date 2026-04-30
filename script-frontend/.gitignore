@@ -12,3 +12,6 @@ venv/
 *.so
 *.pt
 logs/
+__pycache__/
+.services.pid
+requirements-backup.txt

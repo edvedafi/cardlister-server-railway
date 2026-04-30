@@ -37,6 +37,10 @@ class SyncService extends TransactionBaseService {
       throw new Error('No categories resolved from sync request — at least one category, bin, or sku is required');
     }
     for (const category of categories) {
+      if (!category) {
+        this.logger.warn(`SyncService.sync: skipping falsy category resolved from ${JSON.stringify(request)}`);
+        continue;
+      }
       if (process.env.NODE_ENV === 'development' && !request.only) {
         // update('Running TEST Sync because we are in development mode');
         responses.push(

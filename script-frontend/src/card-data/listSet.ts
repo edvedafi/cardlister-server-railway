@@ -1,10 +1,11 @@
 import fs from 'fs';
+import os from 'node:os';
 import path from 'path';
 import { useSpinners } from '../utils/spinners';
 import { createLogger } from '../utils/logger';
 import chalk from 'chalk';
 import Queue from 'queue';
-import { selectCard, getCardDetails, autoSelectCard, saveBulk, saveListing } from './cardData';
+import { selectCard, getCardDetails, autoSelectCard, pickVariant, saveBulk, saveListing } from './cardData';
 import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion, getInventoryQuantitiesBatch } from '../utils/medusa';
@@ -17,6 +18,7 @@ import imageRecognition, { type PoolPriors } from './imageRecognition';
 import type { InventoryItemDTO, Product, ProductVariant, MoneyAmount } from '@medusajs/client-types';
 import { buildSet } from './setData';
 import _ from 'lodash';
+import { $ } from 'zx';
 import type { ParsedArgs } from 'minimist';
 import { getFiles, getInputs } from '../utils/inputs';
 import { orientAndClassifyCards, orderFrontBack } from '../image-processing/card-cropper-wrapper';
@@ -44,6 +46,7 @@ const uploadQueue = new Queue({
 
 let hasUpdated = false;
 let watchModeCropEnabled = false;
+let cropOutputDir = '';
 
 // Maps cropped image basename → original image basename for markScanned tracking
 const cropOriginalNames = new Map<string, string>();
@@ -54,6 +57,40 @@ const cropOriginalNames = new Map<string, string>();
 // treated as "always skip" for backward compatibility.
 let scannedFilePath = '';
 const scannedFiles = new Map<string, number>();
+
+// ── Session persistence for restart ──────────────────────────────────────────
+interface SessionData {
+  sport: { id: string; name: string };
+  year: { id: string; name: string };
+  brand: { id: string; name: string };
+  set: { id: string; name: string };
+  variantType: { id: string; name: string };
+  variantName?: { id: string; name: string };
+  category: { id: string; name: string };
+}
+
+export function writeSession(inputDir: string, setData: SetInfo): void {
+  const sessionPath = path.join(inputDir, 'session.json');
+  const data: SessionData = {
+    sport: { id: setData.sport.id, name: setData.sport.name },
+    year: { id: setData.year.id, name: setData.year.name },
+    brand: { id: setData.brand.id, name: setData.brand.name },
+    set: { id: setData.set.id, name: setData.set.name },
+    variantType: { id: setData.variantType.id, name: setData.variantType.name },
+    variantName: setData.variantName ? { id: setData.variantName.id, name: setData.variantName.name } : undefined,
+    category: { id: setData.category.id, name: setData.category.name },
+  };
+  fs.writeFileSync(sessionPath, JSON.stringify(data, null, 2));
+}
+
+export function loadSession(inputDir: string): SessionData | null {
+  const sessionPath = path.join(inputDir, 'session.json');
+  try {
+    return JSON.parse(fs.readFileSync(sessionPath, 'utf-8')) as SessionData;
+  } catch {
+    return null;
+  }
+}
 
 function loadScannedFiles(inputDir: string): void {
   scannedFilePath = path.join(inputDir, 'scanned.txt');
@@ -175,11 +212,24 @@ interface CardProcessedState {
 }
 
 /** Phase 1: Automated card identification — runs on cardProcessorQueue (concurrency 3). */
-const buildCardState = async (front: string, back: string, setData: SetInfo, args: ParsedArgs, poolPriors?: PoolPriors): Promise<CardProcessedState> => {
+const buildCardState = async (
+  front: string,
+  back: string,
+  setData: SetInfo,
+  args: ParsedArgs,
+  poolPriors?: PoolPriors,
+  originalFront?: string,
+  originalBack?: string,
+): Promise<CardProcessedState> => {
   const { update, finish, error } = showSpinner(`singles-preprocess-${front}`, `Pre-Processing ${path.basename(front)}/${path.basename(back)}`);
   try {
-    update(`Fixing orientation`);
-    await orientAndClassifyCards([front, back]);
+    // Priors mean the watcher's per-image intake already rotated the images
+    // (remote /process or local classify). Re-running the local EasyOCR
+    // orientation pass here would be redundant.
+    if (!poolPriors) {
+      update(`Fixing orientation`);
+      await orientAndClassifyCards([front, back]);
+    }
 
     update(`Getting image recognition data`);
     const imageDefaults = await imageRecognition(front, back, setData, poolPriors);
@@ -188,8 +238,16 @@ const buildCardState = async (front: string, back: string, setData: SetInfo, arg
     const autoResult = await autoSelectCard(setData, imageDefaults);
 
     update(`Getting default pricing`);
-    const currentPrices = autoResult.productVariant?.prices ?? setData.category?.metadata?.prices ?? [];
+    const variantPrices = autoResult.productVariant?.prices;
+    const catPrices = setData.category?.metadata?.prices;
+    debug(`[pricing] variant prices (${variantPrices?.length ?? 'none'}):`, JSON.stringify(variantPrices?.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id })) ?? null));
+    debug(`[pricing] category metadata prices (${catPrices?.length ?? 'none'}):`, JSON.stringify(catPrices?.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id })) ?? null));
+    // Use variant prices only if they have usable region_ids, otherwise fall back to category metadata
+    const hasUsableVariantPrices = variantPrices && variantPrices.length > 1 && variantPrices.some((p: MoneyAmount) => p.region_id);
+    const currentPrices = hasUsableVariantPrices ? variantPrices : catPrices ?? [];
+    debug(`[pricing] chosen currentPrices (${currentPrices.length}):`, JSON.stringify(currentPrices.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id }))));
     const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
+    debug(`[pricing] getDefaultPricing result:`, JSON.stringify(pricingResult.display));
 
     const features = autoResult.productVariant?.metadata?.features
       ?? autoResult.product?.metadata?.features
@@ -219,9 +277,12 @@ const buildCardState = async (front: string, back: string, setData: SetInfo, arg
       details: { thickness: String(thickness), features: Array.isArray(features) ? features : [features] },
       matchedProduct: autoResult.product,
       matchedVariant: autoResult.productVariant,
+      availableVariants: autoResult.availableVariants,
       matchConfidence: autoResult.confidence,
       frontPath: front,
       backPath: back,
+      originalFrontPath: originalFront,
+      originalBackPath: originalBack,
       sidesSwapped: false,
       queuedCount: 0,
     };
@@ -240,6 +301,16 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
 
   menuState.queuedCount = cardProcessorQueue.length;
 
+  // Re-fetch quantity from Medusa so we have the latest value (Phase 1 fetch may be stale)
+  if (menuState.matchedVariant) {
+    try {
+      menuState.quantity = await getInventoryQuantity(menuState.matchedVariant);
+    } catch {
+      // best-effort — keep Phase 1 value
+    }
+  }
+  if (menuState.quantity === 0) menuState.quantity = 1;
+
   const reviewed = await showReviewMenu(menuState, {
     onPrice: async () => {
       const cardMetadata = {
@@ -255,18 +326,26 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
         args['skipSafetyCheck'],
         args['allBase'],
         cardMetadata,
+        true,
       );
       const newPricingResult = await getDefaultPricing(prices, false);
       return { prices, display: newPricingResult.display };
     },
     onCrop: async (side) => {
-      const targetPath = side === 'front' ? menuState.frontPath : menuState.backPath;
+      // Always crop from the pre-crop original when we have one. Repeatedly
+      // cropping the already-cropped intake output degrades the result, so
+      // originalFrontPath/originalBackPath is the source of truth here and
+      // is *not* overwritten after a re-crop — a second re-crop also starts
+      // from the original.
+      const originalPath = side === 'front' ? menuState.originalFrontPath : menuState.originalBackPath;
+      const currentPath = side === 'front' ? menuState.frontPath : menuState.backPath;
+      const sourcePath = originalPath ?? currentPath;
       const { cropImage } = await import('../image-processing/imageProcessor.js');
-      const cropDir = path.resolve(path.dirname(front), 'crop');
+      const cropDir = cropOutputDir || path.resolve(path.dirname(front), 'crop');
       fs.mkdirSync(cropDir, { recursive: true });
       const reCroppedPath = path.join(cropDir, `recrop-${Date.now()}.tmp.jpg`);
-      await cropImage(targetPath, null, cropDir, reCroppedPath, false);
-      cropOriginalNames.set(path.basename(reCroppedPath), path.basename(targetPath));
+      await cropImage(sourcePath, null, cropDir, reCroppedPath, false);
+      cropOriginalNames.set(path.basename(reCroppedPath), path.basename(sourcePath));
       if (side === 'front') {
         menuState.frontPath = reCroppedPath;
       } else {
@@ -300,9 +379,29 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
       } catch {
         // best-effort
       }
-      const currentPrices = productVariant.prices ?? setData.category?.metadata?.prices ?? [];
+      const manualVariantPrices = productVariant.prices;
+      const hasUsableManualPrices = manualVariantPrices && manualVariantPrices.length > 1 && manualVariantPrices.some((p: MoneyAmount) => p.region_id);
+      const currentPrices = hasUsableManualPrices ? manualVariantPrices : setData.category?.metadata?.prices ?? [];
+      debug(`[pricing:manual] variant prices (${manualVariantPrices?.length ?? 'none'}):`, JSON.stringify(manualVariantPrices?.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id })) ?? null));
+      debug(`[pricing:manual] chosen currentPrices (${currentPrices.length}):`, JSON.stringify(currentPrices.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id }))));
       const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
       return { product, variant: productVariant, quantity, prices: pricingResult.prices, priceDisplay: pricingResult.display };
+    },
+    onVariantSelect: async () => {
+      if (!menuState.matchedProduct) return null;
+      const productVariant = await pickVariant(menuState.matchedProduct);
+      let quantity = 0;
+      try {
+        quantity = await getInventoryQuantity(productVariant);
+      } catch {
+        // best-effort
+      }
+      const variantPrices = productVariant.prices;
+      const hasUsableVariantPrices = variantPrices && variantPrices.length > 1 && variantPrices.some((p: MoneyAmount) => p.region_id);
+      const currentPrices = hasUsableVariantPrices ? variantPrices : setData.category?.metadata?.prices ?? [];
+      debug(`[pricing:variant] variant prices (${variantPrices?.length ?? 'none'}):`, JSON.stringify(variantPrices?.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id })) ?? null));
+      const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
+      return { variant: productVariant, quantity, prices: pricingResult.prices, priceDisplay: pricingResult.display };
     },
   });
 
@@ -327,17 +426,6 @@ const finalizeCard = async (reviewed: ReviewMenuState, setData: SetInfo): Promis
   if (!productVariant.metadata) productVariant.metadata = {};
   productVariant.metadata.thickness = reviewed.details.thickness;
   productVariant.metadata.features = reviewed.details.features;
-
-  // Duplicate — increment by 1
-  const currentQty = await getInventoryQuantity(productVariant);
-  if (currentQty > 0) {
-    const newQty = currentQty + 1;
-    const inventoryItem = await getInventory(productVariant);
-    await updateInventory(inventoryItem, newQty);
-    debug(`Duplicate: ${productVariant.product!.title} — quantity ${currentQty} → ${newQty}`);
-    markScanned(reviewed.frontPath, reviewed.backPath);
-    return;
-  }
 
   // Prepare and upload images
   const images: ProductImage[] = [];
@@ -1036,6 +1124,9 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     // Load previously scanned files to skip on restart
     if (inputDirectory) {
       loadScannedFiles(inputDirectory);
+      if (args['watch']) {
+        writeSession(inputDirectory, setData);
+      }
       const beforeCount = files.length;
       files = files.filter((f) => !isFileScanned(f));
       const skipped = beforeCount - files.length;
@@ -1093,14 +1184,16 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
     if (args['watch'] && inputDirectory && !hasQueueError) {
       const { watchWithSmartMatching } = await import('../utils/watchDirectory.js');
       const { extractSingleCardInfo } = await import('../image-processing/card-extractor.js');
-      const { extractTextFromImage } = await import('../image-processing/ocr-extractor.js');
       const { orientAndClassifyCards: orientSingle } = await import('../image-processing/card-cropper-wrapper.js');
       const { cropImage } = await import('../image-processing/imageProcessor.js');
+      const { remoteProcess, isRemoteServiceEnabled } = await import('../image-processing/remote-image-service.js');
+      const useRemote = isRemoteServiceEnabled();
+      if (useRemote) debug(`IMAGE_SERVICE_URL set — delegating orient+classify (and crop fallback) to remote service`);
       // Don't mark initial files as "known" — let the watcher process them
       const knownFiles = new Set<string>();
 
       // Set up early cropping: crop images immediately on detection before OCR
-      const cropOutputDir = path.resolve(inputDirectory, 'crop');
+      cropOutputDir = path.join(os.tmpdir(), `cardlister-crop-${Date.now()}`);
       fs.mkdirSync(cropOutputDir, { recursive: true });
       watchModeCropEnabled = true;
 
@@ -1117,6 +1210,22 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         autoCrop: async (imagePath: string) => {
           const croppedPath = path.join(cropOutputDir, path.basename(imagePath));
 
+          if (useRemote) {
+            // Remote mode: the server does the heavy cropping (SAM/Haiku/PIL).
+            // We only run CardCropper.rotate locally because the Swift binary
+            // can't run on Cloud Run. Its output is sent as `precropped` to
+            // /process; if it fails or isn't plausible the server falls back
+            // to its own cascade.
+            try {
+              await $`./CardCropper.rotate ${imagePath} ${croppedPath}`.quiet();
+            } catch {
+              return null; // no precropped candidate — classifyAndExtract sends original only
+            }
+            if (!fs.existsSync(croppedPath)) return null;
+            cropOriginalNames.set(path.basename(croppedPath), path.basename(imagePath));
+            return croppedPath;
+          }
+
           try {
             // Non-interactive: auto-accept first successful crop, skip manual fallback
             await cropImage(imagePath, null, cropOutputDir, croppedPath, false, false, true);
@@ -1129,10 +1238,31 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
           return croppedPath;
         },
         autoOrient: async (imagePath: string) => {
+          // Remote /process handles orient+classify in one shot — skip local EasyOCR.
+          if (useRemote) return 0;
           const results = await orientSingle([imagePath]);
           return results.get(imagePath)?.text_detection_count ?? 0;
         },
-        classifyAndExtract: async (imagePath: string, textDetectionCount: number) => {
+        classifyAndExtract: async (imagePath: string, textDetectionCount: number, originalPath: string) => {
+          if (useRemote) {
+            // Send the original plus, when we have one, the CardCropper.rotate
+            // candidate as `precropped`. The server returns the final cropped
+            // + rotation-corrected bytes which we write to `imagePath` so the
+            // review/listing steps see the oriented image.
+            const precroppedPath = imagePath !== originalPath ? imagePath : undefined;
+            const result = await remoteProcess(originalPath, precroppedPath);
+            await fs.promises.writeFile(imagePath, result.rotatedBytes);
+            return {
+              path: imagePath,
+              side: result.side,
+              player: result.player,
+              team: result.team,
+              cardNumber: result.cardNumber,
+              textDetectionCount: result.textDetectionCount,
+              timestamp: Date.now(),
+            };
+          }
+
           // Extract card info + front/back classification via vision AI
           const extracted = await extractSingleCardInfo(imagePath);
 
@@ -1148,14 +1278,20 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         },
 
         // ── OCR fallback for pool matching ─────────────────────────────
-        ocrResolver: async (imagePath: string) => {
-          const result = await extractTextFromImage(imagePath);
-          if (result.error || !result.text) return null;
-          return {
-            text: result.text,
-            words: result.words ?? [],
-          };
-        },
+        // Skip in remote mode — /process already returns player/team/card#,
+        // so the pool's direct-field matching has what it needs without
+        // spawning the 5GB local EasyOCR worker.
+        ocrResolver: useRemote
+          ? undefined
+          : async (imagePath: string) => {
+              const { extractTextFromImage } = await import('../image-processing/ocr-extractor.js');
+              const result = await extractTextFromImage(imagePath);
+              if (result.error || !result.text) return null;
+              return {
+                text: result.text,
+                words: result.words ?? [],
+              };
+            },
 
         // ── Non-interactive review callbacks ─────────────────────────────
         // All user interaction now happens in the review menu after pair matching.
@@ -1236,7 +1372,15 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
             // user review.
             cardProcessorQueue.push(async () => {
               try {
-                const state = await buildCardState(front, back, setData, args, priors);
+                const state = await buildCardState(
+                  front,
+                  back,
+                  setData,
+                  args,
+                  priors,
+                  match.front.originalPath,
+                  match.back.originalPath,
+                );
                 // Detach review+upload so the processor slot is freed.
                 // resolve/reject are captured by the closure and called when
                 // the full chain completes.
@@ -1323,6 +1467,12 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       // Always stop the watcher
       watcher.stop();
 
+      // Clean up temporary crop directory
+      if (cropOutputDir) {
+        try { fs.rmSync(cropOutputDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+        cropOutputDir = '';
+      }
+
       // Drain any jobs that were added by the watcher
       if (allJobPromises.length > 0 && !hasQueueError) {
         log(chalk.yellow('Completing... waiting for remaining cards to finish processing.'));
@@ -1360,7 +1510,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       if (args['select-bulk-cards']) {
         log('select-bulk-cards is not yet implemented');
       }
-      if (!args.countCardsFirst && args['price'] === undefined) {
+      if (!args.countCardsFirst && args['price'] === undefined && !args['watch']) {
         const addBulk = args.bulk || (await ask('Add Bulk Listings?', listings.length === 0));
         if (addBulk) {
           debug('Processing bulk listings');

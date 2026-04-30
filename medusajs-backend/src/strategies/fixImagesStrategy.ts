@@ -51,6 +51,15 @@ class FixImageStrategy extends AbstractBatchJobStrategy {
   }
 
   async preProcessBatchJob(batchJobId: string): Promise<void> {
+    const preCheckJob = await this.batchJobService_.retrieve(batchJobId);
+    if (!preCheckJob.context?.category_id) {
+      this.logger.warn(
+        `fix-images preProcessBatchJob: refusing ${batchJobId} — no category_id in context`,
+      );
+      await this.batchJobService_.setFailed(batchJobId, 'Missing category_id in context');
+      return;
+    }
+
     try {
       return await this.atomicPhase_(async (transactionManager) => {
         const batchJob = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchJobId);
@@ -75,12 +84,21 @@ class FixImageStrategy extends AbstractBatchJobStrategy {
         });
       });
     } catch (e) {
-      this.logger.log('preProcessBatchJob::error', e);
+      this.logger.error(`preProcessBatchJob::error ${e}`);
       throw e;
     }
   }
 
   async processJob(batchJobId: string): Promise<void> {
+    const preCheckJob = await this.batchJobService_.retrieve(batchJobId);
+    if (!preCheckJob.context?.category_id) {
+      this.logger.warn(
+        `fix-images processJob: refusing ${batchJobId} — no category_id in context`,
+      );
+      await this.batchJobService_.setFailed(batchJobId, 'Missing category_id in context');
+      return;
+    }
+
     return await this.atomicPhase_(async (transactionManager) => {
       let categoryId: string;
       // return await this.atomicPhase_(async (transactionManager) => {

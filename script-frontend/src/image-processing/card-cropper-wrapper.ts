@@ -2,9 +2,15 @@ import { $ } from 'zx';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { orientImages, type OrientResult } from './ocr-extractor.js';
+import { getCardExtractorBackend } from './card-extractor.js';
+import { cropImagesWithSAMWorker } from './sam-cropper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Cache orient results from crop functions so the subsequent autoOrient step
+// can return them instantly instead of re-running EasyOCR on already-oriented images.
+const orientCache = new Map<string, OrientResult>();
 
 // Use the project venv's Python interpreter so all packages (transformers, cv2, etc.) are available
 const VENV_PYTHON = path.join(__dirname, '..', '..', 'venv', 'bin', 'python3');
@@ -22,6 +28,10 @@ type CardCropResult = {
 };
 
 /**
+ * @deprecated UNUSED — superseded by the preprocess service `/crop` endpoint
+ * (`cropAlternativesRemote` in remote-image-service.ts). Kept temporarily
+ * while the new path is being validated; delete once the rollout sticks.
+ *
  * Calls the Python card_cropper script with a list of image paths, and returns the array of output image paths.
  * @param imagePaths Array of input image file paths
  * @returns Promise<string[]> Array of output (cropped) image paths
@@ -45,6 +55,11 @@ export async function cropCardsWithPython(imagePaths: string[], outputDir: strin
 }
 
 /**
+ * @deprecated UNUSED — SAM cropping now runs on the preprocess service via
+ * `/crop` (`cropAlternativesRemote` in remote-image-service.ts). Kept
+ * temporarily while the new path is being validated; delete once the
+ * rollout sticks.
+ *
  * Crop cards using SAM2 (primary) with Ollama vision as per-image fallback.
  *
  * SAM2 uses semantic segmentation, making it robust to black-edged cards on black
@@ -65,11 +80,12 @@ export async function cropCardsWithSAM(
   const absImagePaths = imagePaths.map(p => path.isAbsolute(p) ? p : path.resolve(p));
   const absOutputDir = path.isAbsolute(outputDir) ? outputDir : path.resolve(outputDir);
 
-  const samScript = path.join(__dirname, 'card_cropper_sam.py');
   const ollamaScript = path.join(__dirname, 'card_cropper_ollama.py');
 
-  async function runScript(scriptPath: string, paths: string[]): Promise<CardCropResult[]> {
-    const proc = $`${VENV_PYTHON} ${scriptPath} ${absOutputDir} ${paths}`;
+  // Ollama fallback still uses the one-shot spawn pattern (Phase 4 will port
+  // this to TypeScript and remove the subprocess).
+  async function runOllamaFallback(paths: string[]): Promise<CardCropResult[]> {
+    const proc = $`${VENV_PYTHON} ${ollamaScript} ${absOutputDir} ${paths}`;
     proc.quiet();
     const { stdout } = await proc;
     return JSON.parse(stdout.trim()) as CardCropResult[];
@@ -77,12 +93,12 @@ export async function cropCardsWithSAM(
 
   let results: CardCropResult[];
 
-  // --- Primary: SAM ---
+  // --- Primary: persistent SAM worker ---
   try {
-    results = await runScript(samScript, absImagePaths);
+    results = await cropImagesWithSAMWorker(absImagePaths, absOutputDir);
   } catch (samErr: any) {
     try {
-      results = await runScript(ollamaScript, absImagePaths);
+      results = await runOllamaFallback(absImagePaths);
     } catch (ollamaErr: any) {
       throw new Error(
         `Both SAM and Ollama card croppers failed.\n` +
@@ -104,11 +120,11 @@ export async function cropCardsWithSAM(
   if (failedIndices.length > 0) {
     const failedPaths = failedIndices.map(i => absImagePaths[i]);
     try {
-      const ollamaResults = await runScript(ollamaScript, failedPaths);
+      const ollamaResults = await runOllamaFallback(failedPaths);
       for (let j = 0; j < failedIndices.length; j++) {
         results[failedIndices[j]] = ollamaResults[j];
       }
-    } catch (e) {
+    } catch {
       // Leave SAM failures in place; extractCroppedPaths will skip them
     }
   }
@@ -119,6 +135,11 @@ export async function cropCardsWithSAM(
 }
 
 /**
+ * @deprecated UNUSED — Ollama bbox cropping now runs on the preprocess
+ * service via `/crop` (`cropAlternativesRemote` in remote-image-service.ts).
+ * Kept temporarily while the new path is being validated; delete once the
+ * rollout sticks.
+ *
  * Crop cards using Ollama vision model directly (no SAM involvement).
  *
  * Sends each image to the local Ollama llama3.2-vision model, which returns a
@@ -162,9 +183,16 @@ export async function cropCardsWithOllama(
 async function orientCroppedCards(croppedPaths: string[]): Promise<void> {
   if (croppedPaths.length === 0) return;
   if (process.env.SKIP_ORIENTATION_CORRECTION === '1') return;
+  // In haiku mode, orientation is handled by the Haiku extraction call — skip EasyOCR
+  if (getCardExtractorBackend() === 'haiku') return;
 
   try {
-    await orientImages(croppedPaths);
+    const results = await orientImages(croppedPaths);
+    // Cache results so the subsequent autoOrient step can skip re-running EasyOCR
+    for (let i = 0; i < results.length && i < croppedPaths.length; i++) {
+      const absPath = path.isAbsolute(croppedPaths[i]) ? croppedPaths[i] : path.resolve(croppedPaths[i]);
+      orientCache.set(absPath, results[i]);
+    }
   } catch {
     // Orientation correction is best-effort — don't fail the whole crop pipeline
   }
@@ -182,17 +210,35 @@ export async function orientAndClassifyCards(imagePaths: string[]): Promise<Map<
   const resultMap = new Map<string, OrientResult>();
   if (imagePaths.length === 0) return resultMap;
   if (process.env.SKIP_ORIENTATION_CORRECTION === '1') return resultMap;
+  // In haiku mode, orientation is handled by the Haiku extraction call — skip EasyOCR
+  if (getCardExtractorBackend() === 'haiku') return resultMap;
 
-  try {
-    const absPaths = imagePaths.map(p => path.isAbsolute(p) ? p : path.resolve(p));
-    const results = await orientImages(absPaths);
-    // Map results back to the original paths the caller passed in (not the absolute paths
-    // sent to Python) so lookups work regardless of relative vs absolute input.
-    for (let i = 0; i < results.length && i < imagePaths.length; i++) {
-      resultMap.set(imagePaths[i], results[i]);
+  const absPaths = imagePaths.map(p => path.isAbsolute(p) ? p : path.resolve(p));
+
+  // Check cache first — images already oriented during crop don't need re-processing
+  const uncachedPaths: string[] = [];
+  const uncachedOrigPaths: string[] = [];
+  for (let i = 0; i < absPaths.length; i++) {
+    const cached = orientCache.get(absPaths[i]);
+    if (cached) {
+      resultMap.set(imagePaths[i], cached);
+      orientCache.delete(absPaths[i]);
+    } else {
+      uncachedPaths.push(absPaths[i]);
+      uncachedOrigPaths.push(imagePaths[i]);
     }
-  } catch {
-    // Best-effort — return empty map, caller falls back to original order
+  }
+
+  // Only call Python for images not already in the cache
+  if (uncachedPaths.length > 0) {
+    try {
+      const results = await orientImages(uncachedPaths);
+      for (let i = 0; i < results.length && i < uncachedOrigPaths.length; i++) {
+        resultMap.set(uncachedOrigPaths[i], results[i]);
+      }
+    } catch {
+      // Best-effort — return what we have from cache, caller falls back for the rest
+    }
   }
 
   return resultMap;

@@ -251,6 +251,24 @@ async function getTextFromImage(front: string, back: string | undefined = undefi
   }
 
   if (setData.products && setData.products.length > 0) {
+    // Fast path: when poolPriors is provided, the watcher's per-image intake
+    // already ran extraction (local or remote /process) and the results are
+    // carried in the priors. Skip the local OCR/Haiku/Ollama pass and match
+    // against the catalog using priors alone.
+    if (poolPriors) {
+      update('Matching product from intake extraction');
+      const matchResult = matchProductFromCardInfo(
+        { player: null, team: null, card_number: null },
+        setData.products,
+        poolPriors,
+      );
+      const result = applyMatchResult(matchResult, defaults, finish);
+      if (result) return result;
+
+      finish('No product match from priors');
+      return defaults;
+    }
+
     if (extractorMode === 'ocr') {
       // EasyOCR + fuzzy matching (free, lightweight)
       try {

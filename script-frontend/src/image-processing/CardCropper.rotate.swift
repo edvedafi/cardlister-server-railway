@@ -34,32 +34,30 @@ let ciImage = CIImage(cgImage: image!.cgImage(forProposedRect: nil, context: nil
 
 // Step 3: Find the rectangular area
 let detector = CIDetector(ofType: CIDetectorTypeRectangle, context: nil, options: [CIDetectorAccuracy: CIDetectorAccuracyHigh])
-let features = detector?.features(in: ciImage)
-let feature = features?.first as! CIRectangleFeature
+let features = detector?.features(in: ciImage) ?? []
 
 // Step 4: Crop the image or just move it if we cannot crop it
-if ( features?.count == 0 ) {
+guard let feature = features.first as? CIRectangleFeature else {
     try! FileManager.default.copyItem(at: imageURL, to: outputURL)
-} else {
-     let perspectiveCorrection = CIFilter(name: "CIPerspectiveCorrection")!
-     perspectiveCorrection.setValue(ciImage, forKey: kCIInputImageKey)
-     perspectiveCorrection.setValue(CIVector(cgPoint: feature.topLeft), forKey: "inputTopLeft")
-     perspectiveCorrection.setValue(CIVector(cgPoint: feature.topRight), forKey: "inputTopRight")
-     perspectiveCorrection.setValue(CIVector(cgPoint: feature.bottomRight), forKey: "inputBottomRight")
-     perspectiveCorrection.setValue(CIVector(cgPoint: feature.bottomLeft), forKey: "inputBottomLeft")
-     let croppedImage = perspectiveCorrection.outputImage!
-
-    // Step 5: Create a new NSImage from the cropped CIImage
-    let newImage = NSImage(size: NSSize(width: croppedImage.extent.width, height: croppedImage.extent.height))
-    let rep = NSCIImageRep(ciImage: croppedImage)
-    newImage.addRepresentation(rep)
-
-    // Step 6: Save the new image
-    let imageData = newImage.tiffRepresentation!
-    let bitmap = NSBitmapImageRep(data: imageData)!
-    let pngData = bitmap.representation(using: NSBitmapImageRep.FileType.jpeg, properties: [:])!
-    try! pngData.write(to: outputURL)
+    exit(0)
 }
+
+let perspectiveCorrection = CIFilter(name: "CIPerspectiveCorrection")!
+perspectiveCorrection.setValue(ciImage, forKey: kCIInputImageKey)
+perspectiveCorrection.setValue(CIVector(cgPoint: feature.topLeft), forKey: "inputTopLeft")
+perspectiveCorrection.setValue(CIVector(cgPoint: feature.topRight), forKey: "inputTopRight")
+perspectiveCorrection.setValue(CIVector(cgPoint: feature.bottomRight), forKey: "inputBottomRight")
+perspectiveCorrection.setValue(CIVector(cgPoint: feature.bottomLeft), forKey: "inputBottomLeft")
+let croppedImage = perspectiveCorrection.outputImage!
+
+let newImage = NSImage(size: NSSize(width: croppedImage.extent.width, height: croppedImage.extent.height))
+let rep = NSCIImageRep(ciImage: croppedImage)
+newImage.addRepresentation(rep)
+
+let imageData = newImage.tiffRepresentation!
+let bitmap = NSBitmapImageRep(data: imageData)!
+let pngData = bitmap.representation(using: NSBitmapImageRep.FileType.jpeg, properties: [:])!
+try! pngData.write(to: outputURL)
 
 
 

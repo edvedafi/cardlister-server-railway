@@ -40,6 +40,13 @@ abstract class AbstractListingStrategy<
   }
 
   async preProcessBatchJob(batchJobId: string): Promise<void> {
+    const preCheckJob = await this.batchJobService_.retrieve(batchJobId);
+    if (!preCheckJob.context?.category_id) {
+      this.log(`preProcessBatchJob: refusing ${batchJobId} (${preCheckJob.type}) — no category_id in context`);
+      await this.batchJobService_.setFailed(batchJobId, 'Missing category_id in context');
+      return;
+    }
+
     try {
       return await this.atomicPhase_(async (transactionManager) => {
         const batchJob = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchJobId);
@@ -70,6 +77,13 @@ abstract class AbstractListingStrategy<
   }
 
   async processJob(batchJobId: string): Promise<void> {
+    const preCheckJob = await this.batchJobService_.retrieve(batchJobId);
+    if (!preCheckJob.context?.category_id) {
+      this.log(`processJob: refusing ${batchJobId} (${preCheckJob.type}) — no category_id in context`);
+      await this.batchJobService_.setFailed(batchJobId, 'Missing category_id in context');
+      return;
+    }
+
     return await this.atomicPhase_(async (transactionManager) => {
       let categoryId: string;
       try {
@@ -124,16 +138,19 @@ abstract class AbstractListingStrategy<
           this.finishProgress(`${result.success} cards added; ${result.error} errors`);
         } catch (e) {
           this.progress(e.message, e);
+          const partialErrors =
+            result?.error?.map((msg) => ({
+              message: 'Error syncing products',
+              code: 'ERR',
+              err: msg,
+            })) ?? [];
           await this.batchJobService_.withTransaction(transactionManager).update(batchJobId, {
             result: {
-              advancement_count: result.success,
-              errors: result.error
-                ? result.error.map((e) => ({
-                    message: 'Error syncing products',
-                    code: 'ERR',
-                    err: e,
-                  }))
-                : [{ message: e.message, code: 'ERR', err: e }],
+              advancement_count: result?.success ?? 0,
+              errors: [
+                ...partialErrors,
+                { message: e?.message ?? String(e), code: 'ERR', err: e?.stack ?? String(e) },
+              ],
             },
           });
           throw e;

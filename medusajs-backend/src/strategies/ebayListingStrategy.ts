@@ -546,11 +546,15 @@ const createOfferForCard = (
 const booleanText = (val: string | boolean | unknown): [string] => [isYes(val) ? 'Yes' : 'No'];
 
 const displayOrNA = (testValue: string | boolean | unknown, displayValue: unknown = testValue): string[] => {
-  if (Array.isArray(displayValue) && displayValue.length > 0) {
-    return displayValue.map(titleCase).filter((v) => v.trim().length > 0);
-  } else {
-    return [testValue && !isNo(testValue.toString()) ? titleCase(displayValue.toString()) : 'N/A'];
+  if (Array.isArray(displayValue)) {
+    const cleaned = displayValue.map(titleCase).filter((v) => v.trim().length > 0);
+    return cleaned.length > 0 ? cleaned : ['N/A'];
   }
+  if (testValue && !isNo(testValue.toString())) {
+    const single = titleCase(displayValue.toString()).trim();
+    return single.length > 0 ? [single] : ['N/A'];
+  }
+  return ['N/A'];
 };
 
 export const displayYear = (year: string): string => (year.indexOf('-') > -1 ? year.split('-')[0] : year);

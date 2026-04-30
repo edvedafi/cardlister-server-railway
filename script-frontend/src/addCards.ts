@@ -9,8 +9,9 @@ import { onShutdown } from 'node-graceful-shutdown';
 import { findSet } from './card-data/setData';
 import { getFiles, getInputs } from './utils/inputs';
 import { parseArgs } from './utils/parseArgs';
+import { ask } from './utils/ask';
 import terminalImage from 'term-img';
-import { processSet, processPrice } from './card-data/listSet';
+import { processSet, processPrice, loadSession } from './card-data/listSet';
 import type { ProductCategory } from '@medusajs/client-types';
 import { getCategory, getAllLeafCategories, startSync, getProducts } from './utils/medusa';
 import type { SetInfo } from './models/setInfo';
@@ -25,7 +26,13 @@ $.verbose = false;
 const shutdown = async () => {
   const { shutdownOCR } = await import('./image-processing/ocr-extractor.js');
   const { shutdownCardExtractor } = await import('./image-processing/card-extractor.js');
-  await Promise.all([shutdownSportLots(), shutdownOCR(), shutdownCardExtractor()]);
+  const { shutdownSAMCropper } = await import('./image-processing/sam-cropper.js');
+  await Promise.all([
+    shutdownSportLots(),
+    shutdownOCR(),
+    shutdownCardExtractor(),
+    shutdownSAMCropper(),
+  ]);
 };
 
 onShutdown(shutdown);
@@ -49,6 +56,7 @@ try {
   const args = parseArgs(
     {
       boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x', 'w'],
+      default: { w: true },
       string: ['n', 'sl', 'p', 'e'],
       alias: {
         s: 'select-bulk-cards',
@@ -82,8 +90,8 @@ try {
       o: 'No Sync run after updating',
       p: 'Price Mode: Update pricing and quantity for cards in a set. Optional percentage reduction (e.g., -p 10 for 10% reduction, -p for 0% reduction)',
       x: 'Include cards with 0 inventory if they have stored images (only works with -p flag)',
-      e: 'Card extractor: ocr (default, free EasyOCR), ollama (local LLM), or haiku (Claude API). Example: --extractor=haiku',
-      w: 'Watch mode: keep running and watch for new card images in the input directory. Type c + Enter to complete.',
+      e: 'Card extractor: ocr (free EasyOCR), ollama (local LLM), or haiku (default, Claude API). Example: --extractor=ocr',
+      w: 'Watch mode (default on): keep running and watch for new card images in the input directory. Use --no-w to disable.',
     },
   );
 
@@ -94,7 +102,7 @@ try {
   }
 
   // Configure card extractor mode
-  const extractorArg = (args['extractor'] || args['e'] || 'ocr').toString().toLowerCase();
+  const extractorArg = (args['extractor'] || args['e'] || 'haiku').toString().toLowerCase();
   if (!['ocr', 'ollama', 'haiku'].includes(extractorArg)) {
     error(`Invalid extractor "${extractorArg}". Must be one of: ocr, ollama, haiku`);
     process.exit(1);
@@ -185,8 +193,29 @@ try {
       }
     }
   }
-  const setData = await findSet({ allowParent: args['inventory'] || args['price'] !== undefined, parentName: 'All' });
-  // log(setData);
+  let setData: SetInfo;
+  const session = input_directory ? loadSession(input_directory) : null;
+  if (session && args['watch']) {
+    const sessionLabel = session.variantName?.name || session.variantType.name;
+    const resume = await ask(`Resume previous session for "${sessionLabel}"?`, true, { isYN: true });
+    if (resume) {
+      const [sport, year, brand, set, variantType, category, products] = await Promise.all([
+        getCategory(session.sport.id),
+        getCategory(session.year.id),
+        getCategory(session.brand.id),
+        getCategory(session.set.id),
+        getCategory(session.variantType.id),
+        getCategory(session.category.id),
+        getProducts(session.category.id),
+      ]);
+      const variantName = session.variantName ? await getCategory(session.variantName.id) : undefined;
+      setData = { ...category, sport, year, brand, set, variantType, variantName, category, products } as SetInfo;
+    } else {
+      setData = await findSet({ allowParent: args['inventory'] || args['price'] !== undefined, parentName: 'All' });
+    }
+  } else {
+    setData = await findSet({ allowParent: args['inventory'] || args['price'] !== undefined, parentName: 'All' });
+  }
   
   // Handle parent selection in price mode - iterate through all children and sync in background
   let handledParentSync = false;

@@ -2,11 +2,13 @@ import type { MoneyAmount } from '@medusajs/client-types';
 import { ask } from '../utils/ask';
 import { getRegion } from '../utils/medusa';
 import { useSpinners } from '../utils/spinners';
+import { createLogger } from '../utils/logger';
 import 'zx/globals';
 import { isNo } from '../utils/data';
 import { spawn } from 'child_process';
 
 const { log } = useSpinners('Pricing', '#85BB65');
+const debug = createLogger('pricing');
 
 type CardSearchMetadata = {
   year?: string | number;
@@ -160,6 +162,7 @@ export async function getPricing(
   skipSafetyCheck = false,
   allBase = false,
   cardMetadata?: CardSearchMetadata,
+  forceEdit = false,
 ): Promise<MoneyAmount[]> {
   // Log which card we're pricing and copy search parameter to clipboard
   if (cardMetadata?.cardName) {
@@ -198,7 +201,7 @@ export async function getPricing(
     }
   };
   if (startingPrices && startingPrices.length > 1) {
-    if (!skipSafetyCheck) {
+    if (!skipSafetyCheck && !forceEdit) {
       log('Current Pricing:');
       const logPrice = async (region: string) => {
         log(`  ${region}: ${await currentPrice(region)}`);
@@ -212,7 +215,7 @@ export async function getPricing(
       }
     }
   } else {
-    if (await ask('Use common card pricing', true)) {
+    if (!forceEdit && await ask('Use common card pricing', true)) {
       return await getBasePricing();
     } else {
       startingPrices = await getBasePricing();
@@ -305,7 +308,7 @@ export async function getDefaultPricing(
   allBase = false,
 ): Promise<{ prices: MoneyAmount[]; display: { ebay: number; mcp: number; bsc: number; sportlots: number } }> {
   const basePrices = await getBasePricing();
-  const prices = (allBase || !currentPrices || currentPrices.length <= 1)
+  const prices = (allBase || !currentPrices || currentPrices.length === 0)
     ? basePrices
     : currentPrices;
 
@@ -314,20 +317,27 @@ export async function getDefaultPricing(
   const bscRegionId = await getRegion('BSC');
   const sportlotsRegionId = await getRegion('SportLots');
 
-  const getAmount = (regionId: string, fallback: number): number => {
+  const getAmount = (regionName: string, regionId: string, fallback: number): number => {
     const found = prices.find(p => p.region_id === regionId);
     const amount = found?.amount;
-    if (amount && typeof amount === 'number') return amount;
+    if (amount !== undefined && amount !== null) {
+      const parsed = typeof amount === 'string' ? parseInt(amount, 10) : amount;
+      if (typeof parsed === 'number' && !isNaN(parsed)) {
+        debug(`[pricing] ${regionName}: found amount=${parsed} for region_id=${regionId}`);
+        return parsed;
+      }
+    }
+    debug(`[pricing] ${regionName}: NO MATCH for region_id=${regionId}, using fallback=${fallback}. Available region_ids: ${prices.map(p => p.region_id).join(', ')}`);
     return fallback;
   };
 
   return {
     prices,
     display: {
-      ebay: getAmount(ebayRegionId, 99),
-      mcp: getAmount(mcpRegionId, 100),
-      bsc: getAmount(bscRegionId, 25),
-      sportlots: getAmount(sportlotsRegionId, 18),
+      ebay: getAmount('ebay', ebayRegionId, 99),
+      mcp: getAmount('MCP', mcpRegionId, 100),
+      bsc: getAmount('BSC', bscRegionId, 25),
+      sportlots: getAmount('SportLots', sportlotsRegionId, 18),
     },
   };
 }

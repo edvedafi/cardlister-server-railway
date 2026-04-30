@@ -16,10 +16,20 @@ After detecting the card's boundary:
 Requires:
     pip install transformers accelerate
 
-Usage (identical to card_cropper_yolo.py):
-    python3 card_cropper_sam.py <output_dir> <image1> [image2 ...]
+Two modes:
 
-Output: JSON array to stdout, all diagnostics to stderr.
+1) Persistent worker (default — no CLI args):
+   Newline-delimited JSON over stdin/stdout. The 375MB SAM model is loaded
+   once at startup and kept warm for the life of the process.
+     Request:  {"cmd": "crop", "paths": ["/abs/img1.jpg", ...], "output_dir": "..."}
+     Response: [{"success": true, "image_path": "...", "cards": [...]}, ...]
+     Special:  {"cmd": "ping"}  ->  {"status": "ok"}
+               {"cmd": "quit"}  ->  process exits
+
+2) Legacy CLI (one-shot, loads model per invocation):
+     python3 card_cropper_sam.py <output_dir> <image1> [image2 ...]
+
+Output: JSON to stdout, all diagnostics to stderr.
 
 SAM model (facebook/sam-vit-base, ~375MB) is downloaded to ~/.cache/huggingface/
 on first run and cached for subsequent runs.
@@ -42,12 +52,24 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
 
+# Force CPU-only execution. MPS/Metal interaction with IOGPUFamily has been
+# correlated with `ptep_get_ptd: invalid PV head` kernel panics on Apple Silicon,
+# so we disable MPS belt-and-suspenders even though SAM already runs on CPU.
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '0'
+os.environ['PYTORCH_MPS_DISABLE'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
 faulthandler.enable()
+
+# Capture real stdout/stderr before any heavy imports so the worker loop can
+# write responses without getting drowned in warnings from transformers/torch.
+_real_stdout = sys.stdout
+_real_stderr = sys.stderr
 
 
 def _emergency_exit(signum, frame):
     try:
-        sys.stdout.flush()
+        _real_stdout.flush()
     except Exception:
         pass
     os._exit(1)
@@ -101,27 +123,45 @@ def load_model():
 
     Uses CPU to avoid MPS float64 compatibility issues with some torch versions.
     SAM-vit-base inference on Apple Silicon CPU is typically 3-8 seconds per image.
+
+    All stdout/stderr is redirected to StringIO buffers during import and model
+    construction so any library chatter (transformers warnings, HF cache messages)
+    can't corrupt the JSON worker protocol.
     """
     global _model, _processor
     if _model is not None:
         return _model, _processor
 
-    import torch
-
-    import transformers
-    transformers.logging.set_verbosity_error()
-    from transformers import SamModel, SamProcessor
-
-    # Try to load from local cache first (avoids network check; works offline / cloud servers).
-    # Fall back to downloading if the cache is missing.
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    sys.stdout, sys.stderr = buf_out, buf_err
     try:
-        _processor = SamProcessor.from_pretrained(SAM_MODEL_ID, local_files_only=True)
-        _model = SamModel.from_pretrained(SAM_MODEL_ID, local_files_only=True)
-    except Exception:
-        _processor = SamProcessor.from_pretrained(SAM_MODEL_ID)
-        _model = SamModel.from_pretrained(SAM_MODEL_ID)
+        import torch
+        # Hard-disable MPS so transformers/accelerate can't auto-route to Metal.
+        torch.backends.mps.is_available = lambda: False
+        torch.backends.mps.is_built = lambda: False
+        # Reduce PyTorch memory footprint: disable gradients and limit thread count
+        torch.set_grad_enabled(False)
+        torch.set_num_threads(1)
 
-    _model.eval()
+        import transformers
+        transformers.logging.set_verbosity_error()
+        from transformers import SamModel, SamProcessor
+
+        # Try local cache first (offline-friendly); fall back to download.
+        try:
+            _processor = SamProcessor.from_pretrained(SAM_MODEL_ID, local_files_only=True)
+            _model = SamModel.from_pretrained(SAM_MODEL_ID, local_files_only=True)
+        except Exception:
+            _processor = SamProcessor.from_pretrained(SAM_MODEL_ID)
+            _model = SamModel.from_pretrained(SAM_MODEL_ID)
+
+        _model.eval()
+    finally:
+        sys.stdout = _real_stdout
+        sys.stderr = _real_stderr
+        buf_out.close()
+        buf_err.close()
+
     # Keep on CPU — avoids MPS float64 incompatibility and is fast enough for inference
     return _model, _processor
 
@@ -287,133 +327,16 @@ def pick_card_mask(mask_candidates, pil_size):
     return box, best['score']
 
 
-# ── Rotation + crop ──────────────────────────────────────────────────────────
+# ── Rotation + crop (shared utilities) ───────────────────────────────────────
 
-def compute_rotation_angle(pts):
-    """Compute the angle to rotate the image to align the card with the axes.
-
-    OpenCV 4.x minAreaRect returns angle in (0, 90].  Convention:
-      - If rect_w > rect_h → long side is "width" → for portrait card, rotate -(90-angle)
-      - If rect_w <= rect_h → short side is "width" → rotate -angle
-    """
-    import cv2
-    import numpy as np
-
-    pts32 = np.array(pts, dtype=np.float32)
-    rect = cv2.minAreaRect(pts32)
-    rw, rh = rect[1]
-    angle = rect[2]
-
-    if rw == 0 or rh == 0:
-        return 0.0, rect
-
-    if rw > rh:
-        rotation_angle = -(90.0 - angle)
-    else:
-        rotation_angle = -angle
-
-    return rotation_angle, rect
+from card_cropper_utils import compute_rotation_angle, rotate_and_crop as _rotate_and_crop, contour_fallback  # noqa: E402
 
 
 def rotate_and_crop(image, pts, scale_ratio: float):
-    """
-    1. Scale pts from SAM's resized image back to the full-resolution image.
-    2. Rotate the full-resolution image to align card edges with axes.
-    3. Crop the axis-aligned bounding box of the card.
-
-    Returns (cropped_image, final_pts_in_rotated_frame).
-    """
-    import cv2
+    """Scale pts from SAM's resized image back to full-resolution, then rotate + crop."""
     import numpy as np
-
-    # Scale corner points back to original image coordinates
-    orig_pts = pts / scale_ratio
-
-    rotation_angle, _rect = compute_rotation_angle(orig_pts)
-
-    img_h, img_w = image.shape[:2]
-    cx, cy = img_w / 2.0, img_h / 2.0
-
-    if abs(rotation_angle) > 0.5:
-        M = cv2.getRotationMatrix2D((cx, cy), rotation_angle, 1.0)
-
-        # Expand canvas to avoid clipping corners after rotation
-        cos_a = abs(M[0, 0])
-        sin_a = abs(M[0, 1])
-        new_w = int(img_h * sin_a + img_w * cos_a)
-        new_h = int(img_h * cos_a + img_w * sin_a)
-        M[0, 2] += (new_w - img_w) / 2.0
-        M[1, 2] += (new_h - img_h) / 2.0
-
-        rotated = cv2.warpAffine(
-            image, M, (new_w, new_h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_REPLICATE,
-        )
-
-        pts_h = np.hstack([orig_pts, np.ones((len(orig_pts), 1), dtype=np.float32)])
-        rotated_pts = (M @ pts_h.T).T
-    else:
-        rotated = image
-        rotated_pts = orig_pts
-
-    PADDING = 5  # pixels to include beyond the detected card edge
-    xs, ys = rotated_pts[:, 0], rotated_pts[:, 1]
-    x1 = int(max(0, xs.min() - PADDING))
-    y1 = int(max(0, ys.min() - PADDING))
-    x2 = int(min(rotated.shape[1], xs.max() + PADDING))
-    y2 = int(min(rotated.shape[0], ys.max() + PADDING))
-
-    return rotated[y1:y2, x1:x2], rotated_pts
-
-
-# ── Contour fallback ─────────────────────────────────────────────────────────
-
-def contour_fallback(image):
-    """Fall back to classical edge detection to locate 4 card corners.
-
-    Replicates the best strategy from card_cropper_yolo.py: CLAHE + Canny +
-    morphological closing + minAreaRect on the largest qualifying contour.
-
-    Returns numpy array (4, 2) in image coordinates, or None.
-    """
-    import cv2
-    import numpy as np
-
-    img_h, img_w = image.shape[:2]
-    img_area = img_h * img_w
-    min_area = 0.04 * img_area
-    border_tol = 3
-
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    blur = cv2.GaussianBlur(enhanced, (5, 5), 0)
-    edged = cv2.Canny(blur, 50, 150)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-    closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
-
-    for binary in [
-        closed,
-        cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2),
-    ]:
-        contours, _ = cv2.findContours(binary.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        large = [c for c in contours if cv2.contourArea(c) > min_area]
-
-        def is_border(cnt):
-            x, y, w, h = cv2.boundingRect(cnt)
-            return (x < border_tol and y < border_tol
-                    and abs(x + w - img_w) < border_tol
-                    and abs(y + h - img_h) < border_tol)
-
-        large = [c for c in large if not is_border(c)]
-        if large:
-            c = max(large, key=cv2.contourArea)
-            rect = cv2.minAreaRect(c)
-            box = cv2.boxPoints(rect)
-            return box.astype(np.float32)
-
-    return None
+    orig_pts = (np.array(pts, dtype=np.float32) / scale_ratio)
+    return _rotate_and_crop(image, orig_pts, padding=5)
 
 
 # ── Per-image processing ──────────────────────────────────────────────────────
@@ -483,9 +406,91 @@ def process_image(img_path: str, output_dir: str, model, processor) -> dict:
         }
 
 
+# ── Persistent worker loop ───────────────────────────────────────────────────
+
+def _run_crop_request(paths, output_dir, model, processor):
+    """Process a batch of images, redirecting any library chatter away from stdout.
+
+    Returns the list of per-image result dicts. Individual image failures are
+    captured inside process_image() and returned as {success: False, error: ...},
+    so one bad image never crashes the worker.
+    """
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    sys.stdout, sys.stderr = buf_out, buf_err
+    try:
+        return [process_image(p, output_dir, model, processor) for p in paths]
+    finally:
+        sys.stdout = _real_stdout
+        sys.stderr = _real_stderr
+        buf_out.close()
+        buf_err.close()
+
+
+def run_worker():
+    """Read JSON requests from stdin, write JSON responses to stdout (one per line).
+
+    The SAM model is loaded once at startup and kept warm for the life of the
+    process — no more 375MB reload per call.
+    """
+    # Eagerly load the model so the first crop request is fast
+    model, processor = load_model()
+
+    # Signal readiness to the parent process
+    _real_stdout.write(json.dumps({"status": "ready"}) + "\n")
+    _real_stdout.flush()
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            _real_stdout.write(json.dumps({"error": "Invalid JSON"}) + "\n")
+            _real_stdout.flush()
+            continue
+
+        cmd = request.get("cmd")
+        if cmd == "ping":
+            _real_stdout.write(json.dumps({"status": "ok"}) + "\n")
+            _real_stdout.flush()
+            continue
+        if cmd == "quit":
+            break
+
+        # Default / "crop" command
+        paths = request.get("paths", [])
+        output_dir = request.get("output_dir", "input/tmp")
+
+        if not paths:
+            _real_stdout.write(json.dumps([]) + "\n")
+            _real_stdout.flush()
+            continue
+
+        try:
+            results = _run_crop_request(paths, output_dir, model, processor)
+        except Exception as e:
+            # Catastrophic failure (shouldn't happen since process_image catches
+            # its own exceptions) — emit a per-image error so the parent can
+            # still pair responses with requests.
+            results = [
+                {"success": False, "image_path": p, "error": f"worker error: {e}"}
+                for p in paths
+            ]
+
+        _real_stdout.write(json.dumps(results) + "\n")
+        _real_stdout.flush()
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    # No CLI arguments → persistent worker mode
+    if len(sys.argv) <= 1:
+        run_worker()
+        os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during cleanup
+
+    # Legacy one-shot CLI mode (keeps standalone testing working)
     if len(sys.argv) < 3:
         print(
             "Usage: python3 card_cropper_sam.py <output_dir> <image1> [image2 ...]",
@@ -498,14 +503,12 @@ def main():
 
     model, processor = load_model()
 
-    results = []
-    for img_path in image_paths:
-        results.append(process_image(img_path, output_dir, model, processor))
+    results = [process_image(p, output_dir, model, processor) for p in image_paths]
 
     # Only JSON goes to stdout
     print(json.dumps(results))
     sys.stdout.flush()
-    os._exit(0)  # skip Py_FinalizeEx — avoids PyTorch/C-extension segfault during module cleanup
+    os._exit(0)
 
 
 if __name__ == "__main__":
