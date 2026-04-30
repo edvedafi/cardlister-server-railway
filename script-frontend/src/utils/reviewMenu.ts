@@ -19,9 +19,18 @@ export type ReviewMenuState = {
   matchedProduct: Product | null;
   matchedVariant: ProductVariant | null;
   matchConfidence: number; // scoring from matchCard
+  // All variants of the matched product — drives the inline variations block
+  // and the (V) hotkey. Empty or single-entry means no variant switching UI.
+  availableVariants: ProductVariant[];
   // Side info
   frontPath: string;
   backPath: string;
+  // Pre-crop source paths — used by the 'c' re-crop handler so it always
+  // crops from the original image instead of re-cropping an already-cropped
+  // intake output. Unset when no pre-crop happened (non-watch mode or
+  // autoCrop failure).
+  originalFrontPath?: string;
+  originalBackPath?: string;
   sidesSwapped: boolean;
   // Queue info (set externally)
   queuedCount: number;
@@ -43,7 +52,20 @@ export type ReviewMenuCallbacks = {
     prices: MoneyAmount[];
     priceDisplay: ReviewMenuState['prices'];
   } | null>;
+  onVariantSelect: () => Promise<{
+    variant: ProductVariant;
+    quantity: number;
+    prices: MoneyAmount[];
+    priceDisplay: ReviewMenuState['prices'];
+  } | null>;
 };
+
+function variantLabel(variant: ProductVariant): string {
+  return variant.metadata?.variationName
+    || (variant.metadata?.isBase ? 'Base' : null)
+    || variant.title
+    || 'Unknown';
+}
 
 function confidenceColor(score: number): (s: string) => string {
   if (score >= 5000) return chalk.green;
@@ -78,7 +100,7 @@ function cropLabel(crop: CropResult | null): string {
  * redraw (e.g. while the user is typing digits into the quantity slot) know
  * how many lines to move the cursor up before reprinting.
  */
-function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null): number {
+function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null, errorMsg: string | null = null): number {
   const k = (letter: string) => chalk.yellow.bold(`(${letter})`);
 
   const titleLine = state.matchedProduct
@@ -99,8 +121,29 @@ function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null)
     ? chalk.dim(`    [${state.queuedCount} card${state.queuedCount === 1 ? '' : 's'} queued]`)
     : '';
 
+  const hasMultipleVariants = state.availableVariants && state.availableVariants.length > 1;
+  const variationLines: string[] = [];
+  if (hasMultipleVariants) {
+    variationLines.push('  ' + chalk.yellow.bold(`Variations`) + chalk.dim(` (press `) + k('V') + chalk.dim(` to switch):`));
+    const selectedId = state.matchedVariant?.id;
+    for (const v of state.availableVariants) {
+      const label = variantLabel(v);
+      if (v.id === selectedId) {
+        variationLines.push('     ' + chalk.green.bold('▸ ' + label));
+      } else {
+        variationLines.push('       ' + chalk.dim(label));
+      }
+    }
+    variationLines.push('');
+  }
+
+  const variantHotkeyRow = hasMultipleVariants
+    ? '  ' + k('V') + 'ariant: ' + chalk.green(variantLabel(state.matchedVariant!))
+    : null;
+
   const lines: string[] = [
     '',
+    ...variationLines,
     '  ' + titleLine,
     '',
     '  ' + k('Q') + 'uantity: ' + qtyDisplay,
@@ -119,6 +162,7 @@ function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null)
     '  ' + k('S') + 'wap sides' +
       (state.sidesSwapped ? chalk.yellow('  (swapped)') : ''),
     '  ' + manualLabel,
+    ...(variantHotkeyRow ? [variantHotkeyRow] : []),
     '  ' + k('D') + 'etails: ' +
       `${state.details.thickness}, ${state.details.features.join(', ') || 'Base Set'}`,
     '',
@@ -126,11 +170,38 @@ function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null)
     '',
   ];
 
+  if (errorMsg) {
+    lines.push('  ' + chalk.red('Error: ' + errorMsg), '');
+  }
+
   process.stdout.write(lines.join('\n') + '\n');
   return lines.length;
 }
 
 type Keypress = { name?: string; sequence?: string; ctrl?: boolean };
+
+/**
+ * Print a single status line before running an async operation, then report
+ * the elapsed time on completion or failure. We deliberately do NOT animate
+ * — `cropImage` writes the term-img preview and the "Did this render
+ * correctly?" prompt to stdout, and an in-place \r-based spinner clobbers
+ * those. Static lines compose cleanly with whatever the inner call prints.
+ */
+async function runWithStatus<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  console.log('  ' + chalk.cyan('⏳') + ' ' + label);
+  try {
+    const result = await fn();
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log('  ' + chalk.green('✓') + ' ' + label + ' ' + chalk.dim(`(${elapsed}s)`));
+    return result;
+  } catch (err) {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log('  ' + chalk.red('✗') + ' ' + label + ' ' + chalk.dim(`(${elapsed}s)`) + ' — ' + chalk.red(msg));
+    throw err;
+  }
+}
 
 /**
  * Read a single keystroke from stdin in raw mode, then restore cooked mode so
@@ -179,6 +250,8 @@ export async function showReviewMenu(
   // compose correctly and never prematurely un-pause.
   pauseSpinners();
   try {
+    let lastError: string | null = null;
+
     await printCardImages(state);
     let lastMenuLines = printMenu(state);
 
@@ -199,7 +272,7 @@ export async function showReviewMenu(
     // the quantity slot so the menu text doesn't stack up beneath itself.
     const redrawMenu = (buffer: string | null) => {
       process.stdout.write(`\x1b[${lastMenuLines}A\r\x1b[0J`);
-      lastMenuLines = printMenu(state, buffer);
+      lastMenuLines = printMenu(state, buffer, lastError);
     };
 
     while (true) {
@@ -238,6 +311,7 @@ export async function showReviewMenu(
       // Any action letter commits a pending quantity edit before running.
       commitQuantity();
 
+      lastError = null; // Clear previous error when starting a new action
       try {
         switch (char) {
           case 'q':
@@ -252,12 +326,12 @@ export async function showReviewMenu(
             break;
           }
           case 'c': {
-            const result = await callbacks.onCrop('front');
+            const result = await runWithStatus('Cropping front image…', () => callbacks.onCrop('front'));
             state.frontCrop = result;
             break;
           }
           case 'C': {
-            const result = await callbacks.onCrop('back');
+            const result = await runWithStatus('Cropping back image…', () => callbacks.onCrop('back'));
             state.backCrop = result;
             break;
           }
@@ -279,6 +353,9 @@ export async function showReviewMenu(
             const tmpPath = state.frontPath;
             state.frontPath = state.backPath;
             state.backPath = tmpPath;
+            const tmpOrig = state.originalFrontPath;
+            state.originalFrontPath = state.originalBackPath;
+            state.originalBackPath = tmpOrig;
             const tmpCrop = state.frontCrop;
             state.frontCrop = state.backCrop ?? { file: null, method: 'none' };
             state.backCrop = tmpCrop;
@@ -291,7 +368,26 @@ export async function showReviewMenu(
             if (result) {
               state.matchedProduct = result.product;
               state.matchedVariant = result.variant;
+              state.availableVariants = result.product.variants ?? [result.variant];
               state.cardTitle = result.variant.title || result.product.title || state.cardTitle;
+              state.matchConfidence = 10000; // User-confirmed
+              state.quantity = result.quantity;
+              state.priceMoneyAmounts = result.prices;
+              state.prices = result.priceDisplay;
+            }
+            break;
+          }
+          case 'v':
+          case 'V': {
+            if (!state.availableVariants || state.availableVariants.length <= 1) {
+              break; // No-op when there's nothing to switch to
+            }
+            const result = await callbacks.onVariantSelect();
+            if (result) {
+              state.matchedVariant = result.variant;
+              state.cardTitle = result.variant.title
+                || state.matchedProduct?.title
+                || state.cardTitle;
               state.matchConfidence = 10000; // User-confirmed
               state.quantity = result.quantity;
               state.priceMoneyAmounts = result.prices;
@@ -310,11 +406,12 @@ export async function showReviewMenu(
             continue;
         }
       } catch (err) {
-        console.error(chalk.red('Action failed:'), err);
+        const msg = err instanceof Error ? err.message : String(err);
+        lastError = msg;
       }
 
       await printCardImages(state);
-      lastMenuLines = printMenu(state);
+      lastMenuLines = printMenu(state, null, lastError);
     }
   } finally {
     resumeSpinners();

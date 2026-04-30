@@ -33,8 +33,17 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import warnings
 warnings.filterwarnings('ignore')
 
+# Force CPU-only execution. MPS/Metal interaction with IOGPUFamily has been
+# correlated with `ptep_get_ptd: invalid PV head` kernel panics on Apple Silicon,
+# so we disable MPS belt-and-suspenders (EasyOCR already passes gpu=False).
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '0'
+os.environ['PYTORCH_MPS_DISABLE'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
 # Reduce PyTorch memory footprint: disable gradients and limit internal threads
 import torch
+torch.backends.mps.is_available = lambda: False
+torch.backends.mps.is_built = lambda: False
 torch.set_grad_enabled(False)
 torch.set_num_threads(1)
 
@@ -133,8 +142,8 @@ def process_images(image_paths):
     return results
 
 # ── Orientation detection ──────────────────────────────────────────────────
-# Ported from orient_cards.py — reuses the already-loaded EasyOCR model
-# instead of spawning a separate process that loads a duplicate (~300MB).
+# Reuses the already-loaded EasyOCR model for orientation detection,
+# avoiding a separate process that would load a duplicate (~300MB).
 
 MAX_SIDE_FOR_OCR = 1024
 EARLY_EXIT_AVG_CONF = 0.90

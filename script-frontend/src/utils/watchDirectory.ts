@@ -20,7 +20,7 @@ import {
 const { showSpinner } = useSpinners('watch', chalk.magenta);
 const debug = createLogger('watch');
 
-async function waitForFileStable(filePath: string, interval = 300, maxWait = 10000): Promise<boolean> {
+async function waitForFileStable(filePath: string, interval = 100, maxWait = 10000): Promise<boolean> {
   let lastSize = -1;
   const start = Date.now();
   while (Date.now() - start < maxWait) {
@@ -83,8 +83,17 @@ export interface SmartWatcherOptions {
   autoCrop?: (imagePath: string) => Promise<string | null>;
   /** Automated orientation fix — runs after successful crop. Returns text detection count. */
   autoOrient?: (imagePath: string) => Promise<number>;
-  /** Classify and extract info from a single image (vision AI). textDetectionCount from autoOrient. */
-  classifyAndExtract: (imagePath: string, textDetectionCount: number) => Promise<UnmatchedCard>;
+  /**
+   * Classify and extract info from a single image (vision AI). `imagePath` is the
+   * best candidate the pipeline has so far (cropped if autoCrop succeeded, else the
+   * original). `originalPath` is the raw input file, passed separately so remote
+   * callers can POST both the original and the precropped candidate to `/process`.
+   */
+  classifyAndExtract: (
+    imagePath: string,
+    textDetectionCount: number,
+    originalPath: string,
+  ) => Promise<UnmatchedCard>;
 
   // ── Confirmation callbacks (intake queue — auto-accept in watch mode) ────
   /** Confirm crop result. Return confirmed path (may re-crop interactively). */
@@ -136,10 +145,17 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
   let resolveCompletion: (() => void) | null = null;
 
   // ── Single intake queue ──────────────────────────────────────────────────
-  // Intake queue (concurrency 3): automated work — crop, orient, classify,
-  // auto-confirm, and pool matching. Matched pairs are handed off to
-  // onPairReady which pushes into the card processor queue in listSet.ts.
-  const intakeQueue = new Queue({ autostart: true, concurrency: 3, results: [] });
+  // Intake queue: automated work — crop, orient, classify, auto-confirm, and
+  // pool matching. Matched pairs are handed off to onPairReady which pushes
+  // into the card processor queue in listSet.ts.
+  //
+  // Concurrency is env-tunable via INTAKE_CONCURRENCY (default 10). The
+  // practical bottleneck is upload bandwidth for the 22 MB original JPEGs, not
+  // server-side compute — at ~10 in-flight uploads the preprocess service can
+  // turn requests around faster than we can ship bytes, so going higher just
+  // queues bytes on the wire and risks per-request timeouts.
+  const intakeConcurrency = Math.max(1, Number(process.env.INTAKE_CONCURRENCY) || 10);
+  const intakeQueue = new Queue({ autostart: true, concurrency: intakeConcurrency, results: [] });
 
   // Pool lock: serializes addCard + handleMatchedPair so concurrent intake
   // jobs don't race on pool access (crop/orient/classify still run in parallel).
@@ -212,7 +228,7 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
     // waiting task. For no-match cases, the intake queue 'end' event aborts
     // it so the idle screen re-renders with updated pool contents.
 
-    // Intake queue (concurrency 3): all automated work runs in parallel.
+    // Intake queue: all automated work runs in parallel up to INTAKE_CONCURRENCY.
     intakeQueue.push(async () => {
       if (stopped) return;
       const basename = path.basename(filePath);
@@ -247,11 +263,15 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
 
       // Step 3: Classify & extract via vision AI
       const pathForClassification = croppedPath ?? filePath;
+      // Remember the pre-crop path so the review menu can re-crop from the
+      // original instead of re-cropping the already-tightened intake output.
+      const originalPath = croppedPath && croppedPath !== filePath ? filePath : undefined;
       let card: UnmatchedCard;
       try {
         update(`Classifying`);
-        card = await classifyAndExtract(pathForClassification, textDetectionCount);
+        card = await classifyAndExtract(pathForClassification, textDetectionCount, filePath);
         if (stopped) return;
+        if (originalPath) card.originalPath = originalPath;
       } catch (err) {
         debug(`Classification failed for ${basename}: ${err}`);
         // Don't silently drop — create a minimal card for pool/manual resolution
@@ -264,6 +284,7 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
           textDetectionCount,
           timestamp: Date.now(),
           originalFilename: basename,
+          originalPath,
         };
         update(`Classification failed, added to pool for manual resolve`);
       }
@@ -373,6 +394,14 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
     const lastSeen = recentlySeen.get(filePath);
     if (lastSeen && now - lastSeen < 500) return;
     recentlySeen.set(filePath, now);
+
+    // Prune entries older than 60s so long sessions don't accumulate stale keys
+    if (recentlySeen.size > 200) {
+      const cutoff = now - 60_000;
+      for (const [key, ts] of recentlySeen) {
+        if (ts < cutoff) recentlySeen.delete(key);
+      }
+    }
 
     // Wait for file write to complete (poll size until stable)
     void (async () => {
@@ -663,7 +692,10 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
       debug('Completion signal received');
       const remaining = pool.getAll();
       if (remaining.length > 0) {
-        debug(`${remaining.length} unmatched card(s) remaining, skipping`);
+        debug(`${remaining.length} unmatched card(s) remaining, marking as scanned`);
+        for (const card of remaining) {
+          if (onSkip) onSkip(card.path);
+        }
       }
       markSessionComplete();
       cleanup();
@@ -709,10 +741,33 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
 
     debug('Smart watch mode active. Directory watcher started.');
 
-    // Enqueue initial files — up to 3 will process in parallel
+    // Enqueue initial files — up to INTAKE_CONCURRENCY will process in parallel
+    const initialSet = new Set(initialFiles);
     for (const filePath of initialFiles) {
       knownFiles.add(filePath);
       enqueueFile(filePath);
+    }
+
+    // Catch files dropped between the caller's directory snapshot and fs.watch
+    // registration. fs.watch only fires for events after it's registered, and
+    // initialFiles may be stale (e.g. minutes-old getFiles() result from before
+    // slow Medusa setup). Rescan now — safe because fs.watch is already live,
+    // so anything landing after this readdir still triggers handleNewFile.
+    try {
+      const entries = fs.readdirSync(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.toLowerCase().endsWith('.jpg')) continue;
+        const filePath = path.join(directory, entry.name);
+        if (initialSet.has(filePath)) continue;
+        if (knownFiles.has(filePath)) continue;
+        if (isAlreadyScanned(filePath)) continue;
+        debug(`Catching dropped file at startup: ${entry.name}`);
+        knownFiles.add(filePath);
+        enqueueFile(filePath);
+      }
+    } catch (err) {
+      debug(`Startup directory rescan failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // If nothing was actually enqueued (all already scanned), resolve intake idle immediately

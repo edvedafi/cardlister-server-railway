@@ -11,8 +11,16 @@ import path from 'path';
 
 const { showSpinner } = useSpinners('trim', chalk.cyan);
 
+const isValidDirName = (name: string): boolean => {
+  if (!name || name.trim() !== name) return false;
+  if (name === '.' || name === '..') return false;
+  if (/[\\/\0]/.test(name)) return false;
+  if (name.startsWith('.')) return false;
+  return true;
+};
+
 export async function getInputs(args: ParsedArgs) {
-  const { finish } = showSpinner('inputs', 'Getting Input Information');
+  const { finish, error } = showSpinner('inputs', 'Getting Input Information');
   let zipFile: string | undefined = undefined;
   if (args.lastZipFile && args._.length > 0) {
     console.log('using last zip file: ' + args._[0]);
@@ -73,9 +81,17 @@ export async function getInputs(args: ParsedArgs) {
       finish(`Input Directory: ${zipFile}`);
       return zipFile;
     } else {
-      console.log('just a directory');
-      finish(`Input Directory: input/${zipFile}/`);
-      return `input/${zipFile}/`;
+      if (!isValidDirName(zipFile)) {
+        error(`Invalid input directory name: "${zipFile}"`);
+        process.exit(1);
+      }
+      const dir = `input/${zipFile}/`;
+      if (!fsSync.existsSync(dir)) {
+        await ensureDir(dir);
+        console.log(`Created new input directory: ${dir}`);
+      }
+      finish(`Input Directory: ${dir}`);
+      return dir;
     }
   } else {
     const input_directory = await getInputDirectory();

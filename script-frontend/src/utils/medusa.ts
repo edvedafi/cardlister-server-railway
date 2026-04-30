@@ -481,19 +481,11 @@ async function runBatches(type: string, only: string[] = [], context: { [key: st
         `batch-${job.id}`,
         `${job.type}::${job.id}::${product_category ? product_category.description : JSON.stringify(job.context)}`,
       );
-      // Wait for pre-processing, then confirm to start actual processing
-      while (!['pre_processed', 'completed', 'failed'].includes(job.status)) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const res = await medusa.admin.batchJobs.retrieve(job.id);
-        job = res.batch_job;
-      }
-      if (job.status === 'pre_processed') {
-        const confirmed = await medusa.admin.batchJobs.confirm(job.id);
-        job = confirmed.batch_job;
-      }
+      let pollInterval = 1000;
       while (!['completed', 'failed'].includes(job.status)) {
         update(job.status);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        pollInterval = Math.min(pollInterval + 1000, 10000);
         const res = await medusa.admin.batchJobs.retrieve(job.id);
         job = res.batch_job;
         if (job.status === 'processing') {

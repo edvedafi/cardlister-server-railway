@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import 'zx/globals';
 import { useSpinners } from './utils/spinners';
 import { cancelSync, getAllBatchJobs } from './utils/medusa';
+import type { BatchJob } from '@medusajs/client-types';
 import { ask } from './utils/ask';
 import { parseArgs } from './utils/parseArgs';
 import { sleep } from 'zx';
@@ -11,7 +12,7 @@ $.verbose = false;
 dotenv.config();
 const args = parseArgs(
   {
-    boolean: ['w', 'p', 's', 'g', 'c'],
+    boolean: ['w', 'p', 's', 'g', 'c', 'x'],
     string: ['d', 'r'],
     alias: {
       w: 'watch',
@@ -21,6 +22,7 @@ const args = parseArgs(
       s: 'sales',
       r: 'recent',
       c: 'category',
+      x: 'purge',
     },
   },
   {
@@ -31,15 +33,36 @@ const args = parseArgs(
     s: 'Only return sales jobs',
     r: 'Only return jobs created within N days (e.g. -r 5)',
     c: 'Group syncs by category ID (spot duplicates)',
+    x: 'Purge empty-context syncs and sales batches; keep jobs with a category_id',
   },
 );
 
 const { log } = useSpinners('Sync', chalk.cyanBright);
 
+function hasCategoryId(job: BatchJob): boolean {
+  const ctx = (job.context ?? {}) as Record<string, unknown>;
+  return Boolean(ctx.category_id || ctx.category);
+}
+
+function isPurgeTarget(job: BatchJob): boolean {
+  if (hasCategoryId(job)) return false;
+  const ctx = (job.context ?? {}) as Record<string, unknown>;
+  return job.type.indexOf('sale') > -1 || Object.keys(ctx).length === 0;
+}
+
 try {
   const recentDays = args.recent ? parseInt(args.recent) : undefined;
-  const jobs = await getAllBatchJobs(true, !args.status, args.sales, recentDays);
+  let jobs = await getAllBatchJobs(true, !args.status, args.sales, recentDays);
   log(`Found ${jobs.length} jobs`);
+
+  if (args.purge) {
+    const before = jobs.length;
+    const kept = jobs.filter((j) => !isPurgeTarget(j));
+    jobs = jobs.filter(isPurgeTarget);
+    log(
+      `Purge filter: ${chalk.redBright(jobs.length)} to cancel (empty/sales), ${chalk.green(kept.length)} kept (have category_id), of ${before} total`,
+    );
+  }
   if (args.print) {
     jobs.forEach((job) => {
       log(`Job ${job.id} - ${job.created_at}: ${job.type} => ${JSON.stringify(job.context)} ${job.status}`);
@@ -143,8 +166,47 @@ try {
   if (jobs.length > 0) {
     const shouldCancel = await ask(`Cancel all ${jobs.length} jobs?`, false);
     if (shouldCancel) {
-      for (const job of jobs) {
-        await cancelSync(job.id);
+      const CANCEL_TIMEOUT_MS = 10_000;
+      const CONCURRENCY = 5;
+
+      const timedOut: BatchJob[] = [];
+      const failed: { job: BatchJob; err: unknown }[] = [];
+      let done = 0;
+
+      const queue = [...jobs];
+      async function worker() {
+        while (queue.length) {
+          const job = queue.shift();
+          if (!job) return;
+          try {
+            await Promise.race([
+              cancelSync(job.id),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('cancel-timeout')), CANCEL_TIMEOUT_MS),
+              ),
+            ]);
+          } catch (e) {
+            if ((e as Error).message === 'cancel-timeout') {
+              timedOut.push(job);
+              log(chalk.yellow(`Timed out cancelling ${job.id} (${job.type}) — likely row-locked`));
+            } else {
+              failed.push({ job, err: e });
+              log(chalk.red(`Failed to cancel ${job.id} (${job.type}): ${(e as Error).message}`));
+            }
+          } finally {
+            done++;
+            if (done % 10 === 0) log(`${done}/${jobs.length} processed`);
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, worker));
+
+      log(`Cancel sweep done: ${done - timedOut.length - failed.length} cancelled, ${timedOut.length} timed out, ${failed.length} errored`);
+      if (timedOut.length > 0) {
+        log(chalk.yellow(`The following are likely stuck (worker still holds the row lock); recover via SQL:`));
+        const ids = timedOut.map((j) => `'${j.id}'`).join(',\n  ');
+        log(`UPDATE batch_job SET canceled_at = NOW() WHERE id IN (\n  ${ids}\n) AND canceled_at IS NULL;`);
       }
     }
   } else {

@@ -134,7 +134,9 @@ USER_PROMPT = (
     "Examine these trading card images (front and back) and extract:\n"
     "1. player: The player's full name (null if not identifiable)\n"
     "2. team: The team name (null if not identifiable)\n"
-    "3. card_number: The card number as printed on the BACK of the card (e.g. \"BC-15\", \"123\") (null if not visible). Do not use jersey numbers or stats from the front.\n\n"
+    "3. card_number: The card number as printed on the BACK of the card (e.g. \"BC-15\", \"123\") (null if not visible). Do not use jersey numbers or stats from the front.\n"
+    "4. front_orientation: The clockwise rotation in degrees (0, 90, 180, or 270) needed to make the FIRST image display correctly upright.\n"
+    "5. back_orientation: The clockwise rotation in degrees (0, 90, 180, or 270) needed to make the SECOND image display correctly upright.\n\n"
     "Be precise. Only return what is clearly visible on the card."
 )
 
@@ -144,14 +146,15 @@ SINGLE_IMAGE_PROMPT = (
     "2. team: The team name (null if not identifiable)\n"
     "3. card_number: The card number as printed (e.g. \"BC-15\", \"123\") (null if not visible)\n"
     "4. side: \"front\" if this shows the player photo/action shot, \"back\" if this shows "
-    "statistics, biography text, or copyright information\n\n"
+    "statistics, biography text, or copyright information\n"
+    "5. orientation: The clockwise rotation in degrees (0, 90, 180, or 270) needed to make the image display correctly upright.\n\n"
     "Be precise. Only return what is clearly visible on the card."
 )
 
 # Tool schema for structured extraction (pair mode)
 _EXTRACT_TOOL = {
     "name": "extract_card_info",
-    "description": "Extract player name, team, and card number from trading card images",
+    "description": "Extract player name, team, card number, and orientation from trading card images",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -167,15 +170,25 @@ _EXTRACT_TOOL = {
                 "anyOf": [{"type": "string"}, {"type": "null"}],
                 "description": 'Card number as printed (e.g. "BC-15", "123"), or null if not visible',
             },
+            "front_orientation": {
+                "type": "integer",
+                "enum": [0, 90, 180, 270],
+                "description": "Clockwise rotation in degrees needed to display the first (front) image correctly upright",
+            },
+            "back_orientation": {
+                "type": "integer",
+                "enum": [0, 90, 180, 270],
+                "description": "Clockwise rotation in degrees needed to display the second (back) image correctly upright",
+            },
         },
-        "required": ["player", "team", "card_number"],
+        "required": ["player", "team", "card_number", "front_orientation", "back_orientation"],
     },
 }
 
 # Tool schema for single-image extraction (includes side classification)
 _EXTRACT_SINGLE_TOOL = {
     "name": "extract_single_card_info",
-    "description": "Extract player name, team, card number, and front/back classification from a single trading card image",
+    "description": "Extract player name, team, card number, front/back classification, and orientation from a single trading card image",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -196,8 +209,13 @@ _EXTRACT_SINGLE_TOOL = {
                 "enum": ["front", "back"],
                 "description": "Whether this is the front (player photo) or back (stats/bio) of the card",
             },
+            "orientation": {
+                "type": "integer",
+                "enum": [0, 90, 180, 270],
+                "description": "Clockwise rotation in degrees needed to display the image correctly upright",
+            },
         },
-        "required": ["player", "team", "card_number", "side"],
+        "required": ["player", "team", "card_number", "side", "orientation"],
     },
 }
 
@@ -255,10 +273,14 @@ def extract_with_claude(front_path: str, back_path: str) -> dict:
     for block in response.content:
         if block.type == "tool_use" and block.name == "extract_card_info":
             inp = block.input
+            front_ori = inp.get("front_orientation", 0)
+            back_ori = inp.get("back_orientation", 0)
             return {
                 "player": inp.get("player") or None,
                 "team": inp.get("team") or None,
                 "card_number": inp.get("card_number") or None,
+                "front_orientation": front_ori if front_ori in (0, 90, 180, 270) else 0,
+                "back_orientation": back_ori if back_ori in (0, 90, 180, 270) else 0,
             }
 
     raise RuntimeError("No tool_use block in Claude response")
@@ -300,12 +322,14 @@ def extract_single_with_claude(image_path: str) -> dict:
         if block.type == "tool_use" and block.name == "extract_single_card_info":
             inp = block.input
             side = inp.get("side", "front")
+            ori = inp.get("orientation", 0)
             return {
                 "player": inp.get("player") or None,
                 "team": inp.get("team") or None,
                 # Card numbers are only on the back; ignore any value from fronts
                 "card_number": (inp.get("card_number") or None) if side == "back" else None,
                 "side": side,
+                "orientation": ori if ori in (0, 90, 180, 270) else 0,
             }
 
     raise RuntimeError("No tool_use block in Claude response")

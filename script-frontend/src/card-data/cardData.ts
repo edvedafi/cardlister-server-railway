@@ -291,53 +291,51 @@ async function getCardName(card: CardNameFields, category: Category): Promise<st
 
 /**
  * Auto-select a card without user prompts. Returns the best match with confidence score.
- * Used by the review menu flow — the user sees the result and can override with `m` hotkey.
+ * Used by the review menu flow — the user sees the result and can override with `m` hotkey,
+ * or switch variants inline with `v` using the returned availableVariants list.
  */
 export async function autoSelectCard(setData: SetInfo, imageDefaults: Metadata): Promise<{
   product: Product | null;
   productVariant: ProductVariant | null;
+  availableVariants: ProductVariant[];
   confidence: number;
 }> {
   if (!setData.products || setData.products.length === 0) {
-    return { product: null, productVariant: null, confidence: 0 };
+    return { product: null, productVariant: null, availableVariants: [], confidence: 0 };
   }
 
   const result = autoMatchCard(setData, imageDefaults);
   if (!result.product) {
-    return { product: null, productVariant: null, confidence: result.confidence };
+    return { product: null, productVariant: null, availableVariants: [], confidence: result.confidence };
   }
 
   const product = result.product;
   if (!product.variants) product.variants = [];
 
-  let productVariant: ProductVariant;
-  if (product.variants.length === 1) {
-    productVariant = product.variants[0];
-    if (!productVariant.prices || productVariant.prices.length === 0) {
-      try {
-        productVariant = await getProductVariant(productVariant.id);
-      } catch {
-        // use existing
-      }
+  if (product.variants.length === 0) {
+    return { product, productVariant: null, availableVariants: [], confidence: result.confidence };
+  }
+
+  // Prefer the base variant when multiple exist; otherwise use the sole/first variant
+  let productVariant: ProductVariant =
+    product.variants.find((v) => v.metadata?.isBase === true) ?? product.variants[0];
+  if (!productVariant.prices || productVariant.prices.length === 0) {
+    try {
+      productVariant = await getProductVariant(productVariant.id);
+    } catch {
+      // use existing
     }
-  } else if (product.variants.length > 1) {
-    // Pick the first (base) variant as default — user can override via review menu
-    productVariant = product.variants[0];
-    if (!productVariant.prices || productVariant.prices.length === 0) {
-      try {
-        productVariant = await getProductVariant(productVariant.id);
-      } catch {
-        // use existing
-      }
-    }
-  } else {
-    return { product, productVariant: null, confidence: result.confidence };
   }
 
   if (!productVariant.product) {
     productVariant.product = product;
   }
-  return { product, productVariant, confidence: result.confidence };
+  return {
+    product,
+    productVariant,
+    availableVariants: product.variants,
+    confidence: result.confidence,
+  };
 }
 
 /**
@@ -464,43 +462,55 @@ function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): { product: Pr
   return { product: null, confidence: 0 };
 }
 
+function variantPickerLabel(variant: ProductVariant): string {
+  const name = variant.metadata?.variationName
+    || (variant.metadata?.isBase ? 'Base' : null)
+    || variant.metadata?.description
+    || variant.title;
+  const desc = variant.metadata?.description;
+  return desc && desc !== name ? `${name} — ${desc}` : String(name);
+}
+
+/**
+ * Prompt the user to pick one of a product's variants and return the full variant
+ * object (fetching from Medusa if prices/region data are missing). Shared by
+ * selectCard (full re-match flow, 'M' key) and the review-menu 'V' key.
+ */
+export async function pickVariant(product: Product): Promise<ProductVariant> {
+  if (!product.variants || product.variants.length === 0) {
+    throw new Error('Product has no variants to pick from');
+  }
+  let productVariant: ProductVariant;
+  if (product.variants.length === 1) {
+    productVariant = product.variants[0];
+  } else {
+    productVariant = (await ask('Which variant is this?', undefined, {
+      selectOptions: product.variants.map((variant) => ({
+        name: variantPickerLabel(variant),
+        value: variant,
+      })),
+    })) as ProductVariant;
+  }
+  if (!productVariant.prices || productVariant.prices.length === 0) {
+    try {
+      productVariant = await getProductVariant(productVariant.id);
+    } catch {
+      // use existing variant object
+    }
+  }
+  if (!productVariant.product) {
+    productVariant.product = product;
+  }
+  return productVariant;
+}
+
 export async function selectCard(setData: SetInfo, imageDefaults: Metadata): Promise<{ product: Product; productVariant: ProductVariant }> {
   if (!setData.products) throw 'Must Set Products on Set Data before getting card data';
   const product = await matchCard(setData, imageDefaults);
   if (!product.variants) {
     product.variants = [];
   }
-  let productVariant: ProductVariant;
-  if (product.variants.length === 1) {
-    productVariant = product.variants[0];
-    // If variant doesn't have full data, fetch it
-    if (!productVariant.prices || productVariant.prices.length === 0) {
-      try {
-        productVariant = await getProductVariant(productVariant.id);
-      } catch (e) {
-        // ignore and use existing variant from product
-      }
-    }
-  } else {
-    const selectedVariant = await ask('Which variant is this?', undefined, {
-      selectOptions: product.variants.map((variant) => ({
-        name: `${variant.metadata?.description || variant.title}`,
-        value: variant,
-      })),
-    });
-    productVariant = selectedVariant as ProductVariant;
-    // If variant doesn't have full data, fetch it
-    if (!productVariant.prices || productVariant.prices.length === 0) {
-      try {
-        productVariant = await getProductVariant(productVariant.id);
-      } catch (e) {
-        // ignore and use selected variant object
-      }
-    }
-  }
-  if (!productVariant.product) {
-    productVariant.product = product;
-  }
+  const productVariant = await pickVariant(product);
   return { product, productVariant };
 }
 
@@ -973,7 +983,15 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
   }
   
   // Always show ALL products, but use the best match as default
-  card = await ask('Which card is this?', defaultCard, {
+  // Pass a string (not the Product object) so Fuse.js doesn't interpret it as a logical search query
+  const defaultSearchTerm = defaultCard
+    ? (() => {
+        const p = defaultCard.metadata?.player;
+        const playerStr = Array.isArray(p) ? p.join(', ') : typeof p === 'string' ? p : String(p || '');
+        return `${defaultCard.metadata?.cardNumber ?? ''} ${playerStr}`.trim();
+      })()
+    : undefined;
+  card = await ask('Which card is this?', defaultSearchTerm, {
     selectOptions: setInfo.products?.map((product) => {
       const player = product.metadata?.player;
       const playerDisplay = Array.isArray(player) 

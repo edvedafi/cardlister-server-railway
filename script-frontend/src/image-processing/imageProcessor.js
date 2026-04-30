@@ -7,12 +7,44 @@ import { useSpinners } from '../utils/spinners.ts';
 import chalk from 'chalk';
 import { $ } from 'zx';
 import { PDFDocument } from 'pdf-lib';
-import { cropCardsWithSAM, cropCardsWithOllama } from './card-cropper-wrapper.js';
+import { cropAlternativesRemote, isRemoteServiceEnabled } from './remote-image-service.js';
+import { createLogger } from '../utils/logger.ts';
 
 const { showSpinner, log } = useSpinners('images', chalk.white);
+const debug = createLogger('crop');
 
 const output_directory = 'output/';
 const MAX_IMAGE_SIZE = 10 * 1000 * 1000; // slightly under 10MB
+
+// Sports cards are 2.5" x 3.5". Accept either orientation.
+const CARD_ASPECT_PORTRAIT = 2.5 / 3.5; // ~0.714
+const CARD_ASPECT_LANDSCAPE = 3.5 / 2.5; // ~1.400
+const ASPECT_TOLERANCE = 0.22; // ±22%, matches card_cropper_sam.py
+const MIN_CARD_SIDE_PX = 300; // reject strips / thumbnails
+const MIN_AREA_FRACTION = 0.15; // crop must cover >=15% of source area (rejects stats-block sub-regions)
+
+async function isPlausibleCardCrop(imagePath, sourceArea) {
+  const meta = await sharp(imagePath).metadata();
+  const w = meta.width || 0;
+  const h = meta.height || 0;
+  if (w < MIN_CARD_SIDE_PX || h < MIN_CARD_SIDE_PX) {
+    return { ok: false, reason: `too small ${w}x${h}` };
+  }
+  const ratio = w / h;
+  const portraitErr = Math.abs(ratio - CARD_ASPECT_PORTRAIT) / CARD_ASPECT_PORTRAIT;
+  const landscapeErr = Math.abs(ratio - CARD_ASPECT_LANDSCAPE) / CARD_ASPECT_LANDSCAPE;
+  const err = Math.min(portraitErr, landscapeErr);
+  if (err > ASPECT_TOLERANCE) {
+    return { ok: false, reason: `aspect ${ratio.toFixed(3)} off by ${(err * 100).toFixed(0)}%` };
+  }
+  if (sourceArea > 0) {
+    const fraction = (w * h) / sourceArea;
+    if (fraction < MIN_AREA_FRACTION) {
+      return { ok: false, reason: `covers only ${(fraction * 100).toFixed(1)}% of source` };
+    }
+  }
+  return { ok: true };
+}
 
 function getOutputFile(listing, setInfo, imageNumber) {
   const category = setInfo.metadata;
@@ -75,20 +107,57 @@ export const cropImage = async (
       input = `${tempDirectory}/temp.rotated.jpg`;
     }
 
-    // Synchronous crash-safe logger — writes to stderr AND a file so the last
-    // line is visible even if Node exits via SIGSEGV before buffers flush.
-    const cropLog = fs.openSync(`${tempDirectory}/crop-debug.log`, 'a');
-    const cropWrite = (msg) => {
-      const line = `[crop ${new Date().toISOString()}] ${msg}\n`;
-      fs.writeSync(cropLog, line);
+    let sourceArea = 0;
+    try {
+      const srcMeta = await sharp(input).metadata();
+      sourceArea = (srcMeta.width || 0) * (srcMeta.height || 0);
+    } catch (e) {
+      debug(`could not read source metadata for area-fraction gate: ${e?.message || e}`);
+    }
+
+    // ── Remote /crop alternatives (lazy, single API call shared by all strategies) ──
+    // Heavy crop strategies (SAM, Haiku bbox, PIL trim variants) run on the
+    // preprocess service rather than on the developer's laptop. The four
+    // entries below all share one /crop POST: the first to fire kicks off the
+    // upload, the rest await the same promise.
+    let remoteCropPromise = null;
+    const STRATEGY_NAMES = ['pil_trim_dark', 'pil_trim_light', 'sam', 'haiku_bbox'];
+    const ensureRemoteCrops = async () => {
+      if (!isRemoteServiceEnabled()) return null;
+      if (!remoteCropPromise) {
+        remoteCropPromise = cropAlternativesRemote(input).catch((e) => {
+          debug(`remote /crop failed: ${e?.message || e}`);
+          return null;
+        });
+      }
+      return remoteCropPromise;
     };
+    const remoteAttempt = (strategy) => ({
+      name: `remote:${strategy}`,
+      fn: async () => {
+        const alternatives = await ensureRemoteCrops();
+        if (!alternatives) return false;
+        const entry = alternatives.find((a) => a.strategy === strategy);
+        if (!entry) {
+          debug(`remote /crop missing strategy ${strategy}`);
+          return false;
+        }
+        if (!entry.bytes) {
+          if (entry.error) debug(`remote ${strategy} returned error: ${entry.error}`);
+          return false;
+        }
+        tempImage = `${tempDirectory}/remote-${strategy}.jpg`;
+        await fs.writeFile(tempImage, entry.bytes);
+        return true;
+      },
+    });
 
     const cropAttempts = [
       {
         name: 'CardCropper.rotate',
         fn: async () => {
           tempImage = `${tempDirectory}/CC.rotate.jpg`;
-          return await $`./CardCropper.rotate ${input} ${tempImage}`;
+          return await $`./CardCropper.rotate ${input} ${tempImage}`.quiet();
         },
       },
       {
@@ -99,67 +168,14 @@ export const cropImage = async (
         },
       },
       {
-        name: 'magick.fuzz.trim',
-        fn: async () => {
-          tempImage = `${tempDirectory}/magick.fuzz.trim.jpg`;
-          // Use ImageMagick's fuzz-based trim to cope with near-black backgrounds
-          return await $`magick ${input} -fuzz 18% -trim +repage -bordercolor black -border 10 ${tempImage}`;
-        },
-      },
-      {
-        name: 'sharp.trim',
-        fn: async () => {
-          tempImage = `${tempDirectory}/sharp.trim.jpg`;
-          // Resize very large images before trim to avoid libvips segfault on 50MP+ files
-          const meta = await sharp(input).metadata();
-          cropWrite(`sharp.trim: input ${meta.width}x${meta.height} (${path.basename(input)})`);
-          const maxSide = 3000;
-          const longest = Math.max(meta.width || 0, meta.height || 0);
-          let pipeline = sharp(input);
-          if (longest > maxSide) {
-            cropWrite(`sharp.trim: resizing to max ${maxSide}px side`);
-            pipeline = pipeline.resize(
-              meta.width > meta.height ? maxSide : null,
-              meta.height >= meta.width ? maxSide : null,
-              { fit: 'inside', withoutEnlargement: true },
-            );
-          }
-          return await pipeline
-            .blur(0.3)
-            .trim({ threshold: 180, background: { r: 0, g: 0, b: 0 } })
-            .extend({ top: 10, bottom: 10, left: 10, right: 10, background: { r: 0, g: 0, b: 0 } })
-            .toFile(tempImage);
-        },
-      },
-      // ── SAM semantic segmentation (handles black-on-black backdrops) ──────────
-      {
-        name: 'SAM',
-        fn: async () => {
-          tempImage = `${tempDirectory}/sam.jpg`;
-          const results = await cropCardsWithSAM([input], tempDirectory);
-          if (!results.length) return false;
-          await $`mv ${results[0]} ${tempImage}`;
-          return true;
-        },
-      },
-      // ── Ollama vision bbox (standalone, no SAM) ───────────────────────────────
-      {
-        name: 'Ollama',
-        fn: async () => {
-          tempImage = `${tempDirectory}/ollama.jpg`;
-          const results = await cropCardsWithOllama([input], tempDirectory);
-          if (!results.length) return false;
-          await $`mv ${results[0]} ${tempImage}`;
-          return true;
-        },
-      },
-      {
         name: 'CardCropper',
         fn: async () => {
           tempImage = `${tempDirectory}/CC.crop.jpg`;
-          return await $`./CardCropper ${input} ${tempImage}`;
+          return await $`./CardCropper ${input} ${tempImage}`.quiet();
         },
       },
+      // Heavy alternatives — run on the preprocess service via /crop.
+      ...STRATEGY_NAMES.map(remoteAttempt),
       {
         name: 'manual',
         fn: async () => {
@@ -168,6 +184,16 @@ export const cropImage = async (
           // eslint-disable-next-line no-undef
           process.on('SIGINT', () => openCommand?.kill());
           return openCommand;
+        },
+      },
+      // Last-resort: if every cropper failed the aspect/area gate, hand off
+      // the raw uncropped image so downstream OCR has something to work with.
+      {
+        name: 'passthrough',
+        fn: async () => {
+          tempImage = `${tempDirectory}/passthrough.jpg`;
+          log(`  ⚠ all crop attempts failed aspect gate; falling back to uncropped ${path.basename(image)}`);
+          return $`cp ${input} ${tempImage}`;
         },
       },
     ];
@@ -189,20 +215,33 @@ export const cropImage = async (
     let i = 0;
     while (!found && i < attempts.length) {
       const { name, fn } = attempts[i];
-      cropWrite(`starting attempt ${i + 1}/${attempts.length}: ${name}`);
+      debug(`starting attempt ${i + 1}/${attempts.length}: ${name}`);
       try {
         update(`Attempting crop ${i + 1}/${attempts.length}: ${name}`);
         const cropped = await fn();
         if (cropped) {
-          cropWrite(`attempt ${name} succeeded → ${tempImage}`);
+          // Aspect-ratio gate only applies to non-interactive auto-crop. When
+          // the user is reviewing each crop, they decide if it looks right —
+          // a gate that rejects valid crops just makes us cycle through every
+          // strategy down to the Photoshop fallback.
+          if (nonInteractive && name !== 'copy' && name !== 'passthrough') {
+            const check = await isPlausibleCardCrop(tempImage, sourceArea);
+            if (!check.ok) {
+              debug(`attempt ${name} rejected: ${check.reason}`);
+              try { await fs.remove(tempImage); } catch { /* ignore */ }
+              i++;
+              continue;
+            }
+          }
+          debug(`attempt ${name} succeeded → ${tempImage}`);
 
           if (nonInteractive) {
             // Auto-accept the first successful crop
-            cropWrite(`auto-accepting ${name} (non-interactive)`);
+            debug(`auto-accepting ${name} (non-interactive)`);
             found = true;
             cropMethod = name;
           } else if (useImageFirst) {
-            cropWrite(`auto-accepting ${name} (pre-cropped / useImageFirst)`);
+            debug(`auto-accepting ${name} (pre-cropped / useImageFirst)`);
             found = true;
             cropMethod = name;
           } else {
@@ -227,24 +266,24 @@ export const cropImage = async (
             }
 
             {
-              cropWrite(`prompting user after ${name}`);
+              debug(`prompting user after ${name}`);
               found = await ask(`Did Image ${path.basename(image)} render correct?`, true);
-              cropWrite(`user answered: ${found}`);
+              debug(`user answered: ${found}`);
               if (found) cropMethod = name;
             }
           }
         } else {
-          cropWrite(`attempt ${name} returned false (no crop found)`);
+          debug(`attempt ${name} returned false (no crop found)`);
           found = false;
         }
       } catch (e) {
-        cropWrite(`attempt ${name} threw: ${e?.message || e}`);
-        log(e);
+        debug(`attempt ${name} threw: ${e?.message || e}`);
+        if (e?.stderr) debug(`  stderr: ${String(e.stderr).trim()}`);
+        if (e?.stdout) debug(`  stdout: ${String(e.stdout).trim()}`);
+        if (e?.exitCode != null) debug(`  exitCode: ${e.exitCode}`);
       }
       i++;
     }
-
-    fs.closeSync(cropLog);
 
     if (found) {
       const buffer = await sharp(tempImage).toBuffer();

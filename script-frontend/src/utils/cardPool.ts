@@ -25,6 +25,7 @@ export interface UnmatchedCard {
   ocrText?: string;    // cached raw OCR text, lowercased
   ocrWords?: string[]; // cached individual OCR words, lowercased
   originalFilename?: string; // original input filename before cropping
+  originalPath?: string; // pre-crop source absolute path, if autoCrop produced a cropped copy
 }
 
 export type OcrTextResolver = (imagePath: string) => Promise<{ text: string; words: string[] } | null>;
@@ -158,17 +159,13 @@ export class CardPool {
       if (existing.side !== card.side) continue;
       if (existing.path === card.path) continue;
 
-      const playerMatch = card.player && existing.player
-        ? playerNamesMatch(card.player, existing.player).match
-        : false;
-      const teamMatch = card.team && existing.team
-        ? teamNamesMatch(card.team, existing.team).match
-        : false;
+      const bothHavePlayers = Boolean(card.player && existing.player);
+      const neitherHasPlayer = !card.player && !existing.player;
+      const bothHaveTeams = Boolean(card.team && existing.team);
 
       const isReplacement =
-        (playerMatch && teamMatch) ||
-        (playerMatch && !card.team && !existing.team) ||
-        (teamMatch && !card.player && !existing.player);
+        (bothHavePlayers && playerNamesMatch(card.player!, existing.player!).match) ||
+        (neitherHasPlayer && bothHaveTeams && teamNamesMatch(card.team!, existing.team!).match);
 
       if (isReplacement) {
         debug(`Replacing stale pool entry ${cardLabel(existing)} with ${cardLabel(card)}`);

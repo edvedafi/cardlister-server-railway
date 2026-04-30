@@ -8,15 +8,20 @@ import sharp from 'sharp';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export type Orientation = 0 | 90 | 180 | 270;
+
 export type CardExtractResult = {
   player: string | null;
   team: string | null;
   card_number: string | null;
+  front_orientation?: Orientation;
+  back_orientation?: Orientation;
   error?: string;
 };
 
 export type SingleCardExtractResult = CardExtractResult & {
   side: 'front' | 'back' | null;
+  orientation?: Orientation;
 };
 
 // ── Configuration ───────────────────────────────────────────────────────────
@@ -46,6 +51,10 @@ let backendMode: 'ollama' | 'haiku' = 'ollama';
 
 export function setCardExtractorBackend(mode: 'ollama' | 'haiku') {
   backendMode = mode;
+}
+
+export function getCardExtractorBackend(): 'ollama' | 'haiku' {
+  return backendMode;
 }
 
 function getEnv(): NodeJS.ProcessEnv {
@@ -235,7 +244,9 @@ const USER_PROMPT =
   'Examine these trading card images (front and back) and extract:\n' +
   '1. player: The player\'s full name (null if not identifiable)\n' +
   '2. team: The team name (null if not identifiable)\n' +
-  '3. card_number: The card number as printed on the BACK of the card (e.g. "BC-15", "123") (null if not visible). Do not use jersey numbers or stats from the front.\n\n' +
+  '3. card_number: The card number as printed on the BACK of the card (e.g. "BC-15", "123") (null if not visible). Do not use jersey numbers or stats from the front.\n' +
+  '4. front_orientation: The clockwise rotation in degrees (0, 90, 180, or 270) needed to make the FIRST image display correctly upright.\n' +
+  '5. back_orientation: The clockwise rotation in degrees (0, 90, 180, or 270) needed to make the SECOND image display correctly upright.\n\n' +
   'Be precise. Only return what is clearly visible on the card.';
 
 const SINGLE_IMAGE_PROMPT =
@@ -244,12 +255,13 @@ const SINGLE_IMAGE_PROMPT =
   '2. team: The team name (null if not identifiable)\n' +
   '3. card_number: The card number as printed (e.g. "BC-15", "123") (null if not visible)\n' +
   '4. side: "front" if this shows the player photo/action shot, "back" if this shows ' +
-  'statistics, biography text, or copyright information\n\n' +
+  'statistics, biography text, or copyright information\n' +
+  '5. orientation: The clockwise rotation in degrees (0, 90, 180, or 270) needed to make the image display correctly upright.\n\n' +
   'Be precise. Only return what is clearly visible on the card.';
 
 const EXTRACT_TOOL: Anthropic.Tool = {
   name: 'extract_card_info',
-  description: 'Extract player name, team, and card number from trading card images',
+  description: 'Extract player name, team, card number, and orientation from trading card images',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -265,14 +277,24 @@ const EXTRACT_TOOL: Anthropic.Tool = {
         anyOf: [{ type: 'string' }, { type: 'null' }],
         description: 'Card number as printed (e.g. "BC-15", "123"), or null if not visible',
       },
+      front_orientation: {
+        type: 'integer',
+        enum: [0, 90, 180, 270],
+        description: 'Clockwise rotation in degrees needed to display the first (front) image correctly upright',
+      },
+      back_orientation: {
+        type: 'integer',
+        enum: [0, 90, 180, 270],
+        description: 'Clockwise rotation in degrees needed to display the second (back) image correctly upright',
+      },
     },
-    required: ['player', 'team', 'card_number'],
+    required: ['player', 'team', 'card_number', 'front_orientation', 'back_orientation'],
   },
 };
 
 const EXTRACT_SINGLE_TOOL: Anthropic.Tool = {
   name: 'extract_single_card_info',
-  description: 'Extract player name, team, card number, and front/back classification from a single trading card image',
+  description: 'Extract player name, team, card number, front/back classification, and orientation from a single trading card image',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -293,10 +315,23 @@ const EXTRACT_SINGLE_TOOL: Anthropic.Tool = {
         enum: ['front', 'back'],
         description: 'Whether this is the front (player photo) or back (stats/bio) of the card',
       },
+      orientation: {
+        type: 'integer',
+        enum: [0, 90, 180, 270],
+        description: 'Clockwise rotation in degrees needed to display the image correctly upright',
+      },
     },
-    required: ['player', 'team', 'card_number', 'side'],
+    required: ['player', 'team', 'card_number', 'side', 'orientation'],
   },
 };
+
+async function applyRotation(imagePath: string, degrees: Orientation): Promise<void> {
+  if (degrees === 0) return;
+  const tmpPath = imagePath + '.rotated.tmp';
+  await sharp(imagePath).rotate(degrees).jpeg({ quality: 95 }).toFile(tmpPath);
+  const fs = await import('fs/promises');
+  await fs.rename(tmpPath, imagePath);
+}
 
 let anthropicClient: Anthropic | null = null;
 
@@ -351,10 +386,14 @@ async function extractWithClaude(
   for (const block of response.content) {
     if (block.type === 'tool_use' && block.name === 'extract_card_info') {
       const inp = block.input as Record<string, unknown>;
+      const frontOri = inp.front_orientation as number;
+      const backOri = inp.back_orientation as number;
       return {
         player: (inp.player as string) || null,
         team: (inp.team as string) || null,
         card_number: (inp.card_number as string) || null,
+        front_orientation: ([0, 90, 180, 270].includes(frontOri) ? frontOri : 0) as Orientation,
+        back_orientation: ([0, 90, 180, 270].includes(backOri) ? backOri : 0) as Orientation,
       };
     }
   }
@@ -388,12 +427,14 @@ async function extractSingleWithClaude(
       const inp = block.input as Record<string, unknown>;
       const side = inp.side as string;
       const validSide = side === 'front' || side === 'back' ? side : null;
+      const ori = inp.orientation as number;
       return {
         player: (inp.player as string) || null,
         team: (inp.team as string) || null,
         // Card numbers are only on the back; ignore any value from fronts
         card_number: validSide === 'back' ? ((inp.card_number as string) || null) : null,
         side: validSide,
+        orientation: ([0, 90, 180, 270].includes(ori) ? ori : 0) as Orientation,
       };
     }
   }
@@ -412,12 +453,20 @@ export async function extractCardInfo(
   frontPath: string,
   backPath: string,
 ): Promise<CardExtractResult> {
+  let result: CardExtractResult;
+
   // Native TypeScript path for Claude Haiku — no Python subprocess needed
   if (backendMode === 'haiku') {
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        return await extractWithClaude(frontPath, backPath);
+        result = await extractWithClaude(frontPath, backPath);
+        // Apply orientation correction from Haiku
+        await Promise.all([
+          applyRotation(frontPath, result.front_orientation ?? 0),
+          applyRotation(backPath, result.back_orientation ?? 0),
+        ]);
+        return result;
       } catch (err) {
         lastError = err as Error;
         if (lastError.message.includes('API_KEY') || lastError.message.includes('not set')) throw lastError;
@@ -443,7 +492,7 @@ export async function extractCardInfo(
         ),
       ]);
 
-      const result = JSON.parse(responseLine) as CardExtractResult;
+      result = JSON.parse(responseLine) as CardExtractResult;
       if (result.error) throw new Error(result.error);
       return result;
     } catch (err) {
@@ -469,12 +518,17 @@ export async function extractCardInfo(
 export async function extractSingleCardInfo(
   imagePath: string,
 ): Promise<SingleCardExtractResult> {
+  let result: SingleCardExtractResult;
+
   // Native TypeScript path for Claude Haiku
   if (backendMode === 'haiku') {
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        return await extractSingleWithClaude(imagePath);
+        result = await extractSingleWithClaude(imagePath);
+        // Apply orientation correction from Haiku
+        await applyRotation(imagePath, result.orientation ?? 0);
+        return result;
       } catch (err) {
         lastError = err as Error;
         if (lastError.message.includes('API_KEY') || lastError.message.includes('not set')) throw lastError;
