@@ -40,6 +40,13 @@ abstract class AbstractListingStrategy<
   }
 
   async preProcessBatchJob(batchJobId: string): Promise<void> {
+    const preCheckJob = await this.batchJobService_.retrieve(batchJobId);
+    if (!preCheckJob.context?.category_id) {
+      this.log(`preProcessBatchJob: refusing ${batchJobId} (${preCheckJob.type}) — no category_id in context`);
+      await this.batchJobService_.setFailed(batchJobId, 'Missing category_id in context');
+      return;
+    }
+
     try {
       return await this.atomicPhase_(async (transactionManager) => {
         const batchJob = await this.batchJobService_.withTransaction(transactionManager).retrieve(batchJobId);
@@ -70,6 +77,13 @@ abstract class AbstractListingStrategy<
   }
 
   async processJob(batchJobId: string): Promise<void> {
+    const preCheckJob = await this.batchJobService_.retrieve(batchJobId);
+    if (!preCheckJob.context?.category_id) {
+      this.log(`processJob: refusing ${batchJobId} (${preCheckJob.type}) — no category_id in context`);
+      await this.batchJobService_.setFailed(batchJobId, 'Missing category_id in context');
+      return;
+    }
+
     return await this.atomicPhase_(async (transactionManager) => {
       let categoryId: string;
       try {
