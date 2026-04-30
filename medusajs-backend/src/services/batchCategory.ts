@@ -26,7 +26,7 @@ class BatchCategoryService extends TransactionBaseService {
   public async getCategories(request: SyncRequest): Promise<string[]> {
     // noinspection JSVoidFunctionReturnValueUsed
     const activityId = this.logger.activity(`Gathering Categories for ${JSON.stringify(request)}`);
-    const update = (message: string) => this.logger.log(activityId, `BATCH-CAT-SERVICE - ${message}`);
+    const update = (message: string) => this.logger.progress(activityId, `BATCH-CAT-SERVICE - ${message}`);
 
     const categories: Set<string> = new Set<string>();
 
