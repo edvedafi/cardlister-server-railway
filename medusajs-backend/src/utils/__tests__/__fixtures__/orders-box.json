@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "orders": [
+    {
+      "orderKey": "Center082026080211533",
+      "custCd": "Center08",
+      "orderDt": "20260802",
+      "orderTm": "11533",
+      "buyerName": "Robert Nori",
+      "receivedDisp": "08/02/2026",
+      "orderQty": 1,
+      "orderAmt": 0.18,
+      "orderPost": 0.75,
+      "orderLoot": 0,
+      "payPalAmt": 0.04,
+      "orderType": "TF",
+      "reportColor": "fbgo"
+    },
+    {
+      "orderKey": "kabdeals2026080316648",
+      "custCd": "kabdeals",
+      "orderDt": "20260803",
+      "orderTm": "16648",
+      "buyerName": "Keith Buschman",
+      "receivedDisp": "08/03/2026",
+      "orderQty": 8,
+      "orderAmt": 1.44,
+      "orderPost": 1.25,
+      "orderLoot": 0,
+      "payPalAmt": 0.08,
+      "orderType": "TF",
+      "reportColor": "fbgo"
+    }
+  ],
+  "totals": { "grandQty": 9, "grandAmt": 1.62, "grandLoot": 0, "grandPost": 2, "grandPayPal": 0.12 }
+}
