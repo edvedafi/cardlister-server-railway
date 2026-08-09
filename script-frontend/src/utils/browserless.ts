@@ -1,7 +1,14 @@
+import os from 'os';
+import path from 'path';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getBrowserlessConfig(baseUrl: string, logKey: string): any {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const config: any = {
+    // Pin the chromedriver download cache to a stable dir. WebdriverIO defaults
+    // this to os.tmpdir(), which macOS periodically purges — leaving an empty
+    // version folder that breaks re-download ("executable is missing").
+    cacheDir: path.join(os.homedir(), '.cache', 'webdriver'),
     capabilities: {
       browserName: 'chrome',
       'goog:chromeOptions': {

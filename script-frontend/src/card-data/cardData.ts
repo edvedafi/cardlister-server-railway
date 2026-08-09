@@ -358,6 +358,12 @@ function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): { product: Pr
     );
   };
 
+  // Strip a trailing letter suffix (e.g. "90a" -> "90") so a search for the
+  // base number matches lettered photo-variation SKUs. This must NOT be a
+  // substring check — "90".includes-style matching also (wrongly) matches
+  // unrelated numbers like "190" that merely contain "90" as a substring.
+  const stripCardNumberSuffix = (s: string): string => s.replace(/[a-zA-Z]+$/, '');
+
   const matchesCardNumberLocal = (productCardNumber: unknown, searchCardNumber: unknown, exact = false): boolean => {
     if (!productCardNumber || !searchCardNumber) return false;
     const productCardNumberStr = typeof productCardNumber === 'string' ? productCardNumber : String(productCardNumber);
@@ -372,8 +378,8 @@ function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): { product: Pr
     return productCardNumberStr === searchCardNumberStr ||
       productCardNumberStr === searchWithPrefix ||
       (!!prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr) ||
-      productCardNumberStr.includes(searchCardNumberStr) ||
-      searchCardNumberStr.includes(productCardNumberStr);
+      stripCardNumberSuffix(productCardNumberStr) === searchCardNumberStr ||
+      stripCardNumberSuffix(searchCardNumberStr) === productCardNumberStr;
   };
 
   const exactMatchesPlayerLocal = (productPlayer: unknown, searchPlayer: unknown): boolean => {
@@ -747,13 +753,17 @@ export async function matchCard(setInfo: SetInfo, imageDefaults: Metadata) {
       );
     }
     
-    // For non-exact matching, allow substring matches
+    // For non-exact matching, allow a trailing-letter suffix on the product's
+    // card number (e.g. "90a" matches a search of "90" for photo variations).
+    // This is intentionally NOT a substring check — that would also (wrongly)
+    // match unrelated numbers like "190" that merely contain "90".
+    const stripSuffix = (s: string) => s.replace(/[a-zA-Z]+$/, '');
     return (
       productCardNumberStr === searchCardNumberStr ||
       productCardNumberStr === searchWithPrefix ||
       (prefix && productCardNumberStr.replace(prefix, '') === searchCardNumberStr) ||
-      productCardNumberStr.includes(searchCardNumberStr) ||
-      searchCardNumberStr.includes(productCardNumberStr)
+      stripSuffix(productCardNumberStr) === searchCardNumberStr ||
+      stripSuffix(searchCardNumberStr) === productCardNumberStr
     );
   };
   

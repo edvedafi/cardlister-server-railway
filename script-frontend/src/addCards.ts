@@ -123,6 +123,7 @@ try {
 
   if (args['numbers'] || args['select-bulk-cards'] || args['inventory'] || args['price'] !== undefined) {
     args['bulk'] = true;
+    args['watch'] = false;
   }
 
   const input_directory = args['bulk'] || args['countCardsFirst'] ? 'input/bulk' : await getInputs(args);

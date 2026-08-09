@@ -447,7 +447,9 @@ export async function remoteProcess(
     rotatedBytes,
     player: meta.player,
     team: meta.team,
-    cardNumber: meta.card_number,
+    // Card numbers are only on the back; ignore any value from fronts
+    // (mirrors the same guard in card-extractor.ts for the local path).
+    cardNumber: meta.side === 'back' ? meta.card_number : null,
     side: meta.side,
     textDetectionCount: meta.text_count,
     orientation: meta.rotation_degrees,
