@@ -25,6 +25,7 @@ import {
   updateCategory,
   type Variation,
 } from '../utils/medusa.js';
+import { sportlotsSetUrl, terminalLink } from '../utils/terminalLink.js';
 import Queue from 'queue';
 import { type Card } from '../models/bsc';
 import { type SLCard } from '../models/cards';
@@ -776,6 +777,15 @@ export async function buildSet(setInfo: SetInfo) {
         }
 
         setSelectionComplete = true;
+      }
+
+      // Set selection is locked in — surface the public SportLots listing page
+      // before any SKUs get created, so it's easy to eyeball what's already up.
+      const slUrl = sportlotsSetUrl(category.metadata?.sportlots);
+      if (slUrl) {
+        // Plain string — useSpinners' log() applies its own chalk color, and
+        // nesting chalk inside would fight that.
+        log(`SportLots listings for this set: ${terminalLink(slUrl)}`);
       }
 
       // Now process additional series sets

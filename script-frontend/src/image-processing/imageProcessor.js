@@ -16,6 +16,12 @@ const debug = createLogger('crop');
 const output_directory = 'output/';
 const MAX_IMAGE_SIZE = 10 * 1000 * 1000; // slightly under 10MB
 
+const slugifyFilenamePart = (value) =>
+  String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
 // Sports cards are 2.5" x 3.5". Accept either orientation.
 const CARD_ASPECT_PORTRAIT = 2.5 / 3.5; // ~0.714
 const CARD_ASPECT_LANDSCAPE = 3.5 / 2.5; // ~1.400
@@ -55,9 +61,9 @@ function getOutputFile(listing, setInfo, imageNumber) {
   if (category.parallel) {
     outputLocation = `${outputLocation}/${category.parallel}`;
   }
-  const outputFile = `${outputLocation}/${listing.metadata.cardNumber}-${listing.product.metadata.player.reduce(
-    (names, name) => `${names}-${name.toLowerCase().replace(/\s/g, '-')}`,
-  )}-${imageNumber}.jpg`;
+  const cardSlug = slugifyFilenamePart(listing.metadata.cardNumber);
+  const playerSlug = listing.product.metadata.player.map(slugifyFilenamePart).filter(Boolean).join('-');
+  const outputFile = `${outputLocation}/${cardSlug}-${playerSlug}-${imageNumber}.jpg`;
   return { outputLocation, outputFile };
 }
 

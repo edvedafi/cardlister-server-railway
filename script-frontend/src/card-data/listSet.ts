@@ -25,6 +25,8 @@ import { orientAndClassifyCards, orderFrontBack } from '../image-processing/card
 import { getCommonPricing, getDefaultPricing, getPricing } from './pricing';
 import { showReviewMenu, type ReviewMenuState } from '../utils/reviewMenu';
 import type { UnmatchedCard } from '../utils/cardPool';
+import { playerAndCardNumberMatch } from '../utils/cardPool';
+import { sportlotsSetUrl } from '../utils/terminalLink';
 
 const { showSpinner, log } = useSpinners('list-set', chalk.cyan);
 const debug = createLogger('listSet');
@@ -47,6 +49,37 @@ const uploadQueue = new Queue({
 let hasUpdated = false;
 let watchModeCropEnabled = false;
 let cropOutputDir = '';
+
+/** Tracks every card job between "pair matched" and "finalized/dropped" so a
+ * confirmed duplicate can be cancelled out of the pipeline once the user
+ * confirms its sibling in the review menu. */
+interface PendingReviewEntry {
+  id: number;
+  front: string;
+  back: string;
+  player: string | null;
+  cardNumber: string | null;
+  cancelled: boolean;
+}
+const pendingReviewEntries = new Map<number, PendingReviewEntry>();
+let nextPendingReviewId = 0;
+
+function normalizeIdentityField(v: string | string[] | null | undefined): string | null {
+  if (!v) return null;
+  return Array.isArray(v) ? v.join(', ') : v;
+}
+
+/** Called right when a card is confirmed (Enter). Cancels every other
+ * still-in-flight entry that's a confirmed duplicate of it. */
+function cancelDuplicateQueuedCards(current: PendingReviewEntry): void {
+  for (const entry of pendingReviewEntries.values()) {
+    if (entry.id === current.id || entry.cancelled) continue;
+    if (playerAndCardNumberMatch(current, entry)) {
+      entry.cancelled = true;
+      log(chalk.yellow(`Removed duplicate queued card: ${entry.player} #${entry.cardNumber} — already reviewed`));
+    }
+  }
+}
 
 // Maps cropped image basename → original image basename for markScanned tracking
 const cropOriginalNames = new Map<string, string>();
@@ -270,6 +303,7 @@ const buildCardState = async (
         ?? autoResult.product?.title
         ?? `#${imageDefaults.cardNumber ?? '?'} ${Array.isArray(imageDefaults.player) ? imageDefaults.player.join(', ') : imageDefaults.player ?? 'Unknown'}`,
       quantity: existingQuantity,
+      quantityFromBackend: existingQuantity > 0,
       prices: pricingResult.display,
       priceMoneyAmounts: pricingResult.prices,
       frontCrop: { file: front, method: 'auto' },
@@ -305,11 +339,15 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
   if (menuState.matchedVariant) {
     try {
       menuState.quantity = await getInventoryQuantity(menuState.matchedVariant);
+      menuState.quantityFromBackend = menuState.quantity > 0;
     } catch {
       // best-effort — keep Phase 1 value
     }
   }
-  if (menuState.quantity === 0) menuState.quantity = 1;
+  if (menuState.quantity === 0) {
+    menuState.quantity = 1;
+    menuState.quantityFromBackend = false;
+  }
 
   const reviewed = await showReviewMenu(menuState, {
     onPrice: async () => {
@@ -385,7 +423,7 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
       debug(`[pricing:manual] variant prices (${manualVariantPrices?.length ?? 'none'}):`, JSON.stringify(manualVariantPrices?.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id })) ?? null));
       debug(`[pricing:manual] chosen currentPrices (${currentPrices.length}):`, JSON.stringify(currentPrices.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id }))));
       const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
-      return { product, variant: productVariant, quantity, prices: pricingResult.prices, priceDisplay: pricingResult.display };
+      return { product, variant: productVariant, quantity, quantityFromBackend: quantity > 0, prices: pricingResult.prices, priceDisplay: pricingResult.display };
     },
     onVariantSelect: async () => {
       if (!menuState.matchedProduct) return null;
@@ -401,7 +439,7 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
       const currentPrices = hasUsableVariantPrices ? variantPrices : setData.category?.metadata?.prices ?? [];
       debug(`[pricing:variant] variant prices (${variantPrices?.length ?? 'none'}):`, JSON.stringify(variantPrices?.map((p: MoneyAmount) => ({ amount: p.amount, region_id: p.region_id })) ?? null));
       const pricingResult = await getDefaultPricing(currentPrices, args['allBase']);
-      return { variant: productVariant, quantity, prices: pricingResult.prices, priceDisplay: pricingResult.display };
+      return { variant: productVariant, quantity, quantityFromBackend: quantity > 0, prices: pricingResult.prices, priceDisplay: pricingResult.display };
     },
   });
 
@@ -1200,11 +1238,17 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
       // Forward ref so onPairReady can call watcher.reAddToPool after the
       // initializer finishes. The closure is only invoked later when pairs match.
       let watcher!: import('../utils/watchDirectory.js').DirectoryWatcher;
+      const slUrl = sportlotsSetUrl(setData.category?.metadata?.sportlots);
+      const sportlotsSetLink = slUrl
+        ? { label: 'SportLots listings for this set', url: slUrl }
+        : undefined;
+
       watcher = watchWithSmartMatching({
         directory: inputDirectory,
         knownFiles,
         scannedFiles,
         initialFiles: files,
+        setLink: sportlotsSetLink,
 
         // ── Automated callbacks (intake queue, concurrency 3) ─────────────
         autoCrop: async (imagePath: string) => {
@@ -1359,12 +1403,25 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         },
         onPairReady: async (front, back, match) => {
           // Build pool priors from the match — merge front+back extraction data.
-          // Prefer front for player (usually has the name), back for cardNumber.
+          // Prefer front for player (usually has the name), back for cardNumber
+          // (card numbers are printed on the back; fronts shouldn't carry one).
           const priors: PoolPriors = {
             player: match.front.player ?? match.back.player,
             team: match.front.team ?? match.back.team,
-            cardNumber: match.front.cardNumber ?? match.back.cardNumber,
+            cardNumber: match.back.cardNumber ?? match.front.cardNumber,
           };
+          debug(`Pool priors for pair: player=${priors.player ?? 'null'} team=${priors.team ?? 'null'} cardNumber=${priors.cardNumber ?? 'null'}`);
+
+          const pendingEntry: PendingReviewEntry = {
+            id: ++nextPendingReviewId,
+            front,
+            back,
+            player: normalizeIdentityField(priors.player),
+            cardNumber: normalizeIdentityField(priors.cardNumber),
+            cancelled: false,
+          };
+          pendingReviewEntries.set(pendingEntry.id, pendingEntry);
+
           const jobPromise = new Promise<void>((resolve, reject) => {
             // Phase 1: Automated card identification (concurrency 3).
             // The queue slot is released as soon as buildCardState finishes
@@ -1372,6 +1429,16 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
             // user review.
             cardProcessorQueue.push(async () => {
               try {
+                // A sibling card's Enter may have already marked this one a
+                // duplicate while it was sitting queued — skip the wasted
+                // OCR/recognition/pricing work entirely.
+                if (pendingEntry.cancelled) {
+                  markScanned(front, back);
+                  pendingReviewEntries.delete(pendingEntry.id);
+                  resolve();
+                  return;
+                }
+
                 const state = await buildCardState(
                   front,
                   back,
@@ -1381,21 +1448,56 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
                   match.front.originalPath,
                   match.back.originalPath,
                 );
+
+                // imageDefaults is the AI-recognized identity — more reliable
+                // than the pool's pre-recognition priors, so later duplicate
+                // comparisons use the best data available.
+                const recognizedIdentity = state.imageDefaults as { player?: string | string[] | null; cardNumber?: string | null };
+                pendingEntry.player = normalizeIdentityField(recognizedIdentity.player) ?? pendingEntry.player;
+                pendingEntry.cardNumber = normalizeIdentityField(recognizedIdentity.cardNumber) ?? pendingEntry.cardNumber;
+
                 // Detach review+upload so the processor slot is freed.
                 // resolve/reject are captured by the closure and called when
                 // the full chain completes.
                 void (async () => {
                   try {
+                    // A sibling card's Enter may have marked this one a
+                    // duplicate while buildCardState was running — this is
+                    // the last checkpoint before the review menu would show.
+                    if (pendingEntry.cancelled) {
+                      markScanned(front, back);
+                      pendingReviewEntries.delete(pendingEntry.id);
+                      resolve();
+                      return;
+                    }
+
                     // Phase 2: Interactive review on the UI queue (concurrency 1).
                     // submitUITask automatically wakes any idling waiting task.
                     // If the session is already complete, the task is dropped and
                     // the returned promise resolves with undefined — we treat that
                     // as "skip finalize" so the job promise still resolves.
-                    const reviewed = await submitUITask('review', async () => reviewCard(state));
+                    //
+                    // The cancelled re-check happens INSIDE the queued closure,
+                    // not just before submitUITask is called — a sibling card can
+                    // sit in the uiQueue for a while before its turn comes up, and
+                    // a duplicate cancellation can land in that window. Checking
+                    // only before enqueueing leaves a race where an already-queued
+                    // duplicate still shows its review menu.
+                    const reviewed = await submitUITask('review', async () => {
+                      if (pendingEntry.cancelled) {
+                        markScanned(front, back);
+                        return undefined;
+                      }
+                      return reviewCard(state);
+                    });
                     if (reviewed === undefined) {
+                      pendingReviewEntries.delete(pendingEntry.id);
                       resolve();
                       return;
                     }
+                    // Card confirmed (Enter) — drop any other still-queued
+                    // entries that are a confirmed duplicate of this one.
+                    cancelDuplicateQueuedCards(pendingEntry);
                     if (reviewed.rejected) {
                       // User rejected one side — mark only that scan as scanned
                       // (so the watcher doesn't re-ingest it) and put the kept
@@ -1410,6 +1512,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
                       const keptCard: UnmatchedCard = { ...sourceCard, path: currentKeptPath, timestamp: Date.now() };
                       log(chalk.yellow(`Rejected ${reviewed.rejected} — returned ${keptCard.side} to pool, waiting for rescan`));
                       await watcher.reAddToPool(keptCard);
+                      pendingReviewEntries.delete(pendingEntry.id);
                       resolve();
                       return;
                     }
@@ -1417,6 +1520,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
                     uploadQueue.push(async () => {
                       try {
                         await finalizeCard(reviewed, setData);
+                        pendingReviewEntries.delete(pendingEntry.id);
                         resolve();
                       } catch (e) {
                         // Surface upload errors to the user via the UI queue.
@@ -1424,13 +1528,14 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
                           // eslint-disable-next-line no-console
                           console.log(chalk.red(`Upload failed: ${e instanceof Error ? e.message : String(e)}`));
                         });
+                        pendingReviewEntries.delete(pendingEntry.id);
                         reject(e);
                         throw e;
                       }
                     });
-                  } catch (e) { reject(e); }
+                  } catch (e) { pendingReviewEntries.delete(pendingEntry.id); reject(e); }
                 })();
-              } catch (e) { reject(e); throw e; }
+              } catch (e) { pendingReviewEntries.delete(pendingEntry.id); reject(e); throw e; }
             });
           });
           allJobPromises.push(jobPromise);

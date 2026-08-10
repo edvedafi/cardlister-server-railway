@@ -5,8 +5,10 @@ import Queue from 'queue';
 import { useSpinners } from './spinners.js';
 import chalk from 'chalk';
 import { CardPool, type CardSide, type MatchResult, type UnmatchedCard, type OcrTextResolver } from './cardPool.js';
+import { computeDHash } from './imageHash.js';
 import { ask, queuedLog } from './ask.js';
 import { createLogger } from './logger.js';
+import { terminalLink } from './terminalLink.js';
 import {
   setWaitingTaskFactory,
   setWaitingAbort,
@@ -116,6 +118,8 @@ export interface SmartWatcherOptions {
   onResolvePool?: (cards: UnmatchedCard[]) => Promise<UnmatchedCard[]>;
   /** Called when a front/back pair is matched — includes pool extraction data as priors */
   onPairReady: (front: string, back: string, match: MatchResult) => Promise<void>;
+  /** Optional clickable link shown in the waiting header (e.g. the SportLots listings for this set). */
+  setLink?: { label: string; url: string };
 }
 
 export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatcher {
@@ -136,9 +140,10 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
     renderCardPreview,
     onResolvePool,
     onPairReady,
+    setLink,
   } = opts;
 
-  const pool = new CardPool(ocrResolver);
+  const pool = new CardPool(ocrResolver, computeDHash);
   const recentlySeen = new Map<string, number>();
   let stopped = false;
   let watcher: fs.FSWatcher | null = null;
@@ -419,6 +424,11 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
     await queuedLog('');
     await queuedLog(chalk.green.bold('All cards processed. Waiting for new cards...'));
     await queuedLog(chalk.green('  Add .jpg files to the input directory to continue processing.'));
+    if (setLink) {
+      await queuedLog(
+        chalk.cyan(`  ${setLink.label}: `) + terminalLink(setLink.url, chalk.cyan.underline(setLink.url)),
+      );
+    }
     if (pool.size > 0) {
       await queuedLog(chalk.yellow(`  ${pool.size} unmatched card(s) in pool, waiting for partners:`));
       for (const card of pool.entries()) {

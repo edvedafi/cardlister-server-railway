@@ -4,5 +4,5 @@
     /* Emit a single file with source maps instead of having a separate file. */
     "inlineSourceMap": true
   },
-  "exclude": ["src/admin", "**/*.spec.js"]
+  "exclude": ["src/admin", "**/*.spec.js", "**/*.spec.ts", "**/__tests__/**"]
 }

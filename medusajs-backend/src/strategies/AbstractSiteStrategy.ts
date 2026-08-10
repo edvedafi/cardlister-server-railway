@@ -25,6 +25,7 @@ type InjectedDependencies = {
   manager: EntityManager;
   transactionManager: EntityManager;
   productVariantService: ProductVariantService;
+  productService: ProductService;
   inventoryService: InventoryService;
   logger: Logger;
   regionService: RegionService;
@@ -57,6 +58,7 @@ abstract class AbstractSiteStrategy<
       this.batchJobService_ = __container__.batchJobService || this.batchJobService_;
       this.categoryService_ = __container__.productCategoryService;
       this.productVariantService_ = __container__.productVariantService;
+      this.productService = __container__.productService;
       this.regionService = __container__.regionService;
       this.stockLocationService = __container__.stockLocationService;
     } catch (e) {

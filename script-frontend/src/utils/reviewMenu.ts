@@ -10,6 +10,12 @@ export type CropResult = { file: string | null; method: string };
 export type ReviewMenuState = {
   cardTitle: string;
   quantity: number;
+  // True when `quantity` was populated from an existing Medusa inventory
+  // count (i.e. this card is already stocked) rather than the new-listing
+  // default of 1. Drives the "(in stock)" indicator and the + hotkey hint —
+  // a backend-sourced 1 means "you already have one, scanning a duplicate
+  // should bump this to 2", not "set stock to 1".
+  quantityFromBackend: boolean;
   prices: { ebay: number; mcp: number; bsc: number; sportlots: number };
   priceMoneyAmounts: MoneyAmount[];
   frontCrop: CropResult;
@@ -49,12 +55,14 @@ export type ReviewMenuCallbacks = {
     product: Product;
     variant: ProductVariant;
     quantity: number;
+    quantityFromBackend: boolean;
     prices: MoneyAmount[];
     priceDisplay: ReviewMenuState['prices'];
   } | null>;
   onVariantSelect: () => Promise<{
     variant: ProductVariant;
     quantity: number;
+    quantityFromBackend: boolean;
     prices: MoneyAmount[];
     priceDisplay: ReviewMenuState['prices'];
   } | null>;
@@ -111,7 +119,9 @@ function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null,
 
   const qtyDisplay = quantityBuffer !== null
     ? chalk.bgGreen.black(` ${quantityBuffer || ' '} `) + chalk.dim(' (typing…)')
-    : chalk.green(String(state.quantity));
+    : state.quantityFromBackend
+      ? chalk.cyan(String(state.quantity)) + chalk.dim(' (in stock — press ') + k('+') + chalk.dim(' to add this copy)')
+      : chalk.green(String(state.quantity));
 
   const manualLabel = state.matchedProduct
     ? k('M') + 'anual card select'
@@ -318,6 +328,10 @@ export async function showReviewMenu(
           case 'Q':
             state.quantity = await askQuantity(state.quantity);
             break;
+          case '+':
+          case '=':
+            state.quantity += 1;
+            break;
           case 'p':
           case 'P': {
             const result = await callbacks.onPrice();
@@ -372,6 +386,7 @@ export async function showReviewMenu(
               state.cardTitle = result.variant.title || result.product.title || state.cardTitle;
               state.matchConfidence = 10000; // User-confirmed
               state.quantity = result.quantity;
+              state.quantityFromBackend = result.quantityFromBackend;
               state.priceMoneyAmounts = result.prices;
               state.prices = result.priceDisplay;
             }
@@ -390,6 +405,7 @@ export async function showReviewMenu(
                 || state.cardTitle;
               state.matchConfidence = 10000; // User-confirmed
               state.quantity = result.quantity;
+              state.quantityFromBackend = result.quantityFromBackend;
               state.priceMoneyAmounts = result.prices;
               state.prices = result.priceDisplay;
             }

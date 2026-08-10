@@ -1,5 +1,6 @@
 import path from 'path';
 import { createLogger } from './logger.js';
+import { hammingDistance, SAME_IMAGE_THRESHOLD } from './imageHash.js';
 
 const debug = createLogger('card-pool');
 
@@ -8,6 +9,11 @@ function cardLabel(card: UnmatchedCard): string {
   const name = card.originalFilename ?? path.basename(card.path);
   const player = card.player ?? 'unknown';
   return `${player} (${name})`;
+}
+
+/** Raw identity fields for a card, for diagnostic logging. */
+function cardIdentity(card: UnmatchedCard): string {
+  return `player=${card.player ?? 'null'} team=${card.team ?? 'null'} cardNumber=${card.cardNumber ?? 'null'}`;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -26,9 +32,13 @@ export interface UnmatchedCard {
   ocrWords?: string[]; // cached individual OCR words, lowercased
   originalFilename?: string; // original input filename before cropping
   originalPath?: string; // pre-crop source absolute path, if autoCrop produced a cropped copy
+  imageHash?: bigint; // cached perceptual dHash, lazily computed on a same-side collision
 }
 
 export type OcrTextResolver = (imagePath: string) => Promise<{ text: string; words: string[] } | null>;
+
+/** Resolves an image's perceptual hash; returns null when hashing isn't possible. */
+export type ImageHasher = (imagePath: string) => Promise<bigint | null>;
 
 export interface MatchResult {
   front: UnmatchedCard;
@@ -78,6 +88,14 @@ function playerNamesMatch(a: string, b: string): { match: boolean; exact: boolea
     if (firstB.length === 1 && firstA.startsWith(firstB)) return { match: true, exact: false };
   }
 
+  // Single-word name vs full name: many card fronts print only the surname
+  // ("BUEHLER") while the back carries the full name ("Walker Buehler").
+  // The last names already matched above, so with no first name to contradict
+  // it, treat this as a (non-exact) match.
+  if (partsA.length === 1 || partsB.length === 1) {
+    return { match: true, exact: false };
+  }
+
   // Last name matched — check first name compatibility
   if (partsA.length >= 2 && partsB.length >= 2) {
     const firstA = partsA[0];
@@ -97,6 +115,22 @@ function playerNamesMatch(a: string, b: string): { match: boolean; exact: boolea
 }
 
 /**
+ * Strict "is this a confirmed duplicate" check — requires BOTH player and
+ * cardNumber to match. Used to auto-remove redundant queued review jobs;
+ * deliberately stricter than sameCardIdentity's OR-fallback (which is tuned
+ * for pool pairing, not destructive removal) — missing data must never be
+ * treated as proof of duplication.
+ */
+export function playerAndCardNumberMatch(
+  a: { player: string | null; cardNumber: string | null },
+  b: { player: string | null; cardNumber: string | null },
+): boolean {
+  if (!a.player || !b.player || !a.cardNumber || !b.cardNumber) return false;
+  if (!playerNamesMatch(a.player, b.player).match) return false;
+  return a.cardNumber.toLowerCase().trim() === b.cardNumber.toLowerCase().trim();
+}
+
+/**
  * Check if two team names match.
  * Handles exact match and substring containment
  * (e.g., "Chiefs" in "Kansas City Chiefs").
@@ -109,6 +143,33 @@ function teamNamesMatch(a: string, b: string): { match: boolean; exact: boolean 
   if (na.includes(nb) || nb.includes(na)) return { match: true, exact: false };
 
   return { match: false, exact: false };
+}
+
+/**
+ * Decide whether two cards refer to the same card for collision purposes.
+ * Player name is the strongest signal (large, clearly-OCR'd text) and is
+ * authoritative when both sides have one — an explicit disagreement there
+ * must not be overridden by a coincidentally-equal card number, which is a
+ * much more error-prone read (especially misreads leaking through from
+ * front-side images). Card number and team are only consulted as fallbacks
+ * when at least one side lacks a player name.
+ */
+function sameCardIdentity(a: UnmatchedCard, b: UnmatchedCard): boolean {
+  if (a.player && b.player) {
+    return playerNamesMatch(a.player, b.player).match;
+  }
+
+  if (
+    a.cardNumber &&
+    b.cardNumber &&
+    a.cardNumber.toLowerCase().trim() === b.cardNumber.toLowerCase().trim()
+  ) {
+    return true;
+  }
+
+  if (a.team && b.team && teamNamesMatch(a.team, b.team).match) return true;
+
+  return false;
 }
 
 /**
@@ -129,9 +190,11 @@ function nameFoundInOcrText(playerName: string, ocrText: string, ocrWords: strin
 export class CardPool {
   private cards = new Map<string, UnmatchedCard>();
   private ocrResolver: OcrTextResolver | null;
+  private imageHasher: ImageHasher | null;
 
-  constructor(ocrResolver?: OcrTextResolver) {
+  constructor(ocrResolver?: OcrTextResolver, imageHasher?: ImageHasher) {
     this.ocrResolver = ocrResolver ?? null;
+    this.imageHasher = imageHasher ?? null;
   }
 
   get size(): number {
@@ -147,31 +210,67 @@ export class CardPool {
   }
 
   /**
-   * Evict any already-pooled card that shares side + player/team identity
-   * with `card`. Used so that a freshly-scanned image always replaces an
-   * older one waiting in the pool — the user may be deliberately re-scanning
-   * a card whose prior scan was skewed, blurry, or otherwise unwanted.
+   * Resolve a collision where `card` shares the same side + identity (card
+   * number, player, or team) as a card already waiting in the pool.
+   *
+   * Front/back classification is sometimes wrong, so two *different* images of
+   * the same card can both arrive labelled the same side. We must not overwrite
+   * the image already in the pool. Instead:
+   *   - If the two images are the *same* physical scan (a deliberate re-scan),
+   *     keep the newer one — evict the stale entry (newer-wins, as before).
+   *   - If the images differ, the new one was mis-classified: flip its side so
+   *     it pairs with the existing card instead of clobbering it.
+   *
+   * When no image hasher is available (or hashing fails) we can't tell the two
+   * cases apart, so we fall back to the legacy newer-wins behaviour.
    */
-  private removeSameSideDuplicate(card: UnmatchedCard): void {
-    if (!card.player && !card.team) return;
+  private async resolveSameSideCollision(card: UnmatchedCard): Promise<void> {
+    if (!card.player && !card.team && !card.cardNumber) return;
 
     for (const existing of this.cards.values()) {
       if (existing.side !== card.side) continue;
       if (existing.path === card.path) continue;
+      if (!sameCardIdentity(card, existing)) continue;
 
-      const bothHavePlayers = Boolean(card.player && existing.player);
-      const neitherHasPlayer = !card.player && !existing.player;
-      const bothHaveTeams = Boolean(card.team && existing.team);
-
-      const isReplacement =
-        (bothHavePlayers && playerNamesMatch(card.player!, existing.player!).match) ||
-        (neitherHasPlayer && bothHaveTeams && teamNamesMatch(card.team!, existing.team!).match);
-
-      if (isReplacement) {
-        debug(`Replacing stale pool entry ${cardLabel(existing)} with ${cardLabel(card)}`);
+      if (await this.imagesAreSame(card, existing)) {
+        debug(`Same-image re-scan: replacing ${cardLabel(existing)} with ${cardLabel(card)}`);
+        debug(`  existing: ${cardIdentity(existing)}`);
+        debug(`  incoming: ${cardIdentity(card)}`);
         this.cards.delete(existing.path);
-        return;
+      } else {
+        const flipped: CardSide = card.side === 'front' ? 'back' : 'front';
+        debug(`Same-side collision with a different image — flipping ${cardLabel(card)} ${card.side} → ${flipped} (keeping ${cardLabel(existing)})`);
+        debug(`  existing: ${cardIdentity(existing)}`);
+        debug(`  incoming: ${cardIdentity(card)}`);
+        card.side = flipped;
       }
+      return;
+    }
+  }
+
+  /**
+   * Compare two cards' images via perceptual hash. Returns true when they look
+   * like the same physical scan. Without a working hasher we conservatively
+   * return true so behaviour matches the pre-safety-net newer-wins logic.
+   */
+  private async imagesAreSame(a: UnmatchedCard, b: UnmatchedCard): Promise<boolean> {
+    if (!this.imageHasher) return true;
+    const ha = await this.ensureHash(a);
+    const hb = await this.ensureHash(b);
+    if (ha === null || hb === null) return true;
+    return hammingDistance(ha, hb) <= SAME_IMAGE_THRESHOLD;
+  }
+
+  /** Lazily compute and cache a card's perceptual hash. */
+  private async ensureHash(card: UnmatchedCard): Promise<bigint | null> {
+    if (card.imageHash !== undefined) return card.imageHash;
+    if (!this.imageHasher) return null;
+    try {
+      const hash = await this.imageHasher(card.path);
+      if (hash !== null) card.imageHash = hash;
+      return hash;
+    } catch {
+      return null;
     }
   }
 
@@ -180,8 +279,10 @@ export class CardPool {
    * Returns a MatchResult if a match is found, or null if the card is held.
    */
   async addCard(card: UnmatchedCard): Promise<MatchResult | null> {
-    // Evict any stale same-side scan before matching so the newer image wins.
-    this.removeSameSideDuplicate(card);
+    // Resolve same-side collisions before matching: a re-scan replaces the
+    // stale entry, while a mis-classified different image is flipped so it can
+    // pair instead of overwriting the image already in the pool.
+    await this.resolveSameSideCollision(card);
 
     // Fast path: direct field matching (synchronous)
     const match = this.findMatch(card);
@@ -222,6 +323,15 @@ export class CardPool {
       oppositeSideCount++;
       lastOpposite = existing;
 
+      // Player name is the strongest, least error-prone signal. If both cards
+      // have one and they explicitly disagree, this candidate cannot be a
+      // match — a coincidentally-equal card number (which can leak in from
+      // misread front-side text) must never override that disagreement.
+      if (card.player && existing.player && !playerNamesMatch(card.player, existing.player).match) {
+        debug(`Rejecting candidate (player mismatch): ${cardIdentity(card)} vs ${cardIdentity(existing)}`);
+        continue;
+      }
+
       let score = 0;
       let cardNumberMatched = false;
       let playerMatched = false;
@@ -241,10 +351,6 @@ export class CardPool {
         if (pm.match) {
           score += pm.exact ? 1000 : 400;
           playerMatched = true;
-        } else {
-          // Both cards have player names but they don't match —
-          // strong signal these are different cards
-          score -= 1000;
         }
       }
 
@@ -275,6 +381,8 @@ export class CardPool {
       const front = card.side === 'front' ? card : bestCandidate;
       const back = card.side === 'back' ? card : bestCandidate;
       debug(`Match found (${bestConfidence}, score: ${bestScore}): ${cardLabel(front)} <-> ${cardLabel(back)}`);
+      debug(`  front: ${cardIdentity(front)}`);
+      debug(`  back:  ${cardIdentity(back)}`);
       return { front, back, confidence: bestConfidence };
     }
 

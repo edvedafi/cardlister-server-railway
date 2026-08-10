@@ -1,136 +1,100 @@
+import { AxiosInstance } from 'axios';
 import SaleStrategy, { SystemOrder } from './AbstractSalesStrategy';
-import { PuppeteerHelper } from '../utils/puppeteer-helper';
-import { login as slLogin } from '../utils/sportlots';
+import { fetchOrderHeaders, fetchPullRows, login as slLogin } from '../utils/sportlots-api';
+import { groupPullRows, joinOrders, SlStream } from '../utils/sportlots-parse';
 import { Product, ProductVariant } from '@medusajs/medusa';
 import { CategoryMap } from '../models/category-map';
 
-abstract class SportlotsSalesStrategy extends SaleStrategy<PuppeteerHelper> {
+const STREAMS: SlStream[] = ['box', 'paid'];
+
+abstract class SportlotsSalesStrategy extends SaleStrategy<AxiosInstance> {
   static identifier = 'sportlots-sales-strategy';
   static batchType = 'sportlots-sales-sync';
   static listingSite = 'SportLots';
 
-  async login() {
-    return await this.loginPuppeteer('https://www.sportlots.com/', slLogin);
+  async login(): Promise<AxiosInstance> {
+    return await slLogin(this.loginAxios.bind(this));
   }
 
-  async getOrders(pup: PuppeteerHelper): Promise<SystemOrder[]> {
+  async getOrders(api: AxiosInstance): Promise<SystemOrder[]> {
+    const raw: SystemOrder[] = [];
+
+    // 'box' ships to the SportLots box, 'paid' ships direct to the buyer. We treat them
+    // identically, but each stream must be joined against its own pull sheet before merging.
+    for (const stream of STREAMS) {
+      const [headers, rows] = await Promise.all([
+        fetchOrderHeaders(api, stream, (message) => this.log(`${stream}: ${message}`)),
+        fetchPullRows(api, stream),
+      ]);
+      this.log(`Found ${headers.length} ${stream} orders covering ${rows.length} cards`);
+      raw.push(...joinOrders(headers, groupPullRows(rows), (message) => this.log(`${stream}: ${message}`)));
+    }
+
+    // Order ids become the draft order idempotency_key, so a duplicate across streams would collide.
+    const deduped = [...new Map(raw.map((order) => [order.id, order])).values()];
+
+    return await this.resolveLineItems(deduped);
+  }
+
+  /**
+   * Resolves each scraped line item to a real product variant. SportLots gives us a bin and a card
+   * number; the SKU lookup usually hits, and the bin -> category -> product walk covers legacy bins
+   * whose SKUs were never normalized.
+   */
+  private async resolveLineItems(rawOrders: SystemOrder[]): Promise<SystemOrder[]> {
     const orders: SystemOrder[] = [];
+    const categories: CategoryMap = await this.binService.getAllBins();
 
-    const process = async (orderType: string) => {
-      await pup.goto(`inven/dealbin/dealacct.tpl?ordertype=${orderType}`);
+    for (const rawOrder of rawOrders) {
+      const order: SystemOrder = { ...rawOrder, lineItems: [] };
 
-      const rawOrders: SystemOrder[] = await pup.page.evaluate(() => {
-        const tables = Array.from(document.querySelectorAll('form[action="/inven/dealbin/dealupd.tpl"]'));
-        return tables.map((table) => {
-          const divs = table.querySelectorAll('div');
-          let i = 0;
-          const link = divs[i].querySelector('a');
-          const orderId = link?.textContent?.trim();
-          const username = orderId.slice(0, orderId.indexOf('2024'));
+      for (const lineItem of rawOrder.lineItems) {
+        let variant: ProductVariant | undefined;
+        try {
+          variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {
+            relations: ['product', 'product.variants'],
+          });
+        } catch (e) {
+          this.log(`Could not find product variant for SKU: ${lineItem.sku} (${e.message})`);
+        }
 
-          const order = {
-            id: orderId,
-            customer: {
-              name: link.getAttribute('title'),
-              username: username,
-              email: `${username}@sportlots.com`,
-            },
-            packingSlip: link.getAttribute('href')?.replace("javascript:showFAQ('", '').replace("',1400,500)", ''),
-            lineItems: [],
-          };
-
-          //skip the junk
-          i = 15;
-
-          while (i + 6 <= divs.length) {
-            i++; //first is a blank div
-            const quantity = parseInt(divs[i++].textContent.replace('\n', '').trim());
-            const title = divs[i++].textContent.replace('\n', '').trim();
-            const bin = divs[i++].textContent.replace('\n', '').trim();
-            i++; // condition
-            const price = divs[i++].textContent.replace('\n', '').trim();
-            const cardNumber =
-              title
-                .split(' ')
-                .find((word) => word.startsWith('#'))
-                ?.replace('#', '') || 'NNO';
-            const sku = bin.indexOf('|') > 0 ? bin : `${bin}|${cardNumber}`;
-            order.lineItems.push({
-              quantity: quantity,
-              title: title,
-              sku: sku,
-              bin: bin,
-              cardNumber: cardNumber,
-              unit_price: parseInt(price?.replace('.', '').replace('$', '').trim() || '0') / quantity,
-            });
-          }
-          return order;
-        });
-      });
-
-      // this.log(`Found ${rawOrders.length} ${orderType} orders`);
-      // this.log(JSON.stringify(rawOrders, null, 2));
-      // rawOrders = [];
-      const categories: CategoryMap = await this.binService.getAllBins();
-      for (let orderNumber = 0; orderNumber < rawOrders.length; orderNumber++) {
-        const rawOrder = rawOrders[orderNumber];
-        const order: SystemOrder = {
-          ...rawOrder,
-          lineItems: [],
-        };
-        const rawLineItems = [...rawOrder.lineItems];
-
-        for (let i = 0; i < rawLineItems.length; i++) {
-          const lineItem = rawLineItems[i];
-          // this.log(`Processing line item: ${lineItem.sku}`);
-          let variant: ProductVariant | undefined;
-          try {
-            variant = await this.productVariantService_.retrieveBySKU(lineItem.sku, {
-              relations: ['product', 'product.variants'],
-            });
-          } catch (e) {
-            this.log(`Could not find product variant for SKU: ${lineItem.sku} (${e.message})`);
-          }
-          if (!variant && lineItem.bin) {
-            const categoryId = categories[lineItem.bin];
-            if (categoryId) {
-              const products = await this.getProducts(categoryId);
-              const product = products.find((p) => p.metadata.cardNumber === lineItem.cardNumber);
-              if (product) {
-                variant = product?.variants.find((v) => v.metadata.sportlots === lineItem.title);
-              } else {
-                products.forEach((p) => {
-                  const v = p?.variants.find((v) => v.metadata.sportlots === lineItem.title);
-                  if (v) {
-                    variant = v;
-                  }
-                });
-              }
+        if (!variant && lineItem.bin) {
+          const categoryId = categories[lineItem.bin];
+          if (categoryId) {
+            const products = await this.getProducts(categoryId);
+            const product = products.find((p) => p.metadata.cardNumber === lineItem.cardNumber);
+            if (product) {
+              variant = product?.variants.find((v) => v.metadata.sportlots === lineItem.title);
+            } else {
+              products.forEach((p) => {
+                const v = p?.variants.find((v) => v.metadata.sportlots === lineItem.title);
+                if (v) {
+                  variant = v;
+                }
+              });
             }
           }
-          if (variant && variant.metadata?.sportlots) {
-            variant = variant.product.variants.find((v) => v.metadata.sportlots === lineItem.title);
-          }
-          order.lineItems.push({
-            quantity: lineItem.quantity,
-            title: variant?.title || lineItem.title,
-            sku: variant?.sku || lineItem.sku,
-            cardNumber:
-              <string>variant?.metadata?.cardNumber ||
-              <string>variant?.product?.metadata.cardNumber ||
-              lineItem.cardNumber,
-            unit_price: lineItem.unit_price,
-          });
-          // this.log(`Found line item: ${order.lineItems.length}`);
         }
-        orders.push(order);
-      }
-    };
-    await process('1b');
-    await process('1a');
 
-    // this.log('Found Orders:');
-    // this.log(JSON.stringify(orders, null, 2));
+        if (variant && variant.metadata?.sportlots) {
+          variant = variant.product.variants.find((v) => v.metadata.sportlots === lineItem.title);
+        }
+
+        order.lineItems.push({
+          quantity: lineItem.quantity,
+          title: variant?.title || lineItem.title,
+          sku: variant?.sku || lineItem.sku,
+          cardNumber:
+            <string>variant?.metadata?.cardNumber ||
+            <string>variant?.product?.metadata.cardNumber ||
+            lineItem.cardNumber,
+          unit_price: lineItem.unit_price,
+        });
+      }
+
+      orders.push(order);
+    }
+
     return orders;
   }
 
