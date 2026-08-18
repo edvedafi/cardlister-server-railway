@@ -11,15 +11,15 @@
  * gating pattern in remote-image-service.ts). See NEONBINDER_STREAMING.md for
  * the full environment contract and runbook.
  *
- * Auth: the backend's mutations require a real Clerk identity. This client
- * signs in headlessly against the Clerk DEVELOPMENT instance:
- *   1. fetch a single-use sign-in ticket (either from the NeonBinder app's
- *      /api/auth/testing endpoint — dev/preview only, fail-closed on prod —
- *      or minted directly with a Clerk secret key),
- *   2. exchange the ticket at Clerk's Frontend API (strategy=ticket),
- *   3. mint short-lived "convex"-template session JWTs on demand for
- *      ConvexClient.setAuth's refresh callback.
- * No secret is ever logged, even truncated.
+ * Auth (NEO-172, machine keys): the client holds ONE per-client credential —
+ * a NeonBinder API key (`ak_…` secret) created by the user in the web app's
+ * Settings → API Keys page (Clerk-stored, user-scoped, revocable there at any
+ * time). Tokens come from the backend's `POST /machine/token` exchange: the
+ * key goes in, a short-lived session JWT for the key's OWNER comes out, and
+ * ConvexClient refreshes through it automatically. Identical against preview,
+ * dev, and production — no environment-specific auth machinery, and no
+ * credential in this process can act as any user other than the key's owner.
+ * The key and the minted tokens are never logged, even truncated.
  */
 import fs from 'fs';
 import { ConvexClient } from 'convex/browser';
@@ -36,7 +36,7 @@ export const isStreamingEnabled = (): boolean => !!process.env.NEONBINDER_CONVEX
 // This repo has no Convex codegen; references are built from function paths.
 // The authoritative definitions live in the neonbinder monorepo:
 //   apps/web/convex/placeholderStream.ts / placeholderPipeline.ts /
-//   adapters/placeholderUploads.ts
+//   adapters/placeholderUploads.ts / machineAuth.ts
 
 const fnStartStream = makeFunctionReference<'mutation'>('placeholderStream:startPlaceholderStream');
 const fnConfirmUpload = makeFunctionReference<'mutation'>('placeholderStream:confirmPlaceholderImageUpload');
@@ -125,217 +125,95 @@ const requireEnv = (name: string, why: string): string => {
   return v;
 };
 
-// ── Clerk error rendering (never logs bodies — they can carry tokens) ──────
-
-interface ClerkErrorBody {
-  errors?: { code?: string; message?: string; long_message?: string }[];
-}
-
-const clerkErrorSummary = async (res: Response): Promise<string> => {
-  let detail = '';
-  try {
-    const body = (await res.json()) as ClerkErrorBody;
-    const first = body.errors?.[0];
-    if (first) detail = ` — ${first.code ?? ''}: ${first.long_message ?? first.message ?? ''}`;
-  } catch {
-    // Non-JSON error body; status alone will have to do. Deliberately not
-    // echoing raw text — Clerk responses can embed tokens.
-  }
-  return `HTTP ${res.status}${detail}`;
-};
-
-// ── Ticket sources ─────────────────────────────────────────────────────────
-
-interface ClerkTicket {
-  signInToken: string;
-  testingToken?: string;
-}
-
 /**
- * Primary source: the NeonBinder app's testing-auth endpoint
- * (apps/web/api/auth/testing.ts — dev/preview only, allowlisted accounts,
- * hard 404 on production by design).
+ * Convex serves functions on `.convex.cloud` and HTTP actions on
+ * `.convex.site`. The machine-token exchange is an HTTP action, so its origin
+ * is derived from the deployment URL; NEONBINDER_CONVEX_SITE_URL overrides
+ * for setups where the two don't follow the standard pairing (self-hosted,
+ * local backends).
  */
-const fetchTicketFromTestingEndpoint = async (): Promise<ClerkTicket> => {
-  const appUrl = requireEnv('NEONBINDER_APP_URL', 'needed to reach /api/auth/testing');
-  const secret = requireEnv('NEONBINDER_TESTING_SECRET', 'the x-testing-auth header value');
-  const account = env('NEONBINDER_TEST_ACCOUNT') ?? 'main';
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'x-testing-auth': secret,
-  };
-  // Vercel preview URLs sit behind deployment protection; the bypass header
-  // lets a headless client through. Not needed for a local vite dev server.
-  const bypass = env('NEONBINDER_VERCEL_BYPASS');
-  if (bypass) headers['x-vercel-protection-bypass'] = bypass;
-
-  const res = await fetch(`${appUrl.replace(/\/$/, '')}/api/auth/testing`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ account }),
-  });
-  if (!res.ok) {
+const deriveSiteUrl = (convexUrl: string): string => {
+  const override = env('NEONBINDER_CONVEX_SITE_URL');
+  if (override) return override.replace(/\/$/, '');
+  const match = convexUrl.match(/^https:\/\/([a-z0-9-]+)\.convex\.cloud\/?$/);
+  if (!match) {
     throw new Error(
-      `NeonBinder testing-auth endpoint refused the request (${await clerkErrorSummary(res)}). ` +
-        `Check NEONBINDER_APP_URL, NEONBINDER_TESTING_SECRET, and (for Vercel previews) NEONBINDER_VERCEL_BYPASS.`,
+      `Cannot derive the HTTP-actions origin from NEONBINDER_CONVEX_URL (${convexUrl}) — set NEONBINDER_CONVEX_SITE_URL explicitly.`,
     );
   }
-  const body = (await res.json()) as { signInToken?: string; testingToken?: string };
-  if (!body.signInToken) {
-    throw new Error('testing-auth endpoint responded without a signInToken');
-  }
-  debug(`Obtained sign-in ticket for test account "${account}"`);
-  return { signInToken: body.signInToken, testingToken: body.testingToken };
+  return `https://${match[1]}.convex.site`;
 };
 
-/**
- * Secondary source: mint a sign-in token directly with a Clerk secret key
- * (mirrors apps/web/lib/testing/issue-clerk-tokens.ts). Lets the CLI act as
- * any real user of the instance — used when NEONBINDER_CLERK_SECRET_KEY and
- * NEONBINDER_USER_EMAIL are both set.
- */
-const fetchTicketDirect = async (): Promise<ClerkTicket> => {
-  const secretKey = requireEnv('NEONBINDER_CLERK_SECRET_KEY', 'Clerk Backend API key');
-  const email = requireEnv('NEONBINDER_USER_EMAIL', 'the user to sign in as');
-  const auth = { Authorization: `Bearer ${secretKey}` };
+// ── Machine-token auth ─────────────────────────────────────────────────────
 
-  const usersRes = await fetch(
-    `https://api.clerk.com/v1/users?email_address=${encodeURIComponent(email)}`,
-    { headers: auth },
-  );
-  if (!usersRes.ok) {
-    throw new Error(`Clerk user lookup failed (${await clerkErrorSummary(usersRes)})`);
-  }
-  const users = (await usersRes.json()) as { id: string }[];
-  if (!users.length) throw new Error(`No Clerk user found for ${email}`);
-
-  const tokenRes = await fetch('https://api.clerk.com/v1/sign_in_tokens', {
-    method: 'POST',
-    headers: { ...auth, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: users[0].id, expires_in_seconds: 120 }),
-  });
-  if (!tokenRes.ok) {
-    throw new Error(`Clerk sign-in token mint failed (${await clerkErrorSummary(tokenRes)})`);
-  }
-  const token = (await tokenRes.json()) as { token?: string };
-  if (!token.token) throw new Error('Clerk sign-in token response carried no token');
-  debug(`Minted sign-in ticket directly for ${email}`);
-  return { signInToken: token.token };
-};
-
-// ── Headless Clerk session (development-instance Frontend API) ─────────────
-
-class ClerkHeadlessSession {
-  private fapi: string;
-  private devBrowserJwt: string | null = null;
-  private clientToken: string | null = null;
+class MachineTokenSource {
+  private siteUrl: string;
+  private key: string;
   private sessionId: string | null = null;
 
-  constructor(fapiUrl: string) {
-    this.fapi = fapiUrl.replace(/\/$/, '');
-  }
-
-  /** Query-string auth params for a development-instance Frontend API call. */
-  private authParams(extra: Record<string, string> = {}): string {
-    const params = new URLSearchParams({ _is_native: '1', ...extra });
-    if (this.devBrowserJwt) params.set('__clerk_db_jwt', this.devBrowserJwt);
-    return params.toString();
-  }
-
-  private authHeaders(): Record<string, string> {
-    return this.clientToken ? { Authorization: this.clientToken } : {};
-  }
-
-  /** Capture the rotating client token Clerk returns on native flows. */
-  private captureClientToken(res: Response): void {
-    const token = res.headers.get('authorization');
-    if (token) this.clientToken = token;
-  }
-
-  async establish(ticket: ClerkTicket): Promise<void> {
-    // Development instances identify the "browser" via a dev-browser JWT.
-    // Best-effort: if the endpoint is absent (non-dev instance), continue —
-    // the sign-in call below will tell us definitively whether we're stuck.
-    try {
-      const res = await fetch(`${this.fapi}/v1/dev_browser`, { method: 'POST' });
-      if (res.ok) {
-        const body = (await res.json()) as { token?: string; id?: string };
-        if (body.token) {
-          this.devBrowserJwt = body.token;
-          debug('Established Clerk dev-browser context');
-        }
-      } else {
-        debug(`Clerk dev_browser unavailable (HTTP ${res.status}) — continuing without`);
-      }
-    } catch (err) {
-      debug(`Clerk dev_browser request failed — continuing without (${String(err)})`);
-    }
-
-    const extra: Record<string, string> = {};
-    if (ticket.testingToken) extra['__clerk_testing_token'] = ticket.testingToken;
-    const res = await fetch(`${this.fapi}/v1/client/sign_ins?${this.authParams(extra)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        ...this.authHeaders(),
-      },
-      body: new URLSearchParams({ strategy: 'ticket', ticket: ticket.signInToken }).toString(),
-    });
-    this.captureClientToken(res);
-    if (!res.ok) {
-      throw new Error(
-        `Clerk sign-in (ticket) failed (${await clerkErrorSummary(res)}). ` +
-          `Check NEONBINDER_CLERK_FAPI_URL points at the same Clerk instance the app uses.`,
-      );
-    }
-    const body = (await res.json()) as {
-      response?: { created_session_id?: string; status?: string };
-      created_session_id?: string;
-      status?: string;
-      client?: { sessions?: { id: string }[] };
-    };
-    const signIn = body.response ?? body;
-    this.sessionId =
-      signIn.created_session_id ?? body.client?.sessions?.[0]?.id ?? null;
-    if (!this.sessionId) {
-      throw new Error(
-        `Clerk sign-in did not yield a session (status: ${signIn.status ?? 'unknown'})`,
-      );
-    }
-    debug('Clerk headless session established');
+  constructor(siteUrl: string, key: string) {
+    this.siteUrl = siteUrl;
+    this.key = key;
   }
 
   /**
-   * Mint a short-lived Convex-audience JWT (the "convex" JWT template — the
-   * same one ConvexProviderWithClerk requests in the web app). Called by
+   * Exchange the machine key for a short-lived session JWT. Called by
    * ConvexClient's auth refresh loop, so it must stay cheap and quiet.
+   * Status-only diagnostics on every failure path — the key and the token
+   * never reach the (disk-persistent) debug log.
    */
-  async mintConvexJwt(): Promise<string | null> {
-    if (!this.sessionId) return null;
-    // The whole body is wrapped: a fetch REJECTION (DNS/TLS/socket) carries
-    // the request URL — whose query string holds the dev-browser JWT — in its
-    // cause/stack, and letting it escape into ConvexClient's auth refresh
-    // loop would land that in the persistent debug log. Status-only on every
-    // failure path.
+  async fetchToken(): Promise<string | null> {
     try {
-      const res = await fetch(
-        `${this.fapi}/v1/client/sessions/${this.sessionId}/tokens/convex?${this.authParams()}`,
-        { method: 'POST', headers: this.authHeaders() },
-      );
-      this.captureClientToken(res);
+      const res = await fetch(`${this.siteUrl}/machine/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: this.key,
+          ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+        }),
+      });
       if (!res.ok) {
-        debug(`Convex JWT mint failed (${await clerkErrorSummary(res)})`);
+        debug(`machine token exchange failed (HTTP ${res.status})`);
         return null;
       }
-      const body = (await res.json()) as { jwt?: string; object?: string };
-      return body.jwt ?? null;
+      const body = (await res.json()) as { token?: string; sessionId?: string };
+      if (body.sessionId) this.sessionId = body.sessionId;
+      return body.token ?? null;
     } catch (err) {
       debug(
-        `Convex JWT mint failed (network: ${err instanceof Error ? err.constructor.name : 'unknown'})`,
+        `machine token exchange failed (network: ${err instanceof Error ? err.constructor.name : 'unknown'})`,
       );
       return null;
     }
+  }
+
+  /** One loud pre-flight so a bad key fails at startup, not mid-scan. */
+  async probe(): Promise<void> {
+    const res = await fetch(`${this.siteUrl}/machine/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: this.key }),
+    }).catch((err) => {
+      throw new Error(
+        `Cannot reach the NeonBinder machine-token endpoint at ${this.siteUrl} (${err instanceof Error ? err.constructor.name : 'network error'}).`,
+      );
+    });
+    if (res.status === 401) {
+      throw new Error(
+        'NeonBinder rejected the machine key (401). Create a key in the web app under Settings → API Keys and set NEONBINDER_MACHINE_KEY — and check it was not revoked.',
+      );
+    }
+    if (res.status === 503) {
+      throw new Error(
+        'The NeonBinder machine-token endpoint is not configured on this deployment (503) — CLERK_SECRET_KEY is missing server-side.',
+      );
+    }
+    if (!res.ok) {
+      throw new Error(`Machine-token exchange failed (HTTP ${res.status}).`);
+    }
+    const body = (await res.json()) as { sessionId?: string };
+    if (body.sessionId) this.sessionId = body.sessionId;
+    debug('machine key verified against the deployment');
   }
 }
 
@@ -343,37 +221,23 @@ class ClerkHeadlessSession {
 
 export class NeonBinderStreamClient {
   private convex: ConvexClient;
-  private session: ClerkHeadlessSession;
   jobId: string | null = null;
   private closed = false;
 
-  private constructor(convex: ConvexClient, session: ClerkHeadlessSession) {
+  private constructor(convex: ConvexClient) {
     this.convex = convex;
-    this.session = session;
   }
 
-  /** Connect, authenticate, and verify the token round-trip. */
+  /** Connect, authenticate, and verify the key round-trip. */
   static async connect(): Promise<NeonBinderStreamClient> {
     const convexUrl = requireEnv('NEONBINDER_CONVEX_URL', 'the Convex deployment to stream into');
-    const fapiUrl = requireEnv(
-      'NEONBINDER_CLERK_FAPI_URL',
-      'the Clerk Frontend API host (e.g. https://<slug>.clerk.accounts.dev)',
+    const machineKey = requireEnv(
+      'NEONBINDER_MACHINE_KEY',
+      'your NeonBinder API key — create one in the web app under Settings → API Keys',
     );
 
-    const useDirect = !!(env('NEONBINDER_CLERK_SECRET_KEY') && env('NEONBINDER_USER_EMAIL'));
-    const ticket = useDirect ? await fetchTicketDirect() : await fetchTicketFromTestingEndpoint();
-
-    const session = new ClerkHeadlessSession(fapiUrl);
-    await session.establish(ticket);
-
-    // Fail loudly now rather than on the first mutation.
-    const probe = await session.mintConvexJwt();
-    if (!probe) {
-      throw new Error(
-        'Clerk session established but minting a "convex"-template JWT failed — ' +
-          'verify the Clerk instance has a JWT template named "convex".',
-      );
-    }
+    const source = new MachineTokenSource(deriveSiteUrl(convexUrl), machineKey);
+    await source.probe();
 
     const webSocketConstructor =
       typeof WebSocket !== 'undefined'
@@ -382,10 +246,10 @@ export class NeonBinderStreamClient {
     const convex = new ConvexClient(convexUrl, {
       ...(webSocketConstructor ? { webSocketConstructor } : {}),
     });
-    convex.setAuth(async () => session.mintConvexJwt());
+    convex.setAuth(() => source.fetchToken());
 
     debug(`Connected to ${convexUrl}`);
-    return new NeonBinderStreamClient(convex, session);
+    return new NeonBinderStreamClient(convex);
   }
 
   async startStream(): Promise<string> {

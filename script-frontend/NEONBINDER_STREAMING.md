@@ -9,6 +9,33 @@ cropped images are downloaded and the normal review menu opens — while later
 scans keep uploading behind it. Unset the variable and the legacy local
 pipeline runs exactly as before.
 
+## Environment
+
+Two variables (`script-frontend/.env` — never commit values):
+
+| Variable | What it is |
+|---|---|
+| `NEONBINDER_CONVEX_URL` | The Convex deployment to stream into: production `https://first-starfish-800.convex.cloud`, or a PR's preview deployment URL for testing |
+| `NEONBINDER_MACHINE_KEY` | Your NeonBinder API key (`ak_…` secret) — create it in the NeonBinder web app under **Settings → API Keys**, copy it once at creation |
+
+(`NEONBINDER_CONVEX_SITE_URL` exists as an override for non-standard
+deployments; normally derived automatically.)
+
+## Auth model (NEO-172)
+
+The API key is a per-client credential scoped to YOUR user: the client
+exchanges it at the backend's `/machine/token` endpoint for short-lived
+session tokens, so everything the script does is done as your account and
+nothing more. Identical against preview, dev, and production. Revoke or
+rotate the key any time from the same Settings → API Keys page — revocation
+takes effect within about a minute. The key is shown once at creation, is
+stored hashed server-side, and is never written to logs by this client.
+
+If startup fails with:
+- **401** — the key is wrong or revoked; create a fresh one in Settings → API Keys.
+- **503** — that deployment's machine-token endpoint isn't configured
+  (server-side `CLERK_SECRET_KEY` missing).
+
 ## What changes at the terminal
 
 - Per-file spinners: `Uploading` → `Queued remotely` → `Processing remotely` →
@@ -26,34 +53,11 @@ pipeline runs exactly as before.
   to matching (no server-side un-pair yet) — re-scan BOTH sides to create a
   fresh pair.
 
-## Environment
+## Runbook
 
-Add to `script-frontend/.env` (names only here — never commit values):
-
-| Variable | Required | What it is |
-|---|---|---|
-| `NEONBINDER_CONVEX_URL` | yes (enables the mode) | The Convex deployment URL, e.g. the PR preview deployment `https://<name>.convex.cloud` |
-| `NEONBINDER_APP_URL` | yes | A NeonBinder web app origin that serves `/api/auth/testing` — the local vite dev server (`http://localhost:5173`, simplest) or a Vercel preview URL |
-| `NEONBINDER_TESTING_SECRET` | yes | The app's `TESTING_ENDPOINT_SECRET` (copy from `neonbinder-mono/apps/web/.env.local`) |
-| `NEONBINDER_CLERK_FAPI_URL` | yes | The Clerk dev instance Frontend API, `https://moved-kingfish-65.clerk.accounts.dev` |
-| `NEONBINDER_TEST_ACCOUNT` | no (default `main`) | Which allowlisted test account to act as (`main`, `new-profile`, `admin-*`) |
-| `NEONBINDER_VERCEL_BYPASS` | only for Vercel-preview `NEONBINDER_APP_URL` | `VERCEL_AUTOMATION_BYPASS_SECRET`, gets past deployment protection |
-| `NEONBINDER_CLERK_SECRET_KEY` + `NEONBINDER_USER_EMAIL` | no | Alternative ticket source: mint directly from the Clerk Backend API and act as a real user instead of a test account |
-
-The auth flow: fetch a single-use Clerk sign-in ticket (testing endpoint or
-direct mint) → exchange it headlessly at the Clerk Frontend API
-(`strategy=ticket`) → mint short-lived `convex`-template JWTs on demand for
-the Convex client. Auth is dev/preview-only by design: the testing endpoint
-hard-404s in production.
-
-## Morning-test runbook
-
-1. In the monorepo worktree, start the web dev server (`apps/web`,
-   `npm run dev`) so `http://localhost:5173/api/auth/testing` is available —
-   or use the PR's Vercel preview URL plus the bypass secret.
-2. Fill the env vars above; point `NEONBINDER_CONVEX_URL` at the PR preview
-   Convex deployment (it has the streaming functions; the shared dev
-   deployment does not until the PR merges).
+1. Sign in to the NeonBinder app (the deployment you're targeting), go to
+   **Settings → API Keys**, create a key (e.g. `cardlister-scanner`), copy it.
+2. Set the two env vars above.
 3. `yarn start`, pick the set as usual.
 4. Drop scans into the input directory (front, back, front, back — scan order
    is the pairing's adjacency signal).
