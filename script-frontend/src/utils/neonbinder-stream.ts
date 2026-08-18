@@ -313,17 +313,29 @@ class ClerkHeadlessSession {
    */
   async mintConvexJwt(): Promise<string | null> {
     if (!this.sessionId) return null;
-    const res = await fetch(
-      `${this.fapi}/v1/client/sessions/${this.sessionId}/tokens/convex?${this.authParams()}`,
-      { method: 'POST', headers: this.authHeaders() },
-    );
-    this.captureClientToken(res);
-    if (!res.ok) {
-      debug(`Convex JWT mint failed (${await clerkErrorSummary(res)})`);
+    // The whole body is wrapped: a fetch REJECTION (DNS/TLS/socket) carries
+    // the request URL — whose query string holds the dev-browser JWT — in its
+    // cause/stack, and letting it escape into ConvexClient's auth refresh
+    // loop would land that in the persistent debug log. Status-only on every
+    // failure path.
+    try {
+      const res = await fetch(
+        `${this.fapi}/v1/client/sessions/${this.sessionId}/tokens/convex?${this.authParams()}`,
+        { method: 'POST', headers: this.authHeaders() },
+      );
+      this.captureClientToken(res);
+      if (!res.ok) {
+        debug(`Convex JWT mint failed (${await clerkErrorSummary(res)})`);
+        return null;
+      }
+      const body = (await res.json()) as { jwt?: string; object?: string };
+      return body.jwt ?? null;
+    } catch (err) {
+      debug(
+        `Convex JWT mint failed (network: ${err instanceof Error ? err.constructor.name : 'unknown'})`,
+      );
       return null;
     }
-    const body = (await res.json()) as { jwt?: string; object?: string };
-    return body.jwt ?? null;
   }
 }
 
@@ -419,10 +431,13 @@ export class NeonBinderStreamClient {
     form.append('file', new Blob([bytes], { type: contentType }), alloc.fields['key'] ?? 'upload');
     const res = await fetch(alloc.uploadUrl, { method: 'POST', body: form });
     if (!res.ok) {
-      // 412 = something already exists at this key. Each allocation is a
-      // fresh index, so this means a replayed/duplicate POST — surface it.
-      const text = (await res.text()).slice(0, 200);
-      throw new Error(`GCS upload failed (HTTP ${res.status}): ${text}`);
+      // Status only, never the response body: GCS's XML error detail for
+      // policy mismatches can quote the signed policy document itself, and
+      // errors here end up in the persistent debug log. 412 = something
+      // already exists at this key; each allocation is a fresh index, so
+      // that means a replayed/duplicate POST.
+      const hint = res.status === 412 ? ' (object already exists — duplicate POST?)' : '';
+      throw new Error(`GCS upload failed (HTTP ${res.status})${hint}`);
     }
   }
 

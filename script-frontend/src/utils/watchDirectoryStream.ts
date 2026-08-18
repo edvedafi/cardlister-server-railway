@@ -196,14 +196,18 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         }
         spinner.update('Uploading');
         await client.uploadFile(alloc, filePath);
-        spinner.update('Confirming');
-        await client.confirmUpload(alloc.entryIndex);
+        // Registered BEFORE the confirm: confirm is idempotent server-side,
+        // but if its response is lost after the server processed it, an
+        // unregistered mapping would orphan this entry (spinner never
+        // finishes, file re-uploaded as a duplicate next run).
         entries.set(alloc.entryIndex, {
           localPath: filePath,
           basename,
           spinner,
           lastStatus: 'queued',
         });
+        spinner.update('Confirming');
+        await client.confirmUpload(alloc.entryIndex);
         spinner.update('Queued remotely');
         debug(`Uploaded ${basename} as entry ${alloc.entryIndex}`);
         // The spinner stays live — the images subscription finishes it when
@@ -272,10 +276,15 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     maybeRefreshIdle();
   };
 
+  // Runs on pairQueue (concurrency 3): a terminal pairing run can deliver
+  // hundreds of pairs in one subscription update, and each handoff costs a
+  // Convex action plus two GCS downloads — the failure mode to bound is
+  // unbounded fan-out from one CLI, not handoff latency.
+  const pairQueue = new Queue({ autostart: true, concurrency: 3, results: [] });
+
   const handlePair = async (pair: StreamPairRow) => {
+    if (stopped) return;
     const key = `${pair.frontIndex}-${pair.backIndex}`;
-    if (seenPairs.has(key)) return;
-    seenPairs.add(key);
     if (handedOff.has(pair.frontIndex) || handedOff.has(pair.backIndex)) {
       // The server revised a provisional pair after we already sent one of
       // its sides to review. Reviewing the same physical scan twice is worse
@@ -357,7 +366,12 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
 
   const onPairsUpdate = (rows: StreamPairRow[]) => {
     for (const pair of rows) {
-      void handlePair(pair);
+      // Deduped at ENQUEUE time so a burst of subscription updates cannot
+      // queue the same pair twice before its first task runs.
+      const key = `${pair.frontIndex}-${pair.backIndex}`;
+      if (seenPairs.has(key)) continue;
+      seenPairs.add(key);
+      pairQueue.push(() => handlePair(pair));
     }
     maybeRefreshIdle();
   };
@@ -514,6 +528,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   const cleanup = () => {
     stopped = true;
     intakeQueue.end();
+    pairQueue.end();
     if (watcher) {
       watcher.close();
       watcher = null;
