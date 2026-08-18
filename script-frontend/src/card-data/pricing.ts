@@ -157,14 +157,76 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-export async function getPricing(
+/**
+ * Per-site minimum listing price, in cents. A single "lowest I would take"
+ * entry gets spread to every site, floored at that site's minimum — so
+ * entering 10 yields SL 18 / BSC 25 / eBay 99 / MCP 100, while entering 1000
+ * yields 1000 everywhere.
+ */
+const REGION_MINIMUMS: { region: string; minimum: number }[] = [
+  { region: 'ebay', minimum: 99 },
+  { region: 'MCP', minimum: 100 },
+  { region: 'BSC', minimum: 25 },
+  { region: 'SportLots', minimum: 18 },
+];
+
+/** The SportLots minimum is the lowest of them all, so its current price is the best guess at the floor. */
+const FLOOR_DEFAULT_REGION = 'SportLots';
+
+/**
+ * Ask for one number — the lowest price the seller would accept — and fan it
+ * out to every region, raising it to each region's minimum where needed.
+ */
+export async function askFloorPricing(
   currentPrices: MoneyAmount[] = [],
-  skipSafetyCheck = false,
-  allBase = false,
   cardMetadata?: CardSearchMetadata,
-  forceEdit = false,
 ): Promise<MoneyAmount[]> {
-  // Log which card we're pricing and copy search parameter to clipboard
+  await logCardBeingPriced(cardMetadata);
+
+  const floorRegionId = await getRegion(FLOOR_DEFAULT_REGION);
+  const currentFloor = currentPrices.find((price) => price.region_id === floorRegionId)?.amount;
+  const parsedFloor = typeof currentFloor === 'string' ? parseInt(currentFloor, 10) : currentFloor;
+  const defaultFloor =
+    typeof parsedFloor === 'number' && !isNaN(parsedFloor) && parsedFloor > 0
+      ? parsedFloor
+      : REGION_MINIMUMS.find((r) => r.region === FLOOR_DEFAULT_REGION)!.minimum;
+
+  let entered = await ask('Lowest price you would take (in cents)', defaultFloor);
+  while (entered && entered.toString().indexOf('.') > -1) {
+    entered = await ask(
+      'Price should not have a decimal, did you mean: ',
+      entered.toString().replace('.', ''),
+    );
+  }
+
+  const floor = parseInt(entered);
+  if (!floor || isNaN(floor)) {
+    log('No price entered, using base pricing');
+    return await getBasePricing();
+  }
+
+  const prices: MoneyAmount[] = [];
+  for (const { region, minimum } of REGION_MINIMUMS) {
+    const amount = Math.max(floor, minimum);
+    log(`  ${region}: ${amount}${amount !== floor ? ' (minimum)' : ''}`);
+    prices.push({ amount, region_id: await getRegion(region) } as MoneyAmount);
+  }
+
+  // MySlabs only carries high-end cards; keep the existing rule of listing
+  // there at a premium once the card clears its 999 minimum.
+  if (floor > 999) {
+    const mySlabsRegionId = await getRegion('MySlabs');
+    if (mySlabsRegionId) {
+      const mySlabs = floor + 500;
+      log(`  MySlabs: ${mySlabs}`);
+      prices.push({ amount: mySlabs, region_id: mySlabsRegionId } as MoneyAmount);
+    }
+  }
+
+  return prices;
+}
+
+async function logCardBeingPriced(cardMetadata?: CardSearchMetadata): Promise<void> {
   if (cardMetadata?.cardName) {
     log(`Pricing card: ${cardMetadata.cardName}`);
     const searchString = buildSearchString(cardMetadata);
@@ -179,7 +241,18 @@ export async function getPricing(
       await copyToClipboard(identifier);
     }
   }
-  
+}
+
+export async function getPricing(
+  currentPrices: MoneyAmount[] = [],
+  skipSafetyCheck = false,
+  allBase = false,
+  cardMetadata?: CardSearchMetadata,
+  forceEdit = false,
+): Promise<MoneyAmount[]> {
+  // Log which card we're pricing and copy search parameter to clipboard
+  await logCardBeingPriced(cardMetadata);
+
   const basePrices = await getBasePricing();
   if (allBase) return basePrices;
   let startingPrices = [...currentPrices];

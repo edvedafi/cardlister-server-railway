@@ -417,18 +417,17 @@ export async function remoteProcess(
   const meta = (await res.json()) as ProcessResponseJson;
 
   // Pick the bytes for the final cropped image based on which cascade stage won.
-  // The server omits cropped_image_b64 when it used bytes the client already has.
+  // The server omits cropped_image_b64 whenever it used bytes the client
+  // already has: the precropped win, passthrough, AND a strategy returning
+  // the upload untouched (the tiered identity guard: "this already IS the
+  // card"). Per the /process contract, key off the null b64, not the source.
   let croppedBytes: Buffer;
   if (meta.cropped_source === 'precropped' && precroppedPath) {
     croppedBytes = await fs.readFile(precroppedPath);
-  } else if (meta.cropped_source === 'passthrough') {
-    croppedBytes = await fs.readFile(originalPath);
   } else if (meta.cropped_image_b64) {
     croppedBytes = Buffer.from(meta.cropped_image_b64, 'base64');
   } else {
-    throw new Error(
-      `/process returned cropped_source=${meta.cropped_source} with no cropped_image_b64 and no local fallback available`,
-    );
+    croppedBytes = await fs.readFile(originalPath);
   }
 
   // Server reports rotation_degrees as the CCW rotation that makes text upright;

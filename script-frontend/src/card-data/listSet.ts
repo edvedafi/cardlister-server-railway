@@ -22,7 +22,7 @@ import { $ } from 'zx';
 import type { ParsedArgs } from 'minimist';
 import { getFiles, getInputs } from '../utils/inputs';
 import { orientAndClassifyCards, orderFrontBack } from '../image-processing/card-cropper-wrapper';
-import { getCommonPricing, getDefaultPricing, getPricing } from './pricing';
+import { askFloorPricing, getCommonPricing, getDefaultPricing } from './pricing';
 import { showReviewMenu, type ReviewMenuState } from '../utils/reviewMenu';
 import type { UnmatchedCard } from '../utils/cardPool';
 import { playerAndCardNumberMatch } from '../utils/cardPool';
@@ -359,13 +359,7 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
         player: menuState.matchedVariant?.metadata?.player ?? imageDefaults.player,
         cardName: menuState.matchedVariant?.metadata?.cardName ?? menuState.matchedProduct?.title,
       };
-      const prices = await getPricing(
-        menuState.priceMoneyAmounts,
-        args['skipSafetyCheck'],
-        args['allBase'],
-        cardMetadata,
-        true,
-      );
+      const prices = await askFloorPricing(menuState.priceMoneyAmounts, cardMetadata);
       const newPricingResult = await getDefaultPricing(prices, false);
       return { prices, display: newPricingResult.display };
     },
@@ -1255,11 +1249,39 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
           const croppedPath = path.join(cropOutputDir, path.basename(imagePath));
 
           if (useRemote) {
-            // Remote mode: the server does the heavy cropping (SAM/Haiku/PIL).
-            // We only run CardCropper.rotate locally because the Swift binary
-            // can't run on Cloud Run. Its output is sent as `precropped` to
-            // /process; if it fails or isn't plausible the server falls back
-            // to its own cascade.
+            // Remote mode: the server does ALL the cropping.
+            //
+            // We used to run CardCropper.rotate here and send its output as
+            // `precropped`. That made the Swift binary the real cropper: with
+            // USE_CROP_ONLY the server only validates a supplied crop, and in
+            // crop-only mode it has no original to measure area against, so a
+            // crop that ate the card's printed border passed. Measured on the
+            // archives, CardCropper.rotate returns 89.2% of 2026-08-11-0055
+            // and 79.7% of -0100 — whole borders gone — and it fails outright
+            // on phone photos, which is what forced the manual Swift step.
+            //
+            // Sending no `precropped` hands the decision to the server
+            // cascade (deskew → PIL trims → SAM → Haiku), which is measured
+            // against a 227-image corpus and declines rather than guessing.
+            //
+            // Set USE_LOCAL_SWIFT_CROP=1 to restore the old behaviour.
+            if (process.env.USE_LOCAL_SWIFT_CROP !== '1') {
+              // Return a COPY in the temp dir rather than null. Returning null
+              // makes the watcher fall back to `pathForClassification = filePath`,
+              // and classifyAndExtract writes the server's result to that path —
+              // which silently overwrites the raw scan in place. It destroyed
+              // roughly half of the 2026-08-15 chrome batch before this was
+              // caught. Handing back a temp path keeps every downstream write
+              // off the original, and additionally gives the review menu its
+              // `originalPath` back so a manual re-crop starts from the raw
+              // scan instead of an already-processed one.
+              //
+              // The copy is NOT a crop, so it must not be sent as `precropped`
+              // — see the USE_LOCAL_SWIFT_CROP check in classifyAndExtract.
+              await fs.promises.copyFile(imagePath, croppedPath);
+              cropOriginalNames.set(path.basename(croppedPath), path.basename(imagePath));
+              return croppedPath;
+            }
             try {
               await $`./CardCropper.rotate ${imagePath} ${croppedPath}`.quiet();
             } catch {
@@ -1293,7 +1315,19 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
             // candidate as `precropped`. The server returns the final cropped
             // + rotation-corrected bytes which we write to `imagePath` so the
             // review/listing steps see the oriented image.
-            const precroppedPath = imagePath !== originalPath ? imagePath : undefined;
+            //
+            // `imagePath !== originalPath` is NOT sufficient to mean "the
+            // client already cropped this". With server-side cropping the
+            // watcher is handed a temp COPY of the raw scan (so its writes stay
+            // off the original), and that copy differs from originalPath while
+            // being no kind of crop at all. Sending it as `precropped` would
+            // make the server validate the full frame and hand it straight
+            // back — the short-circuit we just removed, reintroduced from the
+            // client side. Only the Swift binary produces a real precrop.
+            const precroppedPath =
+              process.env.USE_LOCAL_SWIFT_CROP === '1' && imagePath !== originalPath
+                ? imagePath
+                : undefined;
             const result = await remoteProcess(originalPath, precroppedPath);
             await fs.promises.writeFile(imagePath, result.rotatedBytes);
             return {
