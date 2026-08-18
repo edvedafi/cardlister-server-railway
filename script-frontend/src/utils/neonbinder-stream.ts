@@ -134,7 +134,18 @@ const requireEnv = (name: string, why: string): string => {
  */
 const deriveSiteUrl = (convexUrl: string): string => {
   const override = env('NEONBINDER_CONVEX_SITE_URL');
-  if (override) return override.replace(/\/$/, '');
+  if (override) {
+    // The machine key travels in the POST body to this origin — https only,
+    // with a loopback exception for a locally-running backend. An http URL
+    // to anything else would send the credential in cleartext.
+    const isLoopback = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(override);
+    if (!/^https:\/\//.test(override) && !isLoopback) {
+      throw new Error(
+        'NEONBINDER_CONVEX_SITE_URL must be https:// (or a http://localhost loopback for local dev).',
+      );
+    }
+    return override.replace(/\/$/, '');
+  }
   const match = convexUrl.match(/^https:\/\/([a-z0-9-]+)\.convex\.cloud\/?$/);
   if (!match) {
     throw new Error(
