@@ -24,7 +24,7 @@ import { getFiles, getInputs } from '../utils/inputs';
 import { orientAndClassifyCards, orderFrontBack } from '../image-processing/card-cropper-wrapper';
 import { askFloorPricing, getCommonPricing, getDefaultPricing } from './pricing';
 import { showReviewMenu, type ReviewMenuState } from '../utils/reviewMenu';
-import type { UnmatchedCard } from '../utils/cardPool';
+import type { MatchResult, UnmatchedCard } from '../utils/cardPool';
 import { playerAndCardNumberMatch } from '../utils/cardPool';
 import { sportlotsSetUrl } from '../utils/terminalLink';
 
@@ -1237,7 +1237,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         ? { label: 'SportLots listings for this set', url: slUrl }
         : undefined;
 
-      watcher = watchWithSmartMatching({
+      const legacyOptions: import('../utils/watchDirectory.js').SmartWatcherOptions = {
         directory: inputDirectory,
         knownFiles,
         scannedFiles,
@@ -1435,7 +1435,14 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         onSkip: (imagePath) => {
           markScanned(imagePath, imagePath);
         },
-        onPairReady: async (front, back, match) => {
+        onPairReady,
+      };
+
+      // Shared by both watchers (local CardPool matching and NeonBinder
+      // server-side streaming): everything from "a front/back pair exists"
+      // through review and finalize is identical in the two modes. A function
+      // declaration on purpose — it's referenced by the options object above.
+      async function onPairReady(front: string, back: string, match: MatchResult): Promise<void> {
           // Build pool priors from the match — merge front+back extraction data.
           // Prefer front for player (usually has the name), back for cardNumber
           // (card numbers are printed on the back; fronts shouldn't carry one).
@@ -1577,8 +1584,35 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
           // Return jobPromise so the watcher can track when the full chain completes,
           // but the intake queue in watchDirectory does NOT await it.
           return jobPromise;
-        },
-      });
+      }
+
+      const { isStreamingEnabled: nbStreamingEnabled, NeonBinderStreamClient } = await import(
+        '../utils/neonbinder-stream.js'
+      );
+      let nbClient: import('../utils/neonbinder-stream.js').NeonBinderStreamClient | null = null;
+      if (nbStreamingEnabled()) {
+        // NEO-170 streaming intake: the NeonBinder backend does ALL cropping,
+        // identity extraction and pairing. The local pipeline (Swift crop,
+        // EasyOCR, CardPool) is bypassed entirely; pairs arrive reactively.
+        const { watchWithServerMatching } = await import('../utils/watchDirectoryStream.js');
+        log(chalk.cyan('NEONBINDER_CONVEX_URL set — scans stream to the NeonBinder pipeline (server-side crop + pairing)'));
+        nbClient = await NeonBinderStreamClient.connect();
+        await nbClient.startStream();
+        watcher = watchWithServerMatching({
+          directory: inputDirectory,
+          knownFiles,
+          scannedFiles,
+          initialFiles: files,
+          setLink: sportlotsSetLink,
+          client: nbClient,
+          downloadDir: cropOutputDir,
+          registerOriginalName: (derived, original) => cropOriginalNames.set(derived, original),
+          onSkip: (imagePath) => markScanned(imagePath, imagePath),
+          onPairReady,
+        });
+      } else {
+        watcher = watchWithSmartMatching(legacyOptions);
+      }
 
       // Wait for initial files to finish, then show idle prompt
       if (itemsPushed > 0) {
@@ -1620,6 +1654,13 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         } catch (e) {
           hasQueueError = true;
         }
+      }
+
+      // Streaming mode: drop the websocket so the process can exit cleanly.
+      // (The stream job itself was closed by the watcher's Complete/Ctrl-C
+      // path; the server's idle sweep backstops any abnormal exit.)
+      if (nbClient) {
+        await nbClient.disconnect();
       }
     }
 
