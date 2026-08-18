@@ -41,6 +41,7 @@ export const isStreamingEnabled = (): boolean => !!process.env.NEONBINDER_CONVEX
 const fnStartStream = makeFunctionReference<'mutation'>('placeholderStream:startPlaceholderStream');
 const fnConfirmUpload = makeFunctionReference<'mutation'>('placeholderStream:confirmPlaceholderImageUpload');
 const fnCloseStream = makeFunctionReference<'mutation'>('placeholderStream:closePlaceholderStream');
+const fnCancelBatch = makeFunctionReference<'mutation'>('placeholderPipeline:cancelPlaceholderBatch');
 const fnCreateImageUploadUrl = makeFunctionReference<'action'>(
   'adapters/placeholderUploads:createPlaceholderImageUploadUrl',
 );
@@ -322,6 +323,33 @@ export class NeonBinderStreamClient {
       entryIndex,
     })) as { confirmed: boolean; alreadyConfirmed: boolean; totalImages: number };
     return result;
+  }
+
+  /**
+   * ABORT the session: unlike close (which drains — everything uploaded still
+   * processes and bills), cancel stops queued and in-flight processing now.
+   * The job lands terminal ("canceled" failure); nothing further is paired.
+   * Returns how many pending work items were killed. Never throws.
+   */
+  async cancelBatch(): Promise<number> {
+    if (this.closed || !this.jobId) return 0;
+    this.closed = true;
+    try {
+      const result = (await this.convex.mutation(fnCancelBatch, { jobId: this.jobId })) as {
+        canceled: boolean;
+        canceledCount: number;
+        reason?: string;
+      };
+      debug(
+        result.canceled
+          ? `Batch canceled — ${result.canceledCount} pending item(s) stopped`
+          : `Cancel was a no-op: ${result.reason ?? ''}`,
+      );
+      return result.canceledCount;
+    } catch (err) {
+      debug(`cancelBatch failed (server idle-sweep will finish the job): ${String(err)}`);
+      return 0;
+    }
   }
 
   /** Close the scan session. Safe to call twice; never throws. */

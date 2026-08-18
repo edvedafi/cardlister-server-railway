@@ -45,6 +45,9 @@ If startup fails with:
   failed) and which cards are still waiting for a partner. The pool-fix
   options (`p`/`r`/`x`) don't exist in this mode — pairing state lives on the
   server.
+- `a` (Abort) CANCELS remaining processing — queued and in-flight images stop
+  (and stop billing); nothing is marked scanned, so an aborted batch re-runs
+  cleanly next time. Use it when the wrong set/files went in.
 - `c` (Complete) closes the NeonBinder scan session, abandons anything
   unpaired (marked in `scanned.txt`, same as the legacy pool semantics), and
   proceeds to the normal sync. Ctrl-C also closes the session. If the process

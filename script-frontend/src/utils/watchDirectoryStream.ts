@@ -461,6 +461,10 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     console.log('');
      
     console.log('  ' + chalk.yellow.bold('(C)') + 'omplete and sync (finish the session)');
+    console.log(
+      '  ' + chalk.yellow.bold('(A)') + 'bort — cancel remaining processing' +
+      chalk.dim(' (files stay unscanned for a re-run)'),
+    );
      
     console.log('');
      
@@ -481,6 +485,18 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     const closeSpinner = showSpinner('close-stream', 'Closing NeonBinder scan session');
     await client.closeStream();
     closeSpinner.finish('closed');
+    cleanup();
+    if (resolveCompletion) resolveCompletion();
+  };
+
+  const abortSession = async () => {
+    debug('Abort signal received');
+    // Unlike Complete: nothing is marked scanned — an aborted batch is meant
+    // to be re-run, so every file must be picked up again next time.
+    markSessionComplete();
+    const spinner = showSpinner('abort-stream', 'Aborting — cancelling remaining processing');
+    const stoppedCount = await client.cancelBatch();
+    spinner.finish(`${stoppedCount} pending item(s) cancelled`);
     cleanup();
     if (resolveCompletion) resolveCompletion();
   };
@@ -514,6 +530,13 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         }
         if (result.char.toLowerCase() === 'c') {
           await completeSession();
+          return;
+        }
+        if (result.char.toLowerCase() === 'a') {
+          const confirmAbort = await ask('Abort and cancel remaining processing?', false, { isYN: true });
+          if (confirmAbort) {
+            await abortSession();
+          }
           return;
         }
         // unknown key — re-read without reprinting the menu
