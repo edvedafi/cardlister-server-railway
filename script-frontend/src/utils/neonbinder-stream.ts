@@ -48,6 +48,13 @@ const fnCreateImageUploadUrl = makeFunctionReference<'action'>(
 const fnCreateImageDownloadUrl = makeFunctionReference<'action'>(
   'adapters/placeholderUploads:createPlaceholderImageDownloadUrl',
 );
+// Public, auth-required, fire-and-forget warm-up. Kicks the scale-to-zero
+// preprocess service's (multi-minute) model load early so the cold start
+// overlaps set selection and app setup instead of stalling the first upload.
+// The authoritative definition lives in the monorepo alongside the internal
+// `placeholderBatch:warmupPreprocess` fan-out; the exact `module:name` here is
+// a coordination point with the NeonBinder side — keep them in lock-step.
+const fnWarmPreprocess = makeFunctionReference<'action'>('placeholderPipeline:warmPreprocess');
 const qGetJob = makeFunctionReference<'query'>('placeholderPipeline:getPlaceholderJob');
 const qListImages = makeFunctionReference<'query'>('placeholderPipeline:listPlaceholderImages');
 const qListPairs = makeFunctionReference<'query'>('placeholderPipeline:listPlaceholderPairs');
@@ -276,6 +283,32 @@ export class NeonBinderStreamClient {
     this.jobId = result.jobId;
     debug(`Stream job opened: ${result.jobId}`);
     return result.jobId;
+  }
+
+  /**
+   * Fire-and-forget preprocess warm-up. Triggers the server's scale-to-zero
+   * model load NOW, so its multi-minute cold start overlaps the user's set
+   * selection and app setup rather than stalling the first upload. Needs no
+   * open stream job — safe to call the instant connect() returns and before
+   * startStream(). Best-effort: dispatches the action and returns immediately,
+   * awaiting nothing and never throwing. Failures are logged status-only (the
+   * key and minted token are never touched here).
+   */
+  warm(): void {
+    try {
+      void this.convex
+        .action(fnWarmPreprocess, {})
+        .then(() => debug('preprocess warm-up requested'))
+        .catch((err) =>
+          debug(
+            `preprocess warm-up request failed (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`,
+          ),
+        );
+    } catch (err) {
+      // Guard the synchronous dispatch path too (e.g. a closed socket); a
+      // warm-up must never be able to disturb the caller's flow.
+      debug(`preprocess warm-up could not be dispatched (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`);
+    }
   }
 
   private requireJob(): string {

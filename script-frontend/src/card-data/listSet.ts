@@ -1597,6 +1597,13 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
         const { watchWithServerMatching } = await import('../utils/watchDirectoryStream.js');
         log(chalk.cyan('NEONBINDER_CONVEX_URL set — scans stream to the NeonBinder pipeline (server-side crop + pairing)'));
         nbClient = await NeonBinderStreamClient.connect();
+        // Fire-and-forget: kick the scale-to-zero preprocess model load NOW, the
+        // instant we have an authenticated client — before opening the stream and
+        // before any scan is uploaded — so its multi-minute cold start overlaps
+        // set setup and the initial-file walk instead of the first upload. Never
+        // blocks the user's flow; warm() dispatches and returns, swallowing errors.
+        nbClient.warm();
+        log(chalk.dim('Warming up the card processor…'));
         await nbClient.startStream();
         watcher = watchWithServerMatching({
           directory: inputDirectory,
