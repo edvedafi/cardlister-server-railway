@@ -206,33 +206,93 @@ class MachineTokenSource {
     }
   }
 
-  /** One loud pre-flight so a bad key fails at startup, not mid-scan. */
+  /**
+   * One loud pre-flight so a bad key fails at startup, not mid-scan.
+   *
+   * A bad key (401) is fatal immediately — retrying it is pointless and only
+   * adds Clerk load. But a TRANSIENT upstream blip — a 502 ("auth upstream
+   * unavailable"), a momentary 503, a 429 (Clerk's Frontend API briefly
+   * rate-limited), or a network/fetch rejection — must NOT end `yarn start`:
+   * those are retried with exponential-ish backoff (5 attempts / 4 retries,
+   * ~1.5s→8s capped, ~18.5s total worst case) before giving up. Diagnostics
+   * stay status-only; the key and any minted token never reach the log.
+   */
   async probe(): Promise<void> {
-    const res = await fetch(`${this.siteUrl}/machine/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: this.key }),
-    }).catch((err) => {
-      throw new Error(
-        `Cannot reach the NeonBinder machine-token endpoint at ${this.siteUrl} (${err instanceof Error ? err.constructor.name : 'network error'}).`,
+    const TRANSIENT_STATUS = new Set([429, 502, 503]);
+    const MAX_ATTEMPTS = 5; // → up to MAX_ATTEMPTS-1 retries
+    const BASE_DELAY_MS = 1500;
+    const MAX_DELAY_MS = 8000;
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    const backoffMs = (attempt: number): number =>
+      Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** (attempt - 1));
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(`${this.siteUrl}/machine/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: this.key }),
+        });
+      } catch (err) {
+        // Network/fetch rejection (DNS blip, reset connection) — transient.
+        const name = err instanceof Error ? err.constructor.name : 'network error';
+        if (attempt < MAX_ATTEMPTS) {
+          const delay = backoffMs(attempt);
+          debug(
+            `machine-token pre-flight network error (${name}); retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delay}ms`,
+          );
+          await sleep(delay);
+          continue;
+        }
+        throw new Error(
+          `Cannot reach the NeonBinder machine-token endpoint at ${this.siteUrl} (${name}) after ${MAX_ATTEMPTS - 1} retries — wait a moment and run yarn start again.`,
+        );
+      }
+
+      // Invalid/revoked key — fatal immediately, never retried.
+      if (res.status === 401) {
+        throw new Error(
+          'NeonBinder rejected the machine key (401). Create a key in the web app under Settings → API Keys and set NEONBINDER_MACHINE_KEY — and check it was not revoked.',
+        );
+      }
+
+      // Transient upstream failure — back off and retry.
+      if (TRANSIENT_STATUS.has(res.status)) {
+        if (attempt < MAX_ATTEMPTS) {
+          const delay = backoffMs(attempt);
+          debug(
+            `machine-token pre-flight transient failure (HTTP ${res.status}); retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delay}ms`,
+          );
+          await sleep(delay);
+          continue;
+        }
+        // Retries exhausted. A persistent 503 really is an unconfigured
+        // deployment (missing CLERK_SECRET_KEY), not a momentary blip.
+        if (res.status === 503) {
+          throw new Error(
+            'The NeonBinder machine-token endpoint is not configured on this deployment (503) — CLERK_SECRET_KEY is missing server-side.',
+          );
+        }
+        throw new Error(
+          `NeonBinder auth is temporarily unavailable (HTTP ${res.status}) after ${MAX_ATTEMPTS - 1} retries — the identity provider may be rate-limited; wait a moment and run yarn start again.`,
+        );
+      }
+
+      // Any other non-2xx — not transient, fail immediately.
+      if (!res.ok) {
+        throw new Error(`Machine-token exchange failed (HTTP ${res.status}).`);
+      }
+
+      const body = (await res.json()) as { sessionId?: string };
+      if (body.sessionId) this.sessionId = body.sessionId;
+      debug(
+        attempt > 1
+          ? `machine key verified against the deployment (after ${attempt - 1} retr${attempt === 2 ? 'y' : 'ies'})`
+          : 'machine key verified against the deployment',
       );
-    });
-    if (res.status === 401) {
-      throw new Error(
-        'NeonBinder rejected the machine key (401). Create a key in the web app under Settings → API Keys and set NEONBINDER_MACHINE_KEY — and check it was not revoked.',
-      );
+      return;
     }
-    if (res.status === 503) {
-      throw new Error(
-        'The NeonBinder machine-token endpoint is not configured on this deployment (503) — CLERK_SECRET_KEY is missing server-side.',
-      );
-    }
-    if (!res.ok) {
-      throw new Error(`Machine-token exchange failed (HTTP ${res.status}).`);
-    }
-    const body = (await res.json()) as { sessionId?: string };
-    if (body.sessionId) this.sessionId = body.sessionId;
-    debug('machine key verified against the deployment');
   }
 }
 
