@@ -65,10 +65,10 @@ const qListPairs = makeFunctionReference<'query'>('placeholderPipeline:listPlace
 // function" error which the wrappers below turn into a clear, non-fatal warning
 // (no fallback is invented).
 const fnUpdateImageIdentity = makeFunctionReference<'mutation'>(
-  'placeholderPipeline:updatePlaceholderImageIdentity',
+  'placeholderPairing:updatePlaceholderImageIdentity',
 );
-const fnManualPair = makeFunctionReference<'mutation'>('placeholderPipeline:manuallyPairPlaceholderImages');
-const fnUnpair = makeFunctionReference<'mutation'>('placeholderPipeline:unpairPlaceholderImages');
+const fnManualPair = makeFunctionReference<'mutation'>('placeholderPairing:manuallyPairPlaceholderImages');
+const fnUnpair = makeFunctionReference<'mutation'>('placeholderPairing:unpairPlaceholderImages');
 
 // ── Missing-backend-function signalling ─────────────────────────────────────
 // The three override mutations are being renamed on the NeonBinder side in
@@ -572,7 +572,7 @@ export class NeonBinderStreamClient {
     try {
       await this.convex.mutation(fnUpdateImageIdentity, { jobId, entryIndex, ...fields });
     } catch (err) {
-      this.rethrowIfMissing(err, 'placeholderPipeline:updatePlaceholderImageIdentity');
+      this.rethrowIfMissing(err, 'placeholderPairing:updatePlaceholderImageIdentity');
       throw err;
     }
   }
@@ -588,7 +588,7 @@ export class NeonBinderStreamClient {
     try {
       await this.convex.mutation(fnManualPair, { jobId, frontIndex, backIndex });
     } catch (err) {
-      this.rethrowIfMissing(err, 'placeholderPipeline:manuallyPairPlaceholderImages');
+      this.rethrowIfMissing(err, 'placeholderPairing:manuallyPairPlaceholderImages');
       throw err;
     }
   }
@@ -603,7 +603,7 @@ export class NeonBinderStreamClient {
     try {
       await this.convex.mutation(fnUnpair, { jobId, frontIndex, backIndex });
     } catch (err) {
-      this.rethrowIfMissing(err, 'placeholderPipeline:unpairPlaceholderImages');
+      this.rethrowIfMissing(err, 'placeholderPairing:unpairPlaceholderImages');
       throw err;
     }
   }
