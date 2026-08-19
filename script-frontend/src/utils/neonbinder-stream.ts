@@ -58,6 +58,37 @@ const fnWarmPreprocess = makeFunctionReference<'action'>('placeholderPipeline:wa
 const qGetJob = makeFunctionReference<'query'>('placeholderPipeline:getPlaceholderJob');
 const qListImages = makeFunctionReference<'query'>('placeholderPipeline:listPlaceholderImages');
 const qListPairs = makeFunctionReference<'query'>('placeholderPipeline:listPlaceholderPairs');
+// Manual-override mutations (NEO-170): identity correction + force-pair/unpair.
+// Reached the same makeFunctionReference way as everything else; the exact
+// `module:name` is a coordination point with the NeonBinder backend — if the
+// backend hasn't renamed to these yet, the call surfaces a "could not find
+// function" error which the wrappers below turn into a clear, non-fatal warning
+// (no fallback is invented).
+const fnUpdateImageIdentity = makeFunctionReference<'mutation'>(
+  'placeholderPipeline:updatePlaceholderImageIdentity',
+);
+const fnManualPair = makeFunctionReference<'mutation'>('placeholderPipeline:manuallyPairPlaceholderImages');
+const fnUnpair = makeFunctionReference<'mutation'>('placeholderPipeline:unpairPlaceholderImages');
+
+// ── Missing-backend-function signalling ─────────────────────────────────────
+// The three override mutations are being renamed on the NeonBinder side in
+// parallel with this client. Until that lands, a call raises Convex's "Could
+// not find public function" error; we surface it as this typed error so the
+// watcher can show a clear message and continue, instead of inventing a
+// fallback or crashing the scan session.
+
+export class MissingBackendFunctionError extends Error {
+  readonly missing = true;
+  constructor(public readonly fn: string) {
+    super(`NeonBinder backend function "${fn}" is not available yet (not deployed/renamed).`);
+    this.name = 'MissingBackendFunctionError';
+  }
+}
+
+const isMissingFunctionError = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /could not find\b.*\bfunction/is.test(msg);
+};
 
 // ── Wire shapes (mirrors of the server's `returns:` validators) ────────────
 
@@ -498,6 +529,95 @@ export class NeonBinderStreamClient {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`crop download failed (HTTP ${res.status})`);
     await fs.promises.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+  }
+
+  // ── Manual overrides + one-shot listing (NEO-170) ────────────────────────
+  // The reactive onImages/onPairs subscriptions drive the live UI, but the
+  // idle-menu override actions want an authoritative snapshot at the moment the
+  // operator acts, so these do one-shot queries against the same server
+  // functions the subscriptions use.
+
+  /** One-shot snapshot of every image in the job (not a subscription). */
+  async listImages(): Promise<StreamImageRow[]> {
+    return (await this.convex.query(qListImages, { jobId: this.requireJob() })) as StreamImageRow[];
+  }
+
+  /**
+   * The "waiting for a partner" pool: images the server has finished
+   * processing but has not paired. Each row carries entryIndex + identity
+   * (players/team/cardNumber/side); fetch a crop preview for any of them with
+   * getDownloadUrl(entryIndex) / downloadTo(entryIndex, dest).
+   */
+  async listWaitingImages(): Promise<StreamImageRow[]> {
+    const rows = await this.listImages();
+    return rows.filter((r) => r.status === 'done' && r.pairStatus !== 'paired');
+  }
+
+  /** One-shot snapshot of the server's current front/back pairs. */
+  async listPairs(): Promise<StreamPairRow[]> {
+    return (await this.convex.query(qListPairs, { jobId: this.requireJob() })) as StreamPairRow[];
+  }
+
+  /**
+   * Correct a misread image's identity and re-trigger server-side pairing (a
+   * fixed name auto-pairs to its partner). Only the fields supplied are
+   * patched. Throws MissingBackendFunctionError if the backend hasn't renamed
+   * to this mutation yet.
+   */
+  async updateImageIdentity(
+    entryIndex: number,
+    fields: { players?: string[]; team?: string; cardNumber?: string; side?: 'front' | 'back' },
+  ): Promise<void> {
+    const jobId = this.requireJob();
+    try {
+      await this.convex.mutation(fnUpdateImageIdentity, { jobId, entryIndex, ...fields });
+    } catch (err) {
+      this.rethrowIfMissing(err, 'placeholderPipeline:updatePlaceholderImageIdentity');
+      throw err;
+    }
+  }
+
+  /**
+   * Force-pair two `done` images regardless of identity. The pair is sticky
+   * (survives later automatic re-pairing) and flows back over the pairs
+   * subscription like any other pair. Throws MissingBackendFunctionError if the
+   * backend hasn't renamed to this mutation yet.
+   */
+  async pairImages(frontIndex: number, backIndex: number): Promise<void> {
+    const jobId = this.requireJob();
+    try {
+      await this.convex.mutation(fnManualPair, { jobId, frontIndex, backIndex });
+    } catch (err) {
+      this.rethrowIfMissing(err, 'placeholderPipeline:manuallyPairPlaceholderImages');
+      throw err;
+    }
+  }
+
+  /**
+   * Break a pair (manual or automatic) and free both images to pair again.
+   * Throws MissingBackendFunctionError if the backend hasn't renamed to this
+   * mutation yet.
+   */
+  async unpairImages(frontIndex: number, backIndex: number): Promise<void> {
+    const jobId = this.requireJob();
+    try {
+      await this.convex.mutation(fnUnpair, { jobId, frontIndex, backIndex });
+    } catch (err) {
+      this.rethrowIfMissing(err, 'placeholderPipeline:unpairPlaceholderImages');
+      throw err;
+    }
+  }
+
+  /**
+   * If `err` is Convex's "could not find function" (the backend hasn't renamed
+   * yet), log a status-only warning and throw the typed error so the caller can
+   * surface it and continue. Any other error is left for the caller to rethrow.
+   */
+  private rethrowIfMissing(err: unknown, fn: string): void {
+    if (isMissingFunctionError(err)) {
+      debug(`backend function ${fn} is not available yet (not renamed/deployed) — no fallback`);
+      throw new MissingBackendFunctionError(fn);
+    }
   }
 
   async disconnect(): Promise<void> {

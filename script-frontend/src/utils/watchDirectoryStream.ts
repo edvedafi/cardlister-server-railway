@@ -11,20 +11,25 @@
  * untouched.
  *
  * The local CardPool is deliberately unused here: pairing authority lives
- * server-side, and a client-side mirror would drift. That also means the idle
- * menu's pool-fix options don't exist in this mode — unpaired cards show as
- * live remote state instead.
+ * server-side, and a client-side mirror would drift. The idle menu's manual
+ * override actions therefore operate on live remote state via the client's
+ * override mutations: (V)iew the waiting pool with image previews, (P) fix a
+ * misread identity so the server re-pairs, (M)anually force a pair, and
+ * (U)npair a wrong one. Pairing stays identity-first and automatic; these are
+ * the operator's escape hatch when the model misreads a card.
  */
 import fs from 'fs';
 import path from 'path';
 import readline from 'node:readline';
 import Queue from 'queue';
+import terminalImage from 'term-img';
 import { useSpinners } from './spinners.js';
 import chalk from 'chalk';
 import type { CardSide, MatchResult, UnmatchedCard } from './cardPool.js';
 import { ask, queuedLog } from './ask.js';
 import { createLogger } from './logger.js';
 import { terminalLink } from './terminalLink.js';
+import { MissingBackendFunctionError } from './neonbinder-stream.js';
 import {
   setWaitingTaskFactory,
   setWaitingAbort,
@@ -126,12 +131,25 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   // Latest reactive state, rendered by the idle header.
   let latestJob: StreamJobSnapshot | null = null;
   let latestImages: StreamImageRow[] = [];
+  let latestPairs: StreamPairRow[] = [];
   // Pair keys already seen and entry indexes already handed to review — a
   // server-side pair revision that would re-review a physical scan is skipped.
   const seenPairs = new Set<string>();
   const handedOff = new Set<number>();
+  // entryIndex → the pair it belongs to, so a review-time reject (reAddToPool)
+  // can break the right server pair, and the unpair action can free both sides.
+  const pairByEntry = new Map<number, StreamPairRow>();
+  // entryIndex → local downloaded crop path, so pool previews don't re-download
+  // the same image on every idle-menu action.
+  const previewCache = new Map<number, string>();
   let lastIdleRenderKey = '';
   const unsubscribers: (() => void)[] = [];
+
+  // A `done` image the server has NOT paired. Prefer the server's authoritative
+  // pairStatus; fall back to our own handoff tracking on an older backend that
+  // doesn't emit it. This is the shared definition of the "waiting pool".
+  const isWaiting = (r: StreamImageRow): boolean =>
+    r.status === 'done' && (r.pairStatus ? r.pairStatus !== 'paired' : !handedOff.has(r.entryIndex));
 
   // Same concurrency knob as the legacy watcher. Upload bandwidth is still
   // the practical bottleneck — the server absorbs bursts via its workpool.
@@ -298,6 +316,8 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     }
     handedOff.add(pair.frontIndex);
     handedOff.add(pair.backIndex);
+    pairByEntry.set(pair.frontIndex, pair);
+    pairByEntry.set(pair.backIndex, pair);
 
     const frontEntry = entries.get(pair.frontIndex);
     const backEntry = entries.get(pair.backIndex);
@@ -365,6 +385,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   };
 
   const onPairsUpdate = (rows: StreamPairRow[]) => {
+    latestPairs = rows;
     for (const pair of rows) {
       // Deduped at ENQUEUE time so a burst of subscription updates cannot
       // queue the same pair twice before its first task runs.
@@ -398,19 +419,233 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         ),
       );
     }
-    const unpaired = latestImages.filter(
-      (r) => r.status === 'done' && !handedOff.has(r.entryIndex),
-    );
+    const unpaired = latestImages.filter(isWaiting);
     if (unpaired.length > 0) {
       await queuedLog(chalk.yellow(`  ${unpaired.length} card(s) waiting for a partner:`));
       for (const row of unpaired) {
         const local = entries.get(row.entryIndex);
         await queuedLog(
-          chalk.yellow(`    ${local?.basename ?? row.originalName}: ${describeRow(row)}`),
+          chalk.yellow(`    #${row.entryIndex} ${local?.basename ?? row.originalName}: ${describeRow(row)}`),
         );
       }
+      await queuedLog(
+        chalk.dim('  Press V to preview them, P to fix an identity, or M to pair two by hand.'),
+      );
     }
     await queuedLog('');
+  };
+
+  // ── Pool preview + override actions (NEO-170 manual intervention) ─────────
+  // The whole point of previews: the operator can't trust a misread name, so
+  // show the actual crop. Downloads the server's cropped output for an entry
+  // and renders it inline (same term-img approach the legacy watcher used for
+  // local pool cards); caches the download so repeated menu actions don't
+  // re-fetch. Returns the rendered block, or null if it couldn't be shown.
+  const renderPreview = async (entryIndex: number): Promise<string | null> => {
+    try {
+      let file = previewCache.get(entryIndex);
+      if (!file || !fs.existsSync(file)) {
+        file = path.join(downloadDir, `preview-${entryIndex}.jpg`);
+        await client.downloadTo(entryIndex, file);
+        previewCache.set(entryIndex, file);
+      }
+      const out = await terminalImage(file, { height: 12 });
+      return '    ' + out;
+    } catch (err) {
+      debug(`Preview render failed for entry ${entryIndex}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  };
+
+  /** Authoritative waiting pool at action time; falls back to live state. */
+  const listWaitingPool = async (): Promise<StreamImageRow[]> => {
+    try {
+      return await client.listWaitingImages();
+    } catch (err) {
+      debug(`listWaitingImages failed, using cached subscription state: ${err instanceof Error ? err.message : String(err)}`);
+      return latestImages.filter(isWaiting);
+    }
+  };
+
+  const poolLabel = (row: StreamImageRow): string => {
+    const local = entries.get(row.entryIndex);
+    const name = local?.basename ?? row.originalName;
+    return `#${row.entryIndex} ${name} — ${describeRow(row) || chalk.red('unknown')}`;
+  };
+
+  /** List the waiting pool with an inline image preview for each card. */
+  const printPoolWithPreviews = async (pool: StreamImageRow[]): Promise<void> => {
+    if (pool.length === 0) {
+      await queuedLog(chalk.dim('  No cards are waiting for a partner right now.'));
+      return;
+    }
+    await queuedLog(chalk.yellow.bold(`  ${pool.length} card(s) waiting for a partner:`));
+    for (const row of pool) {
+      await queuedLog('');
+      const preview = await renderPreview(row.entryIndex);
+      if (preview) await queuedLog(preview);
+      await queuedLog(chalk.yellow(`    ${poolLabel(row)}`));
+    }
+    await queuedLog('');
+  };
+
+  /**
+   * Prompt the operator to pick one waiting card via the existing ask() select
+   * (arrow keys + Enter, Escape to cancel). Returns the entryIndex, or null if
+   * cancelled / nothing to pick.
+   */
+  const pickCard = async (message: string, pool: StreamImageRow[]): Promise<number | null> => {
+    if (pool.length === 0) return null;
+    const choice = await ask(message, undefined, {
+      selectOptions: pool.map((row) => ({ name: poolLabel(row), value: String(row.entryIndex) })),
+    });
+    if (choice === undefined || choice === null || choice === '') return null;
+    return Number(choice);
+  };
+
+  /** Forget a broken pair locally so both sides re-enter the waiting pool. */
+  const unpairLocal = (frontIndex: number, backIndex: number): void => {
+    seenPairs.delete(`${frontIndex}-${backIndex}`);
+    handedOff.delete(frontIndex);
+    handedOff.delete(backIndex);
+    pairByEntry.delete(frontIndex);
+    pairByEntry.delete(backIndex);
+  };
+
+  // View the waiting pool with previews (idle-menu 'v').
+  const viewPoolAction = async (): Promise<void> => {
+    await printPoolWithPreviews(await listWaitingPool());
+  };
+
+  // Correct a misread identity, then let the server re-pair (idle-menu 'p').
+  const editIdentityAction = async (): Promise<void> => {
+    const pool = await listWaitingPool();
+    if (pool.length === 0) {
+      await queuedLog(chalk.dim('  No cards are waiting for a partner right now.'));
+      return;
+    }
+    await printPoolWithPreviews(pool);
+    const entryIndex = await pickCard('Pick the card to fix', pool);
+    if (entryIndex === null) {
+      await queuedLog(chalk.dim('  Cancelled.'));
+      return;
+    }
+    const row = pool.find((r) => r.entryIndex === entryIndex);
+    if (!row) return;
+
+    // Only fields the operator actually changes are patched.
+    const patch: { players?: string[]; team?: string; cardNumber?: string; side?: 'front' | 'back' } = {};
+
+    const currentPlayers = (row.players ?? []).join(', ');
+    const playersAns = String((await ask('Player(s), comma-separated', currentPlayers)) ?? '');
+    if (playersAns.trim() !== currentPlayers.trim()) {
+      patch.players = playersAns.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+
+    const currentTeam = row.team ?? '';
+    const teamAns = String((await ask('Team', currentTeam)) ?? '').trim();
+    if (teamAns !== currentTeam.trim()) patch.team = teamAns;
+
+    const currentCard = row.cardNumber ?? '';
+    const cardAns = String((await ask('Card number', currentCard)) ?? '').trim();
+    if (cardAns !== currentCard.trim()) patch.cardNumber = cardAns;
+
+    const currentSide = row.side === 'front' || row.side === 'back' ? row.side : undefined;
+    const sideAns = (await ask('Side', currentSide ?? 'front', {
+      selectOptions: [
+        { name: 'front', value: 'front' },
+        { name: 'back', value: 'back' },
+      ],
+    })) as 'front' | 'back' | undefined;
+    if (sideAns && sideAns !== currentSide) patch.side = sideAns;
+
+    if (Object.keys(patch).length === 0) {
+      await queuedLog(chalk.dim('  No changes — nothing sent.'));
+      return;
+    }
+
+    await client.updateImageIdentity(entryIndex, patch);
+    await queuedLog(chalk.dim(`  Updated #${entryIndex} — asking the server to re-pair…`));
+    // Give the pairing subscription a moment to reflect the re-pair before we
+    // report. If it paired, onPairsUpdate has already opened its review.
+    await new Promise((r) => setTimeout(r, 1500));
+    const stillWaiting = (await listWaitingPool()).some((r) => r.entryIndex === entryIndex);
+    if (stillWaiting) {
+      await queuedLog(chalk.yellow(`  #${entryIndex} is still waiting for a partner after the edit.`));
+    } else {
+      await queuedLog(chalk.green(`  #${entryIndex} paired after the edit — its review will open shortly.`));
+    }
+  };
+
+  // Force-pair two waiting cards (idle-menu 'm'). The pair flows back through
+  // onPairsUpdate → the normal review handoff, so nothing else is needed here.
+  const manualPairAction = async (): Promise<void> => {
+    const pool = await listWaitingPool();
+    if (pool.length < 2) {
+      await queuedLog(chalk.dim('  Need at least two waiting cards to pair by hand.'));
+      return;
+    }
+    await printPoolWithPreviews(pool);
+    const frontIndex = await pickCard('Pick the FRONT card', pool);
+    if (frontIndex === null) {
+      await queuedLog(chalk.dim('  Cancelled.'));
+      return;
+    }
+    const backIndex = await pickCard('Pick the BACK card', pool.filter((r) => r.entryIndex !== frontIndex));
+    if (backIndex === null) {
+      await queuedLog(chalk.dim('  Cancelled.'));
+      return;
+    }
+    await client.pairImages(frontIndex, backIndex);
+    await queuedLog(
+      chalk.green(`  Force-paired #${frontIndex} (front) ↔ #${backIndex} (back) — its review will open shortly.`),
+    );
+  };
+
+  // Break a wrong pair (idle-menu 'u'), freeing both sides to pair again.
+  const unpairAction = async (): Promise<void> => {
+    let pairs = latestPairs;
+    try {
+      pairs = await client.listPairs();
+    } catch (err) {
+      debug(`listPairs failed, using cached subscription state: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (pairs.length === 0) {
+      await queuedLog(chalk.dim('  No pairs to break.'));
+      return;
+    }
+    const choice = await ask('Pick a pair to break', undefined, {
+      selectOptions: pairs.map((p) => ({
+        name: `#${p.frontIndex} ↔ #${p.backIndex} — ${p.player ?? '?'} (${p.confidence}/${p.mechanism})`,
+        value: `${p.frontIndex}:${p.backIndex}`,
+      })),
+    });
+    if (choice === undefined || choice === null || choice === '') {
+      await queuedLog(chalk.dim('  Cancelled.'));
+      return;
+    }
+    const [frontIndex, backIndex] = String(choice).split(':').map(Number);
+    await client.unpairImages(frontIndex, backIndex);
+    unpairLocal(frontIndex, backIndex);
+    await queuedLog(chalk.green(`  Unpaired #${frontIndex} ↔ #${backIndex} — both are back in the waiting pool.`));
+  };
+
+  /**
+   * Run an idle-menu override action, turning a not-yet-deployed backend
+   * mutation into a clear on-screen warning (and leaving the session running)
+   * instead of a crash — per the NEO-170 backend contract.
+   */
+  const runAction = async (fn: () => Promise<void>): Promise<void> => {
+    try {
+      await fn();
+    } catch (err) {
+      if (err instanceof MissingBackendFunctionError) {
+        await queuedLog(chalk.yellow(`  ${err.message}`));
+        await queuedLog(chalk.yellow('  Update the NeonBinder backend, then retry. No changes were made.'));
+      } else {
+        await queuedLog(chalk.red(`  Action failed: ${err instanceof Error ? err.message : String(err)}`));
+      }
+    }
   };
 
   const readWaitingKey = (
@@ -457,20 +692,31 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   };
 
   const printIdleMenu = () => {
-     
-    console.log('');
-     
-    console.log('  ' + chalk.yellow.bold('(C)') + 'omplete and sync (finish the session)');
-    console.log(
+    const waitingCount = latestImages.filter(isWaiting).length;
+    const pairCount = latestPairs.length;
+    // eslint-disable-next-line no-console
+    const line = (s: string) => console.log(s);
+
+    line('');
+    line('  ' + chalk.yellow.bold('(C)') + 'omplete and sync (finish the session)');
+    line(
       '  ' + chalk.yellow.bold('(A)') + 'bort — cancel remaining processing' +
       chalk.dim(' (files stay unscanned for a re-run)'),
     );
-     
-    console.log('');
-     
-    console.log(chalk.dim('  Press a key, or wait for new files...'));
-     
-    console.log('');
+    if (waitingCount > 0) {
+      line('  ' + chalk.yellow.bold('(V)') + 'iew waiting cards with image previews');
+      line('  ' + chalk.yellow.bold('(P)') + ' fix a waiting card\'s identity (player/team/#/side), then re-pair');
+    }
+    if (waitingCount >= 2) {
+      line('  ' + chalk.yellow.bold('(M)') + 'anually pair two waiting cards (front + back)');
+    }
+    if (pairCount > 0) {
+      line('  ' + chalk.yellow.bold('(U)') + 'npair a wrong pair (frees both to pair again)');
+    }
+    line('');
+    line(chalk.dim('  Pairing is automatic and identity-first; V/P/M/U are the manual override.'));
+    line(chalk.dim('  Press a key, or wait for new files...'));
+    line('');
   };
 
   const completeSession = async () => {
@@ -528,15 +774,35 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
           }
           return;
         }
-        if (result.char.toLowerCase() === 'c') {
+        const char = result.char.toLowerCase();
+        if (char === 'c') {
           await completeSession();
           return;
         }
-        if (result.char.toLowerCase() === 'a') {
+        if (char === 'a') {
           const confirmAbort = await ask('Abort and cancel remaining processing?', false, { isYN: true });
           if (confirmAbort) {
             await abortSession();
           }
+          return;
+        }
+        // Manual-override actions. Each runs inline (we own the UI thread here),
+        // then returns so the UI loop re-enqueues a fresh waiting task with the
+        // header/menu re-rendered from the updated remote state.
+        if (char === 'v') {
+          await runAction(viewPoolAction);
+          return;
+        }
+        if (char === 'p') {
+          await runAction(editIdentityAction);
+          return;
+        }
+        if (char === 'm') {
+          await runAction(manualPairAction);
+          return;
+        }
+        if (char === 'u') {
+          await runAction(unpairAction);
           return;
         }
         // unknown key — re-read without reprinting the menu
@@ -642,16 +908,50 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
       if (resolveCompletion) resolveCompletion();
     },
     reAddToPool: async (card: UnmatchedCard) => {
-      // No server-side un-pair exists (yet): the rejected pair keeps its
-      // server rows, so the kept side cannot re-enter matching this session.
-      // Rescanning BOTH sides as fresh files creates a brand-new pair.
-      // TODO(NEO-170 follow-up): server-side re-pair for a rejected side.
-      log(
-        chalk.yellow(
-          `Streaming mode can't return ${path.basename(card.path)} to the pool — ` +
-            `re-scan BOTH sides of this card to pair it again.`,
-        ),
-      );
+      // The review menu rejected one side of an auto-matched pair. Server-side,
+      // the fix is to BREAK that pair: unpairing frees the kept side back into
+      // the waiting pool so it re-pairs with a fresh rescan of the rejected
+      // side (or a manual pair). Resolve the kept card back to its server entry
+      // via the local scan it came from, then unpair the pair it belongs to.
+      let keptEntry: number | undefined;
+      for (const [idx, e] of entries) {
+        if (
+          (card.originalFilename && e.basename === card.originalFilename) ||
+          (card.originalPath && e.localPath === card.originalPath)
+        ) {
+          keptEntry = idx;
+          break;
+        }
+      }
+      const pair = keptEntry !== undefined ? pairByEntry.get(keptEntry) : undefined;
+      if (!pair) {
+        log(
+          chalk.yellow(
+            `Couldn't map ${path.basename(card.path)} back to a server pair — ` +
+              `re-scan BOTH sides to pair it again, or use the idle menu's (M)pair / (U)npair controls.`,
+          ),
+        );
+        return;
+      }
+      try {
+        await client.unpairImages(pair.frontIndex, pair.backIndex);
+        unpairLocal(pair.frontIndex, pair.backIndex);
+        log(
+          chalk.yellow(
+            `Unpaired #${pair.frontIndex}↔#${pair.backIndex} — ${card.side} #${keptEntry} is back in the waiting pool.`,
+          ),
+        );
+      } catch (err) {
+        if (err instanceof MissingBackendFunctionError) {
+          log(
+            chalk.yellow(
+              `Server-side unpair isn't available yet (${err.message}) — re-scan BOTH sides to pair again.`,
+            ),
+          );
+        } else {
+          log(chalk.red(`Unpair failed: ${err instanceof Error ? err.message : String(err)}`));
+        }
+      }
     },
   };
 }
