@@ -22,6 +22,7 @@
  * The key and the minted tokens are never logged, even truncated.
  */
 import fs from 'fs';
+import sharp from 'sharp';
 import { ConvexClient } from 'convex/browser';
 import { makeFunctionReference } from 'convex/server';
 import { createLogger } from './logger.js';
@@ -31,6 +32,53 @@ const debug = createLogger('neonbinder');
 // ── Feature flag ───────────────────────────────────────────────────────────
 
 export const isStreamingEnabled = (): boolean => !!process.env.NEONBINDER_CONVEX_URL;
+
+// ── Pixel-cap downscale ────────────────────────────────────────────────────
+// The preprocess service rejects any entry whose pixel count exceeds
+// MAX_UPLOAD_PIXELS with HTTP 413 ENTRY_TOO_MANY_PIXELS (a decode-memory
+// guard). Modern phones shoot past it — a Pixel photo is 6144x8160 ≈ 50.1 MP —
+// and 413 is terminal (non-retryable), so a full-res upload fails the card
+// outright and it never lists. Downscale oversized rasters to fit under the cap
+// BEFORE upload; anything already under passes through untouched (original
+// bytes, no re-encode). EXIF is preserved so the server's orientation handling
+// is identical to a raw upload.
+const MAX_UPLOAD_PIXELS = 50_000_000;
+// Aim a hair under the cap so rounding can't land exactly on the limit, while
+// keeping as much resolution as possible for the crop/identity pass.
+const DOWNSCALE_TARGET_PIXELS = 49_000_000;
+
+async function downscaleIfOverPixelLimit(bytes: Buffer, localPath: string): Promise<Buffer> {
+  let width = 0;
+  let height = 0;
+  try {
+    const meta = await sharp(bytes).metadata();
+    width = meta.width ?? 0;
+    height = meta.height ?? 0;
+  } catch {
+    // Not a raster sharp can decode — leave it to the server to accept or reject.
+    return bytes;
+  }
+  const pixels = width * height;
+  if (!pixels || pixels <= MAX_UPLOAD_PIXELS) return bytes;
+
+  // Scale both dimensions by the same factor (aspect preserved); passing width
+  // alone lets sharp derive the height. Pixel count is orientation-independent,
+  // so this is correct regardless of the EXIF rotation.
+  const scale = Math.sqrt(DOWNSCALE_TARGET_PIXELS / pixels);
+  const targetWidth = Math.max(1, Math.round(width * scale));
+  const targetHeight = Math.max(1, Math.round(height * scale));
+  const out = await sharp(bytes)
+    .resize({ width: targetWidth, withoutEnlargement: true })
+    .keepMetadata() // keep EXIF (incl. orientation) — server handles it as before
+    .jpeg({ quality: 92 })
+    .toBuffer();
+  debug(
+    `downscaled ${localPath}: ${width}x${height} (${(pixels / 1e6).toFixed(1)}MP, over the ` +
+      `${(MAX_UPLOAD_PIXELS / 1e6).toFixed(0)}MP cap) -> ~${targetWidth}x${targetHeight} ` +
+      `(${((targetWidth * targetHeight) / 1e6).toFixed(1)}MP, ${(out.byteLength / 1e6).toFixed(1)}MB)`,
+  );
+  return out;
+}
 
 // ── Server function references ─────────────────────────────────────────────
 // This repo has no Convex codegen; references are built from function paths.
@@ -420,7 +468,11 @@ export class NeonBinderStreamClient {
    * the file field last — GCS ignores anything after `file`.
    */
   async uploadFile(alloc: UploadAllocation, localPath: string, contentType = 'image/jpeg'): Promise<void> {
-    const bytes = await fs.promises.readFile(localPath);
+    // Downscale oversized rasters before the byte-cap check and the upload: the
+    // preprocess service 413s anything over its pixel cap, and that's terminal,
+    // so the card would be lost. A downscaled image is also smaller in bytes,
+    // so this only ever helps the maxUploadBytes check below.
+    const bytes = await downscaleIfOverPixelLimit(await fs.promises.readFile(localPath), localPath);
     if (bytes.byteLength > alloc.maxUploadBytes) {
       throw new Error(
         `${localPath} is ${bytes.byteLength} bytes — over the ${alloc.maxUploadBytes}-byte upload cap`,
