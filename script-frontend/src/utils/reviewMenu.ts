@@ -1,6 +1,9 @@
 import type { MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
 import chalk from 'chalk';
+import os from 'node:os';
+import path from 'node:path';
 import readline from 'node:readline';
+import sharp from 'sharp';
 import terminalImage from 'term-img';
 import { ask } from './ask.js';
 import { pauseSpinners, resumeSpinners } from './spinners.js';
@@ -85,18 +88,99 @@ function confidenceColor(score: number): (s: string) => string {
   return chalk.red;
 }
 
+/**
+ * Number of terminal rows the menu below the images needs. Used to size the
+ * image preview so the whole review screen (images + menu) fits on one page
+ * without scrolling.
+ */
+function menuRowCount(state: ReviewMenuState): number {
+  const variantRows = state.availableVariants && state.availableVariants.length > 1
+    ? state.availableVariants.length + 3 // header + rows + blank + hotkey row
+    : 0;
+  return 17 + variantRows;
+}
+
+/**
+ * Pick an image height (in terminal rows) that leaves room for the menu.
+ * Falls back to a conservative default when the terminal size is unknown.
+ */
+function previewHeightRows(state: ReviewMenuState): number {
+  const rows = process.stdout.rows || 40;
+  const available = rows - menuRowCount(state) - 2; // 2 = padding around the image block
+  return Math.max(6, Math.min(18, available));
+}
+
+/**
+ * Compose the front and back scans into one side-by-side PNG so they render
+ * on the same line. Both sides are scaled to a common height; a small gap
+ * separates them. Returns null if either image can't be read.
+ */
+async function composeSideBySide(frontPath: string, backPath: string): Promise<string | null> {
+  try {
+    const TARGET_H = 600;
+    const GAP = 24;
+    // Border is 2 source px so it still reads as a hairline after the terminal
+    // scales the composite down to fit the available rows.
+    const BORDER = 2;
+    const BORDER_COLOR = { r: 0, g: 200, b: 0, alpha: 1 };
+    const sides = await Promise.all(
+      [frontPath, backPath].map(async (p) => {
+        const buf = await sharp(p)
+          .resize({ height: TARGET_H - BORDER * 2, fit: 'inside' })
+          .extend({ top: BORDER, bottom: BORDER, left: BORDER, right: BORDER, background: BORDER_COLOR })
+          .png()
+          .toBuffer();
+        const meta = await sharp(buf).metadata();
+        return { buf, width: meta.width ?? 0, height: meta.height ?? TARGET_H };
+      }),
+    );
+    const height = Math.max(...sides.map((s) => s.height));
+    const width = sides.reduce((sum, s) => sum + s.width, 0) + GAP;
+    const out = path.join(os.tmpdir(), `review-pair-${process.pid}.png`);
+    await sharp({
+      create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .composite([
+        { input: sides[0].buf, left: 0, top: Math.floor((height - sides[0].height) / 2) },
+        { input: sides[1].buf, left: sides[0].width + GAP, top: Math.floor((height - sides[1].height) / 2) },
+      ])
+      .png()
+      .toFile(out);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 async function printCardImages(state: ReviewMenuState): Promise<void> {
-  const show = async (p: string) => {
+  const fullHeight = previewHeightRows(state);
+  const show = async (p: string, height: number) => {
     try {
-      const out = await terminalImage(p, { height: 18 });
+      const out = await terminalImage(p, { height });
       process.stdout.write('  ' + out + '\n');
     } catch {
       process.stdout.write(`  ${chalk.dim(`[Image: ${p.split('/').pop()}]`)}\n`);
     }
   };
-  await show(state.frontPath);
-  if (state.backPath && state.backPath !== state.frontPath) {
-    await show(state.backPath);
+
+  // Blank line so the image block isn't jammed against the text above it.
+  process.stdout.write('\n');
+
+  const hasBack = !!state.backPath && state.backPath !== state.frontPath;
+  if (hasBack) {
+    const combined = await composeSideBySide(state.frontPath, state.backPath!);
+    if (combined) {
+      await show(combined, fullHeight);
+      return;
+    }
+  }
+
+  // Fallback: single side, or composition failed — render each side on its
+  // own line, halving the height so both still fit above the menu.
+  const stackedHeight = hasBack ? Math.max(4, Math.floor(fullHeight / 2)) : fullHeight;
+  await show(state.frontPath, stackedHeight);
+  if (hasBack) {
+    await show(state.backPath!, stackedHeight);
   }
 }
 
