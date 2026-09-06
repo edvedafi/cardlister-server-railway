@@ -56,6 +56,12 @@ export interface DirectoryWatcher {
    * the pool so it can match against a fresh rescan of the rejected side.
    */
   reAddToPool: (card: UnmatchedCard) => Promise<void>;
+  /**
+   * Separate a pair the review menu reports as two different cards. Both
+   * images are kept and returned to the pool to find their real partners, and
+   * the pairing is banned so they cannot simply re-match each other.
+   */
+  unpairInReview: (front: UnmatchedCard, back: UnmatchedCard) => Promise<void>;
 }
 
 // ── Smart matching watcher ─────────────────────────────────────────────────
@@ -216,6 +222,33 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
         handleMatchedPair(match);
       } else {
         debug(`Re-added ${path.basename(card.path)} to pool, waiting for ${card.side === 'front' ? 'back' : 'front'}`);
+      }
+    } finally {
+      releaseLock();
+    }
+  };
+
+  /**
+   * Review-menu (U): the two scans are different cards. Ban the pairing, then
+   * put both back through the pool under the same lock as normal intake —
+   * either may immediately match a different waiting card, which is the point.
+   */
+  const unpairInReview = async (front: UnmatchedCard, back: UnmatchedCard): Promise<void> => {
+    let releaseLock!: () => void;
+    const prev = poolLock;
+    poolLock = new Promise<void>((res) => { releaseLock = res; });
+    await prev;
+    try {
+      pool.banPair(front, back);
+      for (const card of [front, back]) {
+        card.timestamp = Date.now();
+        const match = await pool.addCard(card);
+        if (match) {
+          debug(`Unpaired ${path.basename(card.path)} re-matched to a different card`);
+          handleMatchedPair(match);
+        } else {
+          debug(`Unpaired ${path.basename(card.path)} is waiting for a ${card.side === 'front' ? 'back' : 'front'}`);
+        }
       }
     } finally {
       releaseLock();
@@ -800,5 +833,6 @@ export function watchWithSmartMatching(opts: SmartWatcherOptions): DirectoryWatc
       if (resolveCompletion) resolveCompletion();
     },
     reAddToPool,
+    unpairInReview,
   };
 }

@@ -35,6 +35,19 @@ export interface UnmatchedCard {
   imageHash?: bigint; // cached perceptual dHash, lazily computed on a same-side collision
 }
 
+/**
+ * Stable identity for pair bans. Prefer the pre-crop source: the review menu
+ * can hand back a re-cropped temp path, so `path` alone would let a banned
+ * pair slip through after a re-crop.
+ */
+function banIdentity(card: UnmatchedCard): string {
+  return card.originalPath ?? card.originalFilename ?? card.path;
+}
+
+function banKey(a: UnmatchedCard, b: UnmatchedCard): string {
+  return [banIdentity(a), banIdentity(b)].sort().join('\u0000');
+}
+
 export type OcrTextResolver = (imagePath: string) => Promise<{ text: string; words: string[] } | null>;
 
 /** Resolves an image's perceptual hash; returns null when hashing isn't possible. */
@@ -189,6 +202,10 @@ function nameFoundInOcrText(playerName: string, ocrText: string, ocrWords: strin
 
 export class CardPool {
   private cards = new Map<string, UnmatchedCard>();
+  // Pairs the operator explicitly separated in review. Both images stay in the
+  // pool looking for their real partners, so without this they would just
+  // re-match each other and reopen the review we were told is wrong.
+  private banned = new Set<string>();
   private ocrResolver: OcrTextResolver | null;
   private imageHasher: ImageHasher | null;
 
@@ -207,6 +224,19 @@ export class CardPool {
 
   remove(path: string): boolean {
     return this.cards.delete(path);
+  }
+
+  /**
+   * Never match these two images with each other again. Set when the review
+   * menu reports an auto-matched pair is actually two different cards.
+   */
+  banPair(a: UnmatchedCard, b: UnmatchedCard): void {
+    this.banned.add(banKey(a, b));
+    debug(`Banned pair: ${cardLabel(a)} <-> ${cardLabel(b)}`);
+  }
+
+  private isBanned(a: UnmatchedCard, b: UnmatchedCard): boolean {
+    return this.banned.size > 0 && this.banned.has(banKey(a, b));
   }
 
   /**
@@ -320,6 +350,9 @@ export class CardPool {
 
     for (const existing of this.cards.values()) {
       if (existing.side !== oppositeSide) continue;
+      // Checked before the side-only tally so a banned partner can't win the
+      // "exactly one opposite-side card" fallback either.
+      if (this.isBanned(card, existing)) continue;
       oppositeSideCount++;
       lastOpposite = existing;
 
@@ -426,6 +459,7 @@ export class CardPool {
 
     for (const existing of this.cards.values()) {
       if (existing.side !== oppositeSide) continue;
+      if (this.isBanned(card, existing)) continue;
 
       // Ensure pool card has cached OCR text
       if (!existing.ocrText && this.ocrResolver) {

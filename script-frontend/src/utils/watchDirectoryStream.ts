@@ -139,6 +139,33 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   // entryIndex → the pair it belongs to, so a review-time reject (reAddToPool)
   // can break the right server pair, and the unpair action can free both sides.
   const pairByEntry = new Map<number, StreamPairRow>();
+  // Server entries the operator rejected in review (the wrong half of a pair).
+  // Unpairing alone does NOT settle this: both sides stay `done` on the server
+  // with their identities unchanged, so the next pairing run re-forms the exact
+  // same pair and review reopens on what we just rejected. There is no
+  // server-side discard mutation, so the dead scan is tombstoned locally — it
+  // never reaches review again and never shows in the waiting pool. The
+  // physical card is rescanned and comes back under a fresh entryIndex.
+  const rejectedEntries = new Set<number>();
+  // Pair keys the operator separated with review-menu (U): two different cards
+  // that were wrongly paired. Unlike a reject, BOTH images stay alive and go
+  // back to the pool — only this exact pairing is dead. The server will keep
+  // re-proposing it (nothing about either image changed), so the ban is what
+  // makes the separation stick.
+  const bannedPairs = new Set<string>();
+  // pair key → how many times we've re-broken a pair the server keeps
+  // re-forming around a rejected or banned entry. Bounded so a server that
+  // insists on the pairing can't turn this into an unpair/re-pair ping-pong.
+  const reUnpairAttempts = new Map<string, number>();
+  const MAX_RE_UNPAIR = 3;
+
+  const pairKey = (frontIndex: number, backIndex: number): string => `${frontIndex}-${backIndex}`;
+
+  /** A pairing the operator has already thrown out, by either route. */
+  const isSuppressedPair = (pair: StreamPairRow): boolean =>
+    rejectedEntries.has(pair.frontIndex) ||
+    rejectedEntries.has(pair.backIndex) ||
+    bannedPairs.has(pairKey(pair.frontIndex, pair.backIndex));
   // entryIndex → local downloaded crop path, so pool previews don't re-download
   // the same image on every idle-menu action.
   const previewCache = new Map<number, string>();
@@ -149,7 +176,9 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   // pairStatus; fall back to our own handoff tracking on an older backend that
   // doesn't emit it. This is the shared definition of the "waiting pool".
   const isWaiting = (r: StreamImageRow): boolean =>
-    r.status === 'done' && (r.pairStatus ? r.pairStatus !== 'paired' : !handedOff.has(r.entryIndex));
+    !rejectedEntries.has(r.entryIndex) &&
+    r.status === 'done' &&
+    (r.pairStatus ? r.pairStatus !== 'paired' : !handedOff.has(r.entryIndex));
 
   // Same concurrency knob as the legacy watcher. Upload bandwidth is still
   // the practical bottleneck — the server absorbs bursts via its workpool.
@@ -302,7 +331,8 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
 
   const handlePair = async (pair: StreamPairRow) => {
     if (stopped) return;
-    const key = `${pair.frontIndex}-${pair.backIndex}`;
+    if (isSuppressedPair(pair)) return;
+    const key = pairKey(pair.frontIndex, pair.backIndex);
     if (handedOff.has(pair.frontIndex) || handedOff.has(pair.backIndex)) {
       // The server revised a provisional pair after we already sent one of
       // its sides to review. Reviewing the same physical scan twice is worse
@@ -389,7 +419,14 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     for (const pair of rows) {
       // Deduped at ENQUEUE time so a burst of subscription updates cannot
       // queue the same pair twice before its first task runs.
-      const key = `${pair.frontIndex}-${pair.backIndex}`;
+      const key = pairKey(pair.frontIndex, pair.backIndex);
+      // A pairing the operator already threw out. Nothing about the two images
+      // changed when we unpaired them, so the server keeps re-forming it —
+      // this is the guard that stops reject → re-pair → same review, forever.
+      if (isSuppressedPair(pair)) {
+        void reBreakSuppressedPair(pair);
+        continue;
+      }
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
       pairQueue.push(() => handlePair(pair));
@@ -429,7 +466,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         );
       }
       await queuedLog(
-        chalk.dim('  Press V to preview them, P to fix an identity, or M to pair two by hand.'),
+        chalk.dim('  Press V to preview them, P to fix an identity, M to pair two by hand, or X to clear them all.'),
       );
     }
     await queuedLog('');
@@ -457,13 +494,73 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     }
   };
 
+  /**
+   * True when `entryIndex` is held in a pair whose other half was rejected.
+   * The server believes it is paired, so it drops out of the waiting pool —
+   * but its real partner is the rescan that hasn't arrived yet, which makes it
+   * exactly the card the operator needs to reach from the pairing menu.
+   */
+  const isStrandedBySuppression = (entryIndex: number): boolean => {
+    if (rejectedEntries.has(entryIndex)) return false;
+    const pair = latestPairs.find((p) => p.frontIndex === entryIndex || p.backIndex === entryIndex);
+    return !!pair && isSuppressedPair(pair);
+  };
+
+  /**
+   * The server re-formed a pair around a rejected scan. Break it again so the
+   * kept side is free to pair with the incoming rescan. Bounded: if the server
+   * keeps insisting, stop fighting it and point at the manual pair action —
+   * `isStrandedByRejection` keeps the kept side reachable there either way.
+   */
+  const reBreakSuppressedPair = async (pair: StreamPairRow): Promise<void> => {
+    const key = pairKey(pair.frontIndex, pair.backIndex);
+    const attempts = reUnpairAttempts.get(key) ?? 0;
+    if (attempts >= MAX_RE_UNPAIR) return;
+    reUnpairAttempts.set(key, attempts + 1);
+    try {
+      await client.unpairImages(pair.frontIndex, pair.backIndex);
+      unpairLocal(pair.frontIndex, pair.backIndex);
+      debug(`Re-broke suppressed pair ${key} (attempt ${attempts + 1})`);
+    } catch (err) {
+      debug(`Re-break of suppressed pair ${key} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (attempts + 1 >= MAX_RE_UNPAIR) {
+      const discarded = rejectedEntries.has(pair.frontIndex)
+        ? pair.frontIndex
+        : rejectedEntries.has(pair.backIndex)
+          ? pair.backIndex
+          : null;
+      log(
+        chalk.yellow(
+          `The server keeps re-pairing #${pair.frontIndex}↔#${pair.backIndex}, which you already separated. ` +
+            (discarded === null
+              ? `Both sides stay reachable from the idle menu — use (M)pair to pair them by hand.`
+              : `Rescan the rejected side, then use the idle menu's (M)pair to pair it with ` +
+                `#${discarded === pair.frontIndex ? pair.backIndex : pair.frontIndex} by hand.`),
+        ),
+      );
+    }
+  };
+
   /** Authoritative waiting pool at action time; falls back to live state. */
   const listWaitingPool = async (): Promise<StreamImageRow[]> => {
+    const withStranded = (rows: StreamImageRow[]): StreamImageRow[] => {
+      const usable = rows.filter((r) => !rejectedEntries.has(r.entryIndex));
+      if (rejectedEntries.size === 0 && bannedPairs.size === 0) return usable;
+      const present = new Set(usable.map((r) => r.entryIndex));
+      const stranded = latestImages.filter(
+        (r) => r.status === 'done' && !present.has(r.entryIndex) && isStrandedBySuppression(r.entryIndex),
+      );
+      return [...usable, ...stranded];
+    };
     try {
-      return await client.listWaitingImages();
+      // The server still counts a rejected scan as waiting (it has no idea we
+      // threw it away) and still counts its ex-partner as paired, so both
+      // corrections apply to the server's answer too.
+      return withStranded(await client.listWaitingImages());
     } catch (err) {
       debug(`listWaitingImages failed, using cached subscription state: ${err instanceof Error ? err.message : String(err)}`);
-      return latestImages.filter(isWaiting);
+      return withStranded(latestImages.filter(isWaiting));
     }
   };
 
@@ -501,6 +598,23 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     });
     if (choice === undefined || choice === null || choice === '') return null;
     return Number(choice);
+  };
+
+  /**
+   * Map a review-menu card back to the server entry it was uploaded as. The
+   * menu hands back downloaded crops (and re-crop temp files), so the local
+   * scan it originated from is the only stable link.
+   */
+  const resolveEntry = (card: UnmatchedCard): number | undefined => {
+    for (const [idx, e] of entries) {
+      if (
+        (card.originalFilename && e.basename === card.originalFilename) ||
+        (card.originalPath && e.localPath === card.originalPath)
+      ) {
+        return idx;
+      }
+    }
+    return undefined;
   };
 
   /** Forget a broken pair locally so both sides re-enter the waiting pool. */
@@ -577,6 +691,71 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     }
   };
 
+  /**
+   * Server pairs holding either of the operator's picks, keyed by pick.
+   *
+   * The waiting pool is a SNAPSHOT and automatic pairing never stops. Printing
+   * previews and working two selects takes as long as the operator takes, and
+   * a card that was waiting when the list rendered can be paired by the server
+   * before the second Enter lands — identity-first pairing needs only the
+   * partner's scan to finish processing. The backend then refuses the manual
+   * pair ('image is already paired — unpair it first'), which is the correct
+   * call but leaves the operator with a bare refusal and no idea which of the
+   * two picks moved. Resolving it here names the culprit and clears it.
+   *
+   * A pick surfaced by `isStrandedBySuppression` lands here too, by design:
+   * the server considers it paired (to a scan we threw away), which is exactly
+   * why it was offered in the pool and exactly what has to be broken first.
+   */
+  const pairsClaiming = async (indexes: number[]): Promise<Map<number, StreamPairRow>> => {
+    let pairs = latestPairs;
+    try {
+      pairs = await client.listPairs();
+    } catch (err) {
+      debug(`listPairs failed before manual pair, using cached subscription state: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const claimed = new Map<number, StreamPairRow>();
+    for (const index of indexes) {
+      const pair = pairs.find((p) => p.frontIndex === index || p.backIndex === index);
+      if (pair) claimed.set(index, pair);
+    }
+    return claimed;
+  };
+
+  /**
+   * Break whatever is holding the two picks, so the manual pair can be forced.
+   * Announces on the first round only — later rounds are the race below losing
+   * again, which is debug noise, not news.
+   */
+  const freeClaimedPicks = async (
+    frontIndex: number,
+    backIndex: number,
+    announce: boolean,
+  ): Promise<void> => {
+    const claimed = await pairsClaiming([frontIndex, backIndex]);
+    const broken = new Set<string>();
+    for (const [index, pair] of claimed) {
+      const key = pairKey(pair.frontIndex, pair.backIndex);
+      // Both picks can sit in the SAME pair — the server already matched these
+      // two automatically. Breaking it once and re-forcing it is still worth
+      // doing: it comes back as a manual pair, which is sticky.
+      if (broken.has(key)) continue;
+      broken.add(key);
+      if (announce) {
+        const other = pair.frontIndex === index ? pair.backIndex : pair.frontIndex;
+        await queuedLog(
+          chalk.yellow(
+            other === (index === frontIndex ? backIndex : frontIndex)
+              ? `  #${frontIndex} ↔ #${backIndex} was already paired automatically — re-forcing it so it sticks.`
+              : `  #${index} was paired with #${other} while you were choosing — breaking that pair first.`,
+          ),
+        );
+      }
+      await client.unpairImages(pair.frontIndex, pair.backIndex);
+      unpairLocal(pair.frontIndex, pair.backIndex);
+    }
+  };
+
   // Force-pair two waiting cards (idle-menu 'm'). The pair flows back through
   // onPairsUpdate → the normal review handoff, so nothing else is needed here.
   const manualPairAction = async (): Promise<void> => {
@@ -596,7 +775,42 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
       await queuedLog(chalk.dim('  Cancelled.'));
       return;
     }
-    await client.pairImages(frontIndex, backIndex);
+
+    // Clear the picks, then force the pair — retried, because on an ACTIVE job
+    // `unpairImages` schedules an automatic re-pair that can re-form the very
+    // pair we just broke before our manual one lands. Bounded by the same
+    // MAX_RE_UNPAIR as the review-menu separations: a server that keeps
+    // insisting is a thing to report, not to fight forever. Once the manual
+    // pair exists it is sticky, so the race is over for good.
+    let paired = false;
+    for (let attempt = 0; attempt < MAX_RE_UNPAIR && !paired; attempt++) {
+      await freeClaimedPicks(frontIndex, backIndex, attempt === 0);
+      try {
+        await client.pairImages(frontIndex, backIndex);
+        paired = true;
+      } catch (err) {
+        // Deliberately NOT a match on the message. The backend rejects this
+        // with a plain `throw new Error("image is already paired …")`, and the
+        // production deployment we talk to redacts a thrown Error to a bare
+        // "Server Error" — the sentence never reaches us (that redaction is
+        // why this failure was unreadable in the first place). So don't read
+        // the refusal, re-read the STATE: if something is holding a pick, this
+        // is the race and the next round breaks it. Anything else is a real
+        // failure and belongs on screen.
+        const stillClaimed = await pairsClaiming([frontIndex, backIndex]);
+        if (stillClaimed.size === 0) throw err;
+        debug(`Manual pair #${frontIndex}↔#${backIndex} lost a race with automatic pairing (attempt ${attempt + 1})`);
+      }
+    }
+    if (!paired) {
+      await queuedLog(
+        chalk.yellow(
+          `  Couldn't force #${frontIndex} ↔ #${backIndex}: the server re-paired one of them faster than we could free it. ` +
+            `Break that pair with (U), then retry (M).`,
+        ),
+      );
+      return;
+    }
     await queuedLog(
       chalk.green(`  Force-paired #${frontIndex} (front) ↔ #${backIndex} (back) — its review will open shortly.`),
     );
@@ -631,6 +845,53 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
   };
 
   /**
+   * Empty the whole waiting pool (idle-menu 'x'). The legacy watcher's escape
+   * hatch for a pool that is all duplicates, rescans or junk: rather than
+   * walking it card by card, throw the lot away in one keystroke.
+   *
+   * Each cleared card is tombstoned the same way a review-time reject is, so
+   * the server — which has no idea we discarded anything — can't quietly
+   * re-pair it into a review later, and its local scan is marked scanned so a
+   * re-run doesn't re-upload work that was deliberately abandoned. Pairs that
+   * already matched are untouched: this clears what is WAITING, nothing else.
+   */
+  const clearPoolAction = async (): Promise<void> => {
+    const pool = await listWaitingPool();
+    if (pool.length === 0) {
+      await queuedLog(chalk.dim('  No cards are waiting for a partner right now.'));
+      return;
+    }
+    // Labels only, no previews: this is the bulk action, and downloading a
+    // crop for every card just to throw them all away is the wrong trade.
+    await queuedLog(chalk.yellow.bold(`  ${pool.length} card(s) waiting for a partner:`));
+    for (const row of pool) await queuedLog(chalk.yellow(`    ${poolLabel(row)}`));
+    await queuedLog('');
+
+    const confirmed = await ask(
+      `Clear all ${pool.length} waiting card(s) from the pool?`,
+      false,
+      { isYN: true },
+    );
+    if (!confirmed) {
+      await queuedLog(chalk.dim('  Cancelled — the pool is unchanged.'));
+      return;
+    }
+
+    for (const row of pool) {
+      rejectedEntries.add(row.entryIndex);
+      previewCache.delete(row.entryIndex);
+      const local = entries.get(row.entryIndex);
+      if (local && onSkip) onSkip(local.localPath);
+    }
+    await queuedLog(
+      chalk.yellow(
+        `  Cleared ${pool.length} card(s) from the pool and marked them scanned. ` +
+          `Rescan anything you still want listed.`,
+      ),
+    );
+  };
+
+  /**
    * Run an idle-menu override action, turning a not-yet-deployed backend
    * mutation into a clear on-screen warning (and leaving the session running)
    * instead of a crash — per the NEO-170 backend contract.
@@ -643,7 +904,19 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         await queuedLog(chalk.yellow(`  ${err.message}`));
         await queuedLog(chalk.yellow('  Update the NeonBinder backend, then retry. No changes were made.'));
       } else {
-        await queuedLog(chalk.red(`  Action failed: ${err instanceof Error ? err.message : String(err)}`));
+        const message = err instanceof Error ? err.message : String(err);
+        await queuedLog(chalk.red(`  Action failed: ${message}`));
+        // The production Convex deployment redacts a thrown Error's message to
+        // a bare "Server Error", so the backend's actual reason — the sentence
+        // that would tell you what to do — never crosses the wire. Nothing we
+        // can do about that from here (the backend is not ours to change), but
+        // saying WHERE the reason went beats leaving "Server Error" to look
+        // like the whole explanation.
+        if (/\bServer Error\b/.test(message)) {
+          await queuedLog(
+            chalk.dim('  (the backend redacts its reason on prod — the full message is in the NeonBinder Convex logs)'),
+          );
+        }
       }
     }
   };
@@ -713,8 +986,14 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
     if (pairCount > 0) {
       line('  ' + chalk.yellow.bold('(U)') + 'npair a wrong pair (frees both to pair again)');
     }
+    if (waitingCount > 0) {
+      line(
+        '  ' + chalk.yellow.bold('(X)') + ' clear the whole waiting pool' +
+        chalk.dim(' (drops every waiting card — duplicates, rescans, junk)'),
+      );
+    }
     line('');
-    line(chalk.dim('  Pairing is automatic and identity-first; V/P/M/U are the manual override.'));
+    line(chalk.dim('  Pairing is automatic and identity-first; V/P/M/U/X are the manual override.'));
     line(chalk.dim('  Press a key, or wait for new files...'));
     line('');
   };
@@ -803,6 +1082,10 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         }
         if (char === 'u') {
           await runAction(unpairAction);
+          return;
+        }
+        if (char === 'x') {
+          await runAction(clearPoolAction);
           return;
         }
         // unknown key — re-read without reprinting the menu
@@ -913,16 +1196,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
       // the waiting pool so it re-pairs with a fresh rescan of the rejected
       // side (or a manual pair). Resolve the kept card back to its server entry
       // via the local scan it came from, then unpair the pair it belongs to.
-      let keptEntry: number | undefined;
-      for (const [idx, e] of entries) {
-        if (
-          (card.originalFilename && e.basename === card.originalFilename) ||
-          (card.originalPath && e.localPath === card.originalPath)
-        ) {
-          keptEntry = idx;
-          break;
-        }
-      }
+      const keptEntry = resolveEntry(card);
       const pair = keptEntry !== undefined ? pairByEntry.get(keptEntry) : undefined;
       if (!pair) {
         log(
@@ -933,12 +1207,18 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
         );
         return;
       }
+      // Tombstone the half the operator threw away BEFORE unpairing. Unpair
+      // frees both sides, and the server's next pairing run would otherwise
+      // re-form this exact pair and reopen the review we just rejected.
+      const rejectedEntry = pair.frontIndex === keptEntry ? pair.backIndex : pair.frontIndex;
+      rejectedEntries.add(rejectedEntry);
       try {
         await client.unpairImages(pair.frontIndex, pair.backIndex);
         unpairLocal(pair.frontIndex, pair.backIndex);
         log(
           chalk.yellow(
-            `Unpaired #${pair.frontIndex}↔#${pair.backIndex} — ${card.side} #${keptEntry} is back in the waiting pool.`,
+            `Unpaired #${pair.frontIndex}↔#${pair.backIndex} — dropped #${rejectedEntry}, ` +
+              `${card.side} #${keptEntry} is back in the waiting pool. Rescan the rejected side.`,
           ),
         );
       } catch (err) {
@@ -946,6 +1226,49 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
           log(
             chalk.yellow(
               `Server-side unpair isn't available yet (${err.message}) — re-scan BOTH sides to pair again.`,
+            ),
+          );
+        } else {
+          log(chalk.red(`Unpair failed: ${err instanceof Error ? err.message : String(err)}`));
+        }
+      }
+    },
+    unpairInReview: async (front: UnmatchedCard, back: UnmatchedCard) => {
+      // Review-menu (U): the two scans are different cards. Both images are
+      // good, so neither is tombstoned — only this pairing is banned, and both
+      // sides go back to the waiting pool to find their real partners.
+      const frontEntry = resolveEntry(front);
+      const backEntry = resolveEntry(back);
+      const pair =
+        (frontEntry !== undefined ? pairByEntry.get(frontEntry) : undefined) ??
+        (backEntry !== undefined ? pairByEntry.get(backEntry) : undefined);
+      if (!pair) {
+        log(
+          chalk.yellow(
+            `Couldn't map ${path.basename(front.path)} / ${path.basename(back.path)} back to a server pair — ` +
+              `use the idle menu's (U)npair to separate them.`,
+          ),
+        );
+        return;
+      }
+      // Ban BEFORE unpairing: unpair frees both sides and the server's next
+      // pairing run would otherwise re-form this exact pair immediately.
+      bannedPairs.add(pairKey(pair.frontIndex, pair.backIndex));
+      try {
+        await client.unpairImages(pair.frontIndex, pair.backIndex);
+        unpairLocal(pair.frontIndex, pair.backIndex);
+        log(
+          chalk.yellow(
+            `Unpaired #${pair.frontIndex}↔#${pair.backIndex} — both sides are back in the waiting pool ` +
+              `and will not be paired with each other again.`,
+          ),
+        );
+      } catch (err) {
+        if (err instanceof MissingBackendFunctionError) {
+          log(
+            chalk.yellow(
+              `Server-side unpair isn't available yet (${err.message}) — the pairing is blocked locally, ` +
+                `but re-scan both sides to pair them correctly.`,
             ),
           );
         } else {

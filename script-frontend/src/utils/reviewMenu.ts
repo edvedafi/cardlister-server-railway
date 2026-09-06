@@ -40,9 +40,13 @@ export type ReviewMenuState = {
   sidesSwapped: boolean;
   // Queue info (set externally)
   queuedCount: number;
-  // Rejection (set by x/X keys): caller should skip finalize and re-add the
-  // other side to the pool so the user can rescan the rejected side.
-  rejected?: 'front' | 'back';
+  // Rejection (set by x/X/u keys): caller should skip finalize.
+  //   'front' | 'back' — that scan is bad: discard it, return the other side
+  //     to the pool, and wait for a rescan of the rejected side.
+  //   'both' — the two scans are different cards that were wrongly paired:
+  //     keep both images, return both to the pool, and make sure they are
+  //     never paired with each other again.
+  rejected?: 'front' | 'back' | 'both';
 };
 
 export type ReviewMenuCallbacks = {
@@ -169,6 +173,8 @@ function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null,
     '  ' + k('X') + ' Reject front' +
       '      ' + k('Shift+X') + ' Reject back ' +
       chalk.dim('(rescan the rejected side)'),
+    '  ' + k('U') + 'npair ' +
+      chalk.dim('(front & back are different cards — both return to the pool)'),
     '  ' + k('S') + 'wap sides' +
       (state.sidesSwapped ? chalk.yellow('  (swapped)') : ''),
     '  ' + manualLabel,
@@ -360,6 +366,10 @@ export async function showReviewMenu(
             return state;
           case 'X':
             state.rejected = 'back';
+            return state;
+          case 'u':
+          case 'U':
+            state.rejected = 'both';
             return state;
           case 's':
           case 'S': {

@@ -1536,27 +1536,52 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
                       resolve();
                       return;
                     }
-                    // Card confirmed (Enter) — drop any other still-queued
-                    // entries that are a confirmed duplicate of this one.
-                    cancelDuplicateQueuedCards(pendingEntry);
                     if (reviewed.rejected) {
-                      // User rejected one side — mark only that scan as scanned
-                      // (so the watcher doesn't re-ingest it) and put the kept
-                      // side back into the pool so a fresh rescan pairs with it.
-                      // Use the *current* menuState paths for the kept side — the
-                      // user may have re-cropped or rotated it in the menu, and
-                      // match.front/back still hold the stale intake-time path.
+                      // Nothing was confirmed, so duplicate queued cards must
+                      // stay queued — this card is going back for another pass.
+                      //
+                      // Use the *current* menuState paths, not match.front/back:
+                      // the user may have re-cropped, rotated or swapped sides
+                      // in the menu, and match.* still holds the intake-time
+                      // path. A swap means frontPath now carries what arrived as
+                      // the back, so the identity metadata follows the swap.
+                      const cardForFrontPath = reviewed.sidesSwapped ? match.back : match.front;
+                      const cardForBackPath = reviewed.sidesSwapped ? match.front : match.back;
+                      if (reviewed.rejected === 'both') {
+                        // Two different cards wrongly paired. Both scans are
+                        // good — keep them and let each find its real partner.
+                        const frontCard: UnmatchedCard = {
+                          ...cardForFrontPath, path: reviewed.frontPath, side: 'front', timestamp: Date.now(),
+                        };
+                        const backCard: UnmatchedCard = {
+                          ...cardForBackPath, path: reviewed.backPath, side: 'back', timestamp: Date.now(),
+                        };
+                        log(chalk.yellow('Unpaired — both sides returned to the pool to find their real partners'));
+                        await watcher.unpairInReview(frontCard, backCard);
+                        pendingReviewEntries.delete(pendingEntry.id);
+                        resolve();
+                        return;
+                      }
+                      // One bad scan — mark only that scan as scanned (so the
+                      // watcher doesn't re-ingest it) and put the kept side back
+                      // into the pool so a fresh rescan pairs with it.
                       const rejectedPath = reviewed.rejected === 'front' ? reviewed.frontPath : reviewed.backPath;
                       markScanned(rejectedPath, rejectedPath);
-                      const sourceCard = reviewed.rejected === 'front' ? match.back : match.front;
+                      const sourceCard = reviewed.rejected === 'front' ? cardForBackPath : cardForFrontPath;
                       const currentKeptPath = reviewed.rejected === 'front' ? reviewed.backPath : reviewed.frontPath;
-                      const keptCard: UnmatchedCard = { ...sourceCard, path: currentKeptPath, timestamp: Date.now() };
+                      const keptSide = reviewed.rejected === 'front' ? 'back' : 'front';
+                      const keptCard: UnmatchedCard = {
+                        ...sourceCard, path: currentKeptPath, side: keptSide, timestamp: Date.now(),
+                      };
                       log(chalk.yellow(`Rejected ${reviewed.rejected} — returned ${keptCard.side} to pool, waiting for rescan`));
                       await watcher.reAddToPool(keptCard);
                       pendingReviewEntries.delete(pendingEntry.id);
                       resolve();
                       return;
                     }
+                    // Card confirmed (Enter) — drop any other still-queued
+                    // entries that are a confirmed duplicate of this one.
+                    cancelDuplicateQueuedCards(pendingEntry);
                     // Phase 3: Upload & listing (concurrency 3) — background.
                     uploadQueue.push(async () => {
                       try {
