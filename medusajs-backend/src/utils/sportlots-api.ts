@@ -26,6 +26,11 @@ const COOKIE_DOMAIN = 'sportlots.com';
 const LOGIN_PAGE = 'cust/custbin/login.tpl?urlval=/index.tpl&qs=';
 /** The login page's form posts to signin.tpl, not to itself. */
 const SIGNIN_ACTION = 'cust/custbin/signin.tpl';
+/**
+ * Static token SportLots added to the sign-in form (Sept 2026) to reject bare scripted POSTs.
+ * The value came from SportLots directly; sign-in silently fails without it.
+ */
+const LOGIN_CHECK = 'SL391X';
 
 export type LoginAxios = (
   baseURL: string,
@@ -81,7 +86,12 @@ export async function login(loginAxios: LoginAxios): Promise<AxiosInstance> {
   });
   await harvestJsCookies(jar, String(loginPage.data ?? ''));
 
-  const form = new URLSearchParams({ urlval: '/index.tpl', email_val: email, psswd: password });
+  const form = new URLSearchParams({
+    urlval: '/index.tpl',
+    email_val: email,
+    psswd: password,
+    login_check: LOGIN_CHECK,
+  });
   const signIn = await api.post(SIGNIN_ACTION, form.toString(), {
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
