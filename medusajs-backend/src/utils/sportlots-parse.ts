@@ -68,6 +68,18 @@ export function extractJsCookies(html: string): { name: string; value: string }[
   return cookies;
 }
 
+/**
+ * SportLots added a hidden `login_check` field to the sign-in form (Sept 2026) and rejects POSTs
+ * without it. The value is issued by the server and has already changed from the one they emailed
+ * us, so it must be read off the login page on every sign-in rather than hardcoded.
+ */
+export function extractLoginCheck(html: string): string | undefined {
+  const match = /<input[^>]*name\s*=\s*["']?login_check["']?[^>]*>/i.exec(html || '');
+  if (!match) return undefined;
+  const value = /value\s*=\s*["']([^"']*)["']/i.exec(match[0]);
+  return value?.[1] || undefined;
+}
+
 /** An unauthenticated .tpl request answers with a tiny meta-refresh back to the login page. */
 export function isLoginRedirectStub(html: string): boolean {
   return /http-equiv\s*=\s*["']?Refresh/i.test(html || '') && /login\.tpl/i.test(html || '');

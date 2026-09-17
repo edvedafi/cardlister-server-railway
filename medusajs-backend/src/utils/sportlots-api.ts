@@ -2,6 +2,7 @@ import { AxiosInstance } from 'axios';
 import { CookieJar } from 'tough-cookie';
 import {
   extractJsCookies,
+  extractLoginCheck,
   isLoginRedirectStub,
   parseOrdersResponse,
   parsePullSheet,
@@ -26,11 +27,6 @@ const COOKIE_DOMAIN = 'sportlots.com';
 const LOGIN_PAGE = 'cust/custbin/login.tpl?urlval=/index.tpl&qs=';
 /** The login page's form posts to signin.tpl, not to itself. */
 const SIGNIN_ACTION = 'cust/custbin/signin.tpl';
-/**
- * Static token SportLots added to the sign-in form (Sept 2026) to reject bare scripted POSTs.
- * The value came from SportLots directly; sign-in silently fails without it.
- */
-const LOGIN_CHECK = 'SL391X';
 
 export type LoginAxios = (
   baseURL: string,
@@ -84,13 +80,22 @@ export async function login(loginAxios: LoginAxios): Promise<AxiosInstance> {
   const loginPage = await api.get(LOGIN_PAGE, {
     headers: { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
   });
-  await harvestJsCookies(jar, String(loginPage.data ?? ''));
+  const loginHtml = String(loginPage.data ?? '');
+  await harvestJsCookies(jar, loginHtml);
+
+  // The form carries a server-issued anti-bot token; signin.tpl rejects a POST without it.
+  const loginCheck = extractLoginCheck(loginHtml);
+  if (!loginCheck) {
+    throw new SportlotsAuthError(
+      'SportLots login page did not include a login_check token — the login form has changed',
+    );
+  }
 
   const form = new URLSearchParams({
     urlval: '/index.tpl',
     email_val: email,
     psswd: password,
-    login_check: LOGIN_CHECK,
+    login_check: loginCheck,
   });
   const signIn = await api.post(SIGNIN_ACTION, form.toString(), {
     headers: {

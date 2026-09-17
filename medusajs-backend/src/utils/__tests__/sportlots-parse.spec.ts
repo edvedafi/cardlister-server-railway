@@ -4,6 +4,7 @@ import {
   buildSku,
   dollarsToCents,
   extractJsCookies,
+  extractLoginCheck,
   groupPullRows,
   isLoginRedirectStub,
   joinOrders,
@@ -87,6 +88,17 @@ describe('extractJsCookies', () => {
 
   it('returns nothing for a failed sign-in, which re-renders the login form', () => {
     expect(extractJsCookies(fixture('signin-failure.html'))).toEqual([]);
+  });
+});
+
+describe('extractLoginCheck', () => {
+  it('reads the hidden login_check token off the login form', () => {
+    expect(extractLoginCheck(fixture('login-page.html'))).toBe('SL1340830Q');
+  });
+
+  it('returns undefined when the form has no token', () => {
+    expect(extractLoginCheck(fixture('signin-failure.html'))).toBeUndefined();
+    expect(extractLoginCheck('')).toBeUndefined();
   });
 });
 
