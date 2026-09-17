@@ -1,5 +1,6 @@
 import { BatchJob, BatchJobService, TransactionBaseService } from '@medusajs/medusa';
 import { SalesBatchRequest } from '../models/sales-batch-request';
+import { isSiteDisabled } from '../utils/disabled-sites';
 
 type InjectedDependencies = {
   batchJobService: BatchJobService;
@@ -46,7 +47,9 @@ class SalesService extends TransactionBaseService {
     if (!request.only || request.only.includes('bsc')) {
       await startSync('bsc-sales-sync');
     }
-    if (!request.only || request.only.includes('sportlots')) {
+    if (isSiteDisabled('sportlots')) {
+      console.log('Skipping sportlots-sales-sync: disabled via DISABLED_SITES');
+    } else if (!request.only || request.only.includes('sportlots')) {
       await startSync('sportlots-sales-sync');
     }
     if (request.only && request.only.includes('mcp')) {

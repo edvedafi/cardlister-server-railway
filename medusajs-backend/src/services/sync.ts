@@ -2,6 +2,7 @@ import { BatchJob, BatchJobService, Logger, ProductCategoryService, TransactionB
 import { EntityManager } from 'typeorm';
 import { SyncRequest } from '../models/sync-request';
 import BatchCategoryService from './batchCategory';
+import { isSiteDisabled } from '../utils/disabled-sites';
 
 type InjectedDependencies = {
   manager: EntityManager;
@@ -52,7 +53,9 @@ class SyncService extends TransactionBaseService {
           }),
         );
       } else {
-        if (!request.only || request.only.includes('sportlots')) {
+        if (isSiteDisabled('sportlots')) {
+          this.logger.warn('Skipping sportlots-sync: disabled via DISABLED_SITES');
+        } else if (!request.only || request.only.includes('sportlots')) {
           // update('Starting Sportlots Sync');
           responses.push(
             await this.batchJobService.create({
