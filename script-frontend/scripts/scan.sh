@@ -19,19 +19,24 @@ usage() {
 [scan] usage: yarn scan <category> [-o]
 
   <category>   folder under input/ to write into (e.g. prestige)
-  -o           enable overscan. Collects background before the card's leading
-               edge so there is visible margin on all four sides and buyers can
-               see every edge and corner. Off by default.
+  -o           raw mode, for cards the default crops too tightly. Turns OFF
+               hardware deskew/crop and turns ON overscan, giving the full
+               110x130mm frame with the card floating in it and background
+               margin on all four sides. Output is ~3x larger, tilted as fed,
+               and rotated 180 -- your pipeline has to straighten it.
+
+  By default the scanner deskews, auto-orients and crops to the card edges,
+  producing a straight, upright ~996x1390 image.
 USAGE
 }
 
 CATEGORY=""
-OVERSCAN_FLAG=0
+RAW_FLAG=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -o | --overscan)
-      OVERSCAN_FLAG=1
+    -o | --raw | --overscan)
+      RAW_FLAG=1
       ;;
     -h | --help)
       usage
@@ -68,12 +73,12 @@ DEST="$PROJECT_DIR/input/$CATEGORY"
 #   1. A card skewed 10deg in the feeder needs a ~78x99mm bounding box. Anything
 #      tighter silently clips the corners and produces plausible-looking but
 #      incomplete images -- worse than an outright failure.
-#   2. Overscan (-o) shifts the card down and to the right inside the window.
-#      At 90x110mm that shift pushed cards off the right and bottom edges;
-#      110x130mm leaves enough slack to absorb it.
+#   2. In raw mode (-o) overscan shifts the card down and to the right inside
+#      the window. At 90x110mm that shift pushed cards off the right and bottom
+#      edges; 110x130mm leaves enough slack to absorb it.
 #
-# So do NOT shrink these if you use -o -- the two settings are coupled, and the
-# resulting clipping is silent.
+# So do NOT shrink these -- geometry, deskew/crop and overscan are coupled, and
+# the resulting clipping is silent.
 SCAN_RES="${SCAN_RES:-400}"
 SCAN_PAGE_W="${SCAN_PAGE_W:-110}"       # mm
 SCAN_PAGE_H="${SCAN_PAGE_H:-130}"       # mm
@@ -84,12 +89,23 @@ SCAN_MODE="${SCAN_MODE:-Color}"
 # black. Negative contrast decompresses both ends.
 SCAN_BRIGHTNESS="${SCAN_BRIGHTNESS:-0}"   # -127..127
 SCAN_CONTRAST="${SCAN_CONTRAST:-0}"       # -127..127
-# Collects background BEFORE the paper's leading edge. Without it the card lands
-# flush at y=0 with no top margin; with it there is visible background on all
-# four sides, so buyers can see every edge and corner of the card.
-# Off by default; turn on per-run with -o.
+# Hardware deskew + crop. The scanner finds the card's real edges, straightens
+# it, auto-orients it, and crops to the card (~996x1390 at 400dpi). This is the
+# default because it beats the alternative on every axis: straight instead of
+# tilted, upright instead of rotated 180, and ~3x smaller.
+#
+# NOTE: it needs room to work. At a 70x95mm window the card filled the frame,
+# so the "detected paper bounds" were just the window bounds and it silently
+# did nothing. It only crops properly at a window well larger than the card.
+SCAN_DESKEWCROP="${SCAN_DESKEWCROP:-yes}"
+# Collects background BEFORE the paper's leading edge, so there is margin on all
+# four sides. Pointless alongside deskew/crop, which crops that margin straight
+# back off -- the two produce byte-identical geometry. Only used in raw mode.
 SCAN_OVERSCAN="${SCAN_OVERSCAN:-Off}"
-if [ "$OVERSCAN_FLAG" -eq 1 ]; then
+
+# -o = raw mode: skip deskew/crop, keep the whole frame plus overscan margin.
+if [ "$RAW_FLAG" -eq 1 ]; then
+  SCAN_DESKEWCROP="no"
   SCAN_OVERSCAN="On"
 fi
 POLL_SECONDS="${POLL_SECONDS:-3}"
@@ -123,7 +139,11 @@ mkdir -p "$DEST"
 
 echo "[scan] device:   $DEVICE"
 echo "[scan] output:   $DEST"
-echo "[scan] settings: $SCAN_SOURCE, $SCAN_MODE, ${SCAN_RES}dpi, ${SCAN_PAGE_W}x${SCAN_PAGE_H}mm, overscan $SCAN_OVERSCAN, bright $SCAN_BRIGHTNESS, contrast $SCAN_CONTRAST"
+if [ "$RAW_FLAG" -eq 1 ]; then
+  echo "[scan] settings: $SCAN_SOURCE, $SCAN_MODE, ${SCAN_RES}dpi, RAW MODE (${SCAN_PAGE_W}x${SCAN_PAGE_H}mm frame, overscan on, no deskew/crop)"
+else
+  echo "[scan] settings: $SCAN_SOURCE, $SCAN_MODE, ${SCAN_RES}dpi, deskew+crop to card edges"
+fi
 echo "[scan] Load cards in the feeder. Press Ctrl-C to stop."
 echo
 
@@ -198,6 +218,7 @@ while true; do
     -x "$SCAN_PAGE_W" -y "$SCAN_PAGE_H" \
     --brightness "$SCAN_BRIGHTNESS" --contrast "$SCAN_CONTRAST" \
     --overscan "$SCAN_OVERSCAN" \
+    --hwdeskewcrop="$SCAN_DESKEWCROP" \
     `# Card stock is thicker than paper, so the fi-7160's jam-prediction and` \
     `# ultrasonic double-feed sensors both false-trigger on every card.` \
     `# Without these four flags the scanner aborts with "Document feeder` \
