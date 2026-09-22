@@ -13,6 +13,7 @@
     "generateKey": "tsx src/generateMedusaToken.ts",
     "generateKeyEbay": "tsx src/generateEbayToken.ts",
     "sales": "tsx src/sales.ts",
+    "scan": "bash scripts/scan.sh",
     "start": "tsx src/addCards.ts",
     "sync": "tsx src/sync.ts",
     "fix": "tsx src/fix.ts",
