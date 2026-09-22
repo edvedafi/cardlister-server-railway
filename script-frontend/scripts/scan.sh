@@ -89,6 +89,21 @@ SCAN_MODE="${SCAN_MODE:-Color}"
 # black. Negative contrast decompresses both ends.
 SCAN_BRIGHTNESS="${SCAN_BRIGHTNESS:-0}"   # -127..127
 SCAN_CONTRAST="${SCAN_CONTRAST:-0}"       # -127..127
+# Feed pacing. buffermode MUST stay On.
+#
+# It looks like the culprit for lost cards: with it On the scanner races ahead
+# filling internal memory, so aborting a batch can swallow cards that were
+# physically fed but never delivered (observed: 14 cards in, 7 images out).
+# Turning it Off was tried and is far worse -- the duplex BACK side then fails
+# to transfer on essentially every card, so each scan yields a front, stalls,
+# and the watchdog discards the orphan. Net throughput: zero.
+#
+# The back-side transfer is the underlying hardware/firmware fault (it returns a
+# fraction of its bytes then EOFs). buffermode On lets the scanner stage both
+# sides in its own memory first, which mostly hides it. Until that fault is
+# fixed, On is the only setting that scans at all.
+SCAN_BUFFERMODE="${SCAN_BUFFERMODE:-On}"        # Default|Off|On
+SCAN_PREPICK="${SCAN_PREPICK:-Default}"         # Default|Off|On
 # Hardware deskew + crop. The scanner finds the card's real edges, straightens
 # it, auto-orients it, and crops to the card (~996x1390 at 400dpi). This is the
 # default because it beats the alternative on every axis: straight instead of
@@ -109,6 +124,12 @@ if [ "$RAW_FLAG" -eq 1 ]; then
   SCAN_OVERSCAN="On"
 fi
 POLL_SECONDS="${POLL_SECONDS:-3}"
+# The fi-7160 intermittently stalls mid-transport: the paper stops moving and
+# scanimage spins in sane_read forever waiting for bytes that never arrive (it
+# burns CPU, so it looks alive). This is the same hang VueScan exhibits. There
+# is no timeout in scanimage, so without a watchdog the loop waits forever.
+# If no new page appears for this many seconds, kill the scan and retry.
+SCAN_STALL_SECONDS="${SCAN_STALL_SECONDS:-45}"
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
@@ -142,12 +163,12 @@ echo "[scan] output:   $DEST"
 if [ "$RAW_FLAG" -eq 1 ]; then
   echo "[scan] settings: $SCAN_SOURCE, $SCAN_MODE, ${SCAN_RES}dpi, RAW MODE (${SCAN_PAGE_W}x${SCAN_PAGE_H}mm frame, overscan on, no deskew/crop)"
 else
-  echo "[scan] settings: $SCAN_SOURCE, $SCAN_MODE, ${SCAN_RES}dpi, deskew+crop to card edges"
+  echo "[scan] settings: $SCAN_SOURCE, $SCAN_MODE, ${SCAN_RES}dpi, deskew+crop, buffer $SCAN_BUFFERMODE, prepick $SCAN_PREPICK"
 fi
 echo "[scan] Load cards in the feeder. Press Ctrl-C to stop."
 echo
 
-STAGE="$(mktemp -d)"
+ERRLOG="$(mktemp)"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -167,37 +188,10 @@ next_index() {
   echo $((max + 1))
 }
 
-# Move a completed batch out of staging and into DEST. Staging means a scan
-# interrupted mid-page never leaves a truncated JPEG in the pipeline folder.
-flush_stage() {
-  shopt -s nullglob
-  local files=("$STAGE"/raw-*.jpg)
-  [ ${#files[@]} -eq 0 ] && return 0
-
-  local idx date_prefix target moved=0
-  idx="$(next_index)"
-  date_prefix="$(date +%Y-%m-%d)"
-
-  local f
-  while IFS= read -r f; do
-    target="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$idx")"
-    while [ -e "$target" ]; do
-      idx=$((idx + 1))
-      target="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$idx")"
-    done
-    mv "$f" "$target"
-    idx=$((idx + 1))
-    moved=$((moved + 1))
-  done < <(printf '%s\n' "${files[@]}" | sort)
-
-  echo "[scan] saved $moved image(s) -> $(basename "$DEST")/"
-}
-
 on_exit() {
   trap - INT TERM EXIT
+  rm -f "$ERRLOG"
   echo
-  flush_stage || true
-  rm -rf "$STAGE"
   echo "[scan] stopped."
 }
 trap on_exit INT TERM EXIT
@@ -207,7 +201,13 @@ trap on_exit INT TERM EXIT
 waiting=0
 
 while true; do
-  rm -f "$STAGE"/raw-*.jpg
+  # scanimage writes each page as it finishes, so pointing --batch straight at
+  # DEST makes images appear one by one instead of all at once when the batch
+  # ends. --batch-start continues from the highest index already in DEST, so an
+  # existing scan is never overwritten.
+  next_idx="$(next_index)"
+  date_prefix="$(date +%Y-%m-%d)"
+  before=$(ls "$DEST"/*.jpg 2> /dev/null | wc -l | tr -d ' ')
 
   set +e
   scanimage -d "$DEVICE" \
@@ -226,22 +226,95 @@ while true; do
     `# it is not a real jam, and correct page geometry alone does NOT fix it.` \
     --paper-protect Off --adv-paper-protect Off \
     --df-action Continue --df-recovery Off \
-    `# Lets the ADF read ahead instead of stalling between pages.` \
-    --buffermode On \
+    --buffermode "$SCAN_BUFFERMODE" --prepick "$SCAN_PREPICK" \
     --format=jpeg \
-    --batch="$STAGE/raw-%04d.jpg" --batch-start=1 \
-    > /dev/null 2> "$STAGE/err.log"
+    --batch="$DEST/${date_prefix}-%04d.jpg" --batch-start="$next_idx" \
+    > /dev/null 2> "$ERRLOG" &
+  scan_pid=$!
+
+  # Watch for pages appearing. Each one resets the stall timer; if nothing new
+  # shows up for SCAN_STALL_SECONDS the scanner has wedged, so kill the scan and
+  # let the loop retry rather than hanging forever.
+  cur="$next_idx"
+  stalled=0
+  killed=0
+  while kill -0 "$scan_pid" 2> /dev/null; do
+    nextfile="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$cur")"
+    if [ -e "$nextfile" ]; then
+      echo "[scan] saved $(basename "$nextfile")"
+      cur=$((cur + 1))
+      stalled=0
+    else
+      stalled=$((stalled + 1))
+      if [ "$stalled" -ge "$SCAN_STALL_SECONDS" ]; then
+        echo "[scan] no page for ${SCAN_STALL_SECONDS}s -- scanner stalled, aborting this batch" >&2
+        # Escalate gently. scanimage traps SIGINT and calls sane_cancel/
+        # sane_close, which releases the USB device properly. SIGTERM/SIGKILL
+        # skip that teardown and leave the fi-7160 wedged -- libusb still sees
+        # it but the backend cannot enumerate it, and it needs a power cycle.
+        kill -INT "$scan_pid" 2> /dev/null
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          kill -0 "$scan_pid" 2> /dev/null || break
+          sleep 1
+        done
+        if kill -0 "$scan_pid" 2> /dev/null; then
+          echo "[scan] scan did not exit on SIGINT; forcing it" >&2
+          echo "[scan] the scanner may need a power cycle before the next batch" >&2
+          kill -TERM "$scan_pid" 2> /dev/null
+          sleep 2
+          kill -9 "$scan_pid" 2> /dev/null
+        fi
+        killed=1
+        break
+      fi
+      sleep 1
+    fi
+  done
+  wait "$scan_pid" 2> /dev/null
   set -e
 
-  shopt -s nullglob
-  scanned=("$STAGE"/raw-*.jpg)
+  # The announce loop above stops the moment scanimage exits, so the last pages
+  # of a fast batch are written but never printed. Drain whatever is left.
+  while :; do
+    nextfile="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$cur")"
+    [ -e "$nextfile" ] || break
+    echo "[scan] saved $(basename "$nextfile")"
+    cur=$((cur + 1))
+  done
 
-  if [ ${#scanned[@]} -gt 0 ]; then
-    echo "[scan] scanned ${#scanned[@]} image(s)"
-    flush_stage
+  after=$(ls "$DEST"/*.jpg 2> /dev/null | wc -l | tr -d ' ')
+
+  if [ "$killed" -eq 1 ]; then
     waiting=0
+    got=$((after - before))
+    # Duplex writes front then back, so a batch is only coherent with an even
+    # count. A stall between sides leaves an orphan, and since the pipeline
+    # pairs consecutive images, one orphan mis-pairs every card after it.
+    # Drop it -- that card has to be rescanned anyway.
+    case "$SCAN_SOURCE" in
+      *Duplex*)
+        if [ $((got % 2)) -ne 0 ]; then
+          orphan="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$((cur - 1))")"
+          if [ -e "$orphan" ]; then
+            rm -f "$orphan"
+            echo "[scan] removed $(basename "$orphan") -- unpaired side from the stalled card" >&2
+            got=$((got - 1))
+          fi
+        fi
+        ;;
+    esac
+    echo "[scan] stalled batch aborted after $got image(s)." >&2
+    echo "[scan] clear the feeder, then reload to continue (Ctrl-C to stop)" >&2
+    sleep "$POLL_SECONDS"
+  elif [ "$after" -gt "$before" ]; then
+    waiting=0
+    got=$((after - before))
+    case "$SCAN_SOURCE" in
+      *Duplex*) echo "[scan] batch done: $got images = $((got / 2)) cards. Count them against the feeder -- a stall can swallow cards silently." ;;
+      *)        echo "[scan] batch done: $got images." ;;
+    esac
     echo "[scan] load the next batch (Ctrl-C to stop)"
-  elif grep -q "out of documents" "$STAGE/err.log" 2> /dev/null; then
+  elif grep -q "out of documents" "$ERRLOG" 2> /dev/null; then
     if [ "$waiting" -eq 0 ]; then
       echo "[scan] waiting for cards..."
       waiting=1
@@ -249,7 +322,7 @@ while true; do
     sleep "$POLL_SECONDS"
   else
     echo "[scan] scanner error:" >&2
-    grep -v '^$' "$STAGE/err.log" | grep -v 'rounded value' | head -5 >&2
+    grep -v '^$' "$ERRLOG" | grep -v 'rounded value' | head -5 >&2
     sleep "$POLL_SECONDS"
   fi
 done
