@@ -175,8 +175,14 @@ echo "[scan] Load cards in the feeder. Press Ctrl-C to stop."
 echo
 
 ERRLOG="$(mktemp)"
+# Cards are assembled here and only moved to DEST once both sides are present,
+# so the listing pipeline never sees a half-scanned card.
+STAGE="$(mktemp -d)"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+# Red, but only when stderr is a terminal, so redirected logs stay clean.
+if [ -t 2 ]; then RED=$'\033[31m'; RESET=$'\033[0m'; else RED=""; RESET=""; fi
 
 # Highest NNNN already used in DEST, across every date prefix, so we never
 # collide with or overwrite an existing scan.
@@ -194,9 +200,69 @@ next_index() {
   echo $((max + 1))
 }
 
+# Release finished CARDS from staging into DEST.
+#
+# scanimage writes a duplex card as two consecutive files, front then back, so a
+# card is only usable as a pair. The listing pipeline ingests files the instant
+# they appear in DEST, which means anything written there is committed -- it
+# cannot be taken back by deleting it. So pairs are resolved here, in staging,
+# and only complete cards are ever moved across.
+#
+# A staged file is known-complete once the NEXT one exists (scanimage writes
+# sequentially), so while a scan is running the newest file is held back as
+# possibly still being written. final=1 at end of batch, when all are complete.
+#
+# A leftover single at end of batch means that card scanned only one side. It is
+# dropped, loudly, because a half-scanned card has to go back through the feeder
+# anyway and a lone side would otherwise sit unmatched in the pairing pool.
+MOVED=0
+DROPPED=0
+release_complete() {
+  local final="${1:-0}"
+  shopt -s nullglob
+  local files=("$STAGE"/raw-*.jpg)
+  local n=${#files[@]}
+  [ "$n" -eq 0 ] && return 0
+
+  local sorted=() f
+  while IFS= read -r f; do sorted+=("$f"); done < <(printf '%s\n' "${files[@]}" | sort)
+
+  local complete=$n
+  if [ "$final" -eq 0 ]; then
+    complete=$((n - 1))
+  fi
+  [ "$complete" -lt 0 ] && complete=0
+
+  local pairs=$((complete / 2))
+  local i idx target date_prefix
+  if [ "$pairs" -gt 0 ]; then
+    idx="$(next_index)"
+    date_prefix="$(date +%Y-%m-%d)"
+    for ((i = 0; i < pairs * 2; i++)); do
+      target="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$idx")"
+      while [ -e "$target" ]; do
+        idx=$((idx + 1))
+        target="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$idx")"
+      done
+      mv "${sorted[$i]}" "$target"
+      echo "[scan] saved $(basename "$target")"
+      idx=$((idx + 1))
+      MOVED=$((MOVED + 1))
+    done
+  fi
+
+  if [ "$final" -eq 1 ] && [ $((complete % 2)) -eq 1 ]; then
+    rm -f "${sorted[$((complete - 1))]}"
+    DROPPED=$((DROPPED + 1))
+    printf '%s[scan] Deleting single image -- that card scanned only one side. Put it back in the stack.%s\n' "$RED" "$RESET" >&2
+  fi
+  return 0
+}
+
 on_exit() {
   trap - INT TERM EXIT
   rm -f "$ERRLOG"
+  rm -rf "$STAGE"
   echo
   echo "[scan] stopped."
 }
@@ -207,15 +273,9 @@ trap on_exit INT TERM EXIT
 waiting=0
 
 while true; do
-  # scanimage writes each page as it finishes, so pointing --batch straight at
-  # DEST makes images appear one by one instead of all at once when the batch
-  # ends. --batch-start continues from the highest index already in DEST, so an
-  # existing scan is never overwritten.
-  next_idx="$(next_index)"
-  date_prefix="$(date +%Y-%m-%d)"
-  # find, not ls: ls exits non-zero on an empty glob and pipefail would kill the
-  # script on the first run into a new category directory.
-  before=$(find "$DEST" -maxdepth 1 -name '*.jpg' 2> /dev/null | wc -l | tr -d ' ')
+  rm -f "$STAGE"/raw-*.jpg
+  MOVED=0
+  DROPPED=0
 
   set +e
   scanimage -d "$DEVICE" \
@@ -236,24 +296,24 @@ while true; do
     --df-action Continue --df-recovery Off \
     --buffermode "$SCAN_BUFFERMODE" --prepick "$SCAN_PREPICK" \
     --format=jpeg \
-    --batch="$DEST/${date_prefix}-%04d.jpg" --batch-start="$next_idx" \
+    --batch="$STAGE/raw-%04d.jpg" --batch-start=1 \
     > /dev/null 2> "$ERRLOG" &
   scan_pid=$!
 
-  # Watch for pages appearing. Each one resets the stall timer; if nothing new
-  # shows up for SCAN_STALL_SECONDS the scanner has wedged, so kill the scan and
-  # let the loop retry rather than hanging forever.
-  cur="$next_idx"
+  # Release completed cards as they finish, and watch for a stall. Each new page
+  # resets the stall timer; if nothing appears for the timeout the scanner has
+  # wedged, so kill the scan and let the loop retry rather than hanging forever.
+  staged_seen=0
   stalled=0
   killed=0
   got_any=0
   while kill -0 "$scan_pid" 2> /dev/null; do
-    nextfile="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$cur")"
-    if [ -e "$nextfile" ]; then
-      echo "[scan] saved $(basename "$nextfile")"
-      cur=$((cur + 1))
+    cnt=$(find "$STAGE" -maxdepth 1 -name 'raw-*.jpg' 2> /dev/null | wc -l | tr -d ' ')
+    if [ "$cnt" -gt "$staged_seen" ]; then
+      staged_seen="$cnt"
       stalled=0
       got_any=1
+      release_complete 0
     else
       # Before the first page lands, allow the longer feed/lamp-start grace.
       if [ "$got_any" -eq 1 ]; then
@@ -289,43 +349,19 @@ while true; do
   wait "$scan_pid" 2> /dev/null
   set -e
 
-  # The announce loop above stops the moment scanimage exits, so the last pages
-  # of a fast batch are written but never printed. Drain whatever is left.
-  while :; do
-    nextfile="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$cur")"
-    [ -e "$nextfile" ] || break
-    echo "[scan] saved $(basename "$nextfile")"
-    cur=$((cur + 1))
-  done
-
-  after=$(find "$DEST" -maxdepth 1 -name '*.jpg' 2> /dev/null | wc -l | tr -d ' ')
+  # Everything staged is complete now, so release the rest and drop any single.
+  release_complete 1
 
   if [ "$killed" -eq 1 ]; then
     waiting=0
-    got=$((after - before))
-    # NOTE: never delete a written image, and never reuse an index.
-    #
-    # The listing pipeline watches this directory and ingests each file the
-    # moment it appears, so a file is consumed before we could take it back --
-    # deleting it does not un-ingest it, and rewriting the same index just feeds
-    # the same name in twice as a duplicate.
-    #
-    # An unpaired side is fine: pairing downstream is identity-first (it matches
-    # player/team/number/side), not positional, so an orphan simply waits in the
-    # pairing pool for its partner instead of corrupting anything. Rescanning
-    # the card later produces the partner and they pair up.
-    echo "[scan] stalled batch aborted after $got image(s)." >&2
-    if [ $((got % 2)) -ne 0 ]; then
-      echo "[scan] that batch ended on an unpaired side; rescan the card to produce its partner" >&2
-    fi
+    echo "[scan] stalled batch aborted: $MOVED image(s) = $((MOVED / 2)) card(s) kept" >&2
     echo "[scan] cards are still in the feeder -- leave them to retry (Ctrl-C to stop)" >&2
     sleep "$POLL_SECONDS"
-  elif [ "$after" -gt "$before" ]; then
+  elif [ "$MOVED" -gt 0 ] || [ "$DROPPED" -gt 0 ]; then
     waiting=0
-    got=$((after - before))
     case "$SCAN_SOURCE" in
-      *Duplex*) echo "[scan] batch done: $got images = $((got / 2)) cards" ;;
-      *)        echo "[scan] batch done: $got images." ;;
+      *Duplex*) echo "[scan] batch done: $MOVED images = $((MOVED / 2)) cards" ;;
+      *)        echo "[scan] batch done: $MOVED images." ;;
     esac
     echo "[scan] load the next batch (Ctrl-C to stop)"
   elif grep -q "out of documents" "$ERRLOG" 2> /dev/null; then
