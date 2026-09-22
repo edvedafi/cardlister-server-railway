@@ -89,20 +89,19 @@ SCAN_MODE="${SCAN_MODE:-Color}"
 # black. Negative contrast decompresses both ends.
 SCAN_BRIGHTNESS="${SCAN_BRIGHTNESS:-0}"   # -127..127
 SCAN_CONTRAST="${SCAN_CONTRAST:-0}"       # -127..127
-# Feed pacing. buffermode MUST stay On.
+# Feed pacing. buffermode Off is deliberate and important.
 #
-# It looks like the culprit for lost cards: with it On the scanner races ahead
-# filling internal memory, so aborting a batch can swallow cards that were
-# physically fed but never delivered (observed: 14 cards in, 7 images out).
-# Turning it Off was tried and is far worse -- the duplex BACK side then fails
-# to transfer on essentially every card, so each scan yields a front, stalls,
-# and the watchdog discards the orphan. Net throughput: zero.
+# With buffermode On the scanner races ahead pulling cards into its internal
+# memory. Those cards are physically through the transport before the host has
+# taken delivery, so when a scan stalls they are stranded: fed, never captured,
+# and indistinguishable afterwards from cards that were scanned fine. Observed
+# 24 cards fed for 16 images. VueScan, which hangs on the same hardware fault,
+# never loses a card -- it leaves them in the hopper -- which is what pointed at
+# this setting.
 #
-# The back-side transfer is the underlying hardware/firmware fault (it returns a
-# fraction of its bytes then EOFs). buffermode On lets the scanner stage both
-# sides in its own memory first, which mostly hides it. Until that fault is
-# fixed, On is the only setting that scans at all.
-SCAN_BUFFERMODE="${SCAN_BUFFERMODE:-On}"        # Default|Off|On
+# Losing cards silently is worse than stalling. Stalls are visible and the card
+# is still in the hopper to retry; a swallowed card just quietly is not there.
+SCAN_BUFFERMODE="${SCAN_BUFFERMODE:-Off}"       # Default|Off|On
 SCAN_PREPICK="${SCAN_PREPICK:-Default}"         # Default|Off|On
 # Hardware deskew + crop. The scanner finds the card's real edges, straightens
 # it, auto-orients it, and crops to the card (~996x1390 at 400dpi). This is the
@@ -287,30 +286,28 @@ while true; do
   if [ "$killed" -eq 1 ]; then
     waiting=0
     got=$((after - before))
-    # Duplex writes front then back, so a batch is only coherent with an even
-    # count. A stall between sides leaves an orphan, and since the pipeline
-    # pairs consecutive images, one orphan mis-pairs every card after it.
-    # Drop it -- that card has to be rescanned anyway.
-    case "$SCAN_SOURCE" in
-      *Duplex*)
-        if [ $((got % 2)) -ne 0 ]; then
-          orphan="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$((cur - 1))")"
-          if [ -e "$orphan" ]; then
-            rm -f "$orphan"
-            echo "[scan] removed $(basename "$orphan") -- unpaired side from the stalled card" >&2
-            got=$((got - 1))
-          fi
-        fi
-        ;;
-    esac
+    # NOTE: never delete a written image, and never reuse an index.
+    #
+    # The listing pipeline watches this directory and ingests each file the
+    # moment it appears, so a file is consumed before we could take it back --
+    # deleting it does not un-ingest it, and rewriting the same index just feeds
+    # the same name in twice as a duplicate.
+    #
+    # An unpaired side is fine: pairing downstream is identity-first (it matches
+    # player/team/number/side), not positional, so an orphan simply waits in the
+    # pairing pool for its partner instead of corrupting anything. Rescanning
+    # the card later produces the partner and they pair up.
     echo "[scan] stalled batch aborted after $got image(s)." >&2
-    echo "[scan] clear the feeder, then reload to continue (Ctrl-C to stop)" >&2
+    if [ $((got % 2)) -ne 0 ]; then
+      echo "[scan] that batch ended on an unpaired side; rescan the card to produce its partner" >&2
+    fi
+    echo "[scan] cards are still in the feeder -- leave them to retry (Ctrl-C to stop)" >&2
     sleep "$POLL_SECONDS"
   elif [ "$after" -gt "$before" ]; then
     waiting=0
     got=$((after - before))
     case "$SCAN_SOURCE" in
-      *Duplex*) echo "[scan] batch done: $got images = $((got / 2)) cards. Count them against the feeder -- a stall can swallow cards silently." ;;
+      *Duplex*) echo "[scan] batch done: $got images = $((got / 2)) cards" ;;
       *)        echo "[scan] batch done: $got images." ;;
     esac
     echo "[scan] load the next batch (Ctrl-C to stop)"
