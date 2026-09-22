@@ -128,7 +128,14 @@ POLL_SECONDS="${POLL_SECONDS:-3}"
 # burns CPU, so it looks alive). This is the same hang VueScan exhibits. There
 # is no timeout in scanimage, so without a watchdog the loop waits forever.
 # If no new page appears for this many seconds, kill the scan and retry.
-SCAN_STALL_SECONDS="${SCAN_STALL_SECONDS:-45}"
+# Measured healthy gaps: 0s front->back of a card, 2-3s card->card. 5s leaves
+# margin over that while cutting the cost of a stall from 45s to 5s.
+SCAN_STALL_SECONDS="${SCAN_STALL_SECONDS:-5}"
+# The first page of a batch also covers feeding and lamp start, which is slower
+# than the steady-state gap, so it gets its own grace period. Aborting a healthy
+# page would leave a truncated JPEG that the listing pipeline ingests
+# immediately, so this errs long.
+SCAN_FIRST_PAGE_SECONDS="${SCAN_FIRST_PAGE_SECONDS:-25}"
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
@@ -206,7 +213,9 @@ while true; do
   # existing scan is never overwritten.
   next_idx="$(next_index)"
   date_prefix="$(date +%Y-%m-%d)"
-  before=$(ls "$DEST"/*.jpg 2> /dev/null | wc -l | tr -d ' ')
+  # find, not ls: ls exits non-zero on an empty glob and pipefail would kill the
+  # script on the first run into a new category directory.
+  before=$(find "$DEST" -maxdepth 1 -name '*.jpg' 2> /dev/null | wc -l | tr -d ' ')
 
   set +e
   scanimage -d "$DEVICE" \
@@ -237,16 +246,24 @@ while true; do
   cur="$next_idx"
   stalled=0
   killed=0
+  got_any=0
   while kill -0 "$scan_pid" 2> /dev/null; do
     nextfile="$(printf '%s/%s-%04d.jpg' "$DEST" "$date_prefix" "$cur")"
     if [ -e "$nextfile" ]; then
       echo "[scan] saved $(basename "$nextfile")"
       cur=$((cur + 1))
       stalled=0
+      got_any=1
     else
+      # Before the first page lands, allow the longer feed/lamp-start grace.
+      if [ "$got_any" -eq 1 ]; then
+        limit="$SCAN_STALL_SECONDS"
+      else
+        limit="$SCAN_FIRST_PAGE_SECONDS"
+      fi
       stalled=$((stalled + 1))
-      if [ "$stalled" -ge "$SCAN_STALL_SECONDS" ]; then
-        echo "[scan] no page for ${SCAN_STALL_SECONDS}s -- scanner stalled, aborting this batch" >&2
+      if [ "$stalled" -ge "$limit" ]; then
+        echo "[scan] no page for ${limit}s -- scanner stalled, aborting this batch" >&2
         # Escalate gently. scanimage traps SIGINT and calls sane_cancel/
         # sane_close, which releases the USB device properly. SIGTERM/SIGKILL
         # skip that teardown and leave the fi-7160 wedged -- libusb still sees
@@ -281,7 +298,7 @@ while true; do
     cur=$((cur + 1))
   done
 
-  after=$(ls "$DEST"/*.jpg 2> /dev/null | wc -l | tr -d ' ')
+  after=$(find "$DEST" -maxdepth 1 -name '*.jpg' 2> /dev/null | wc -l | tr -d ' ')
 
   if [ "$killed" -eq 1 ]; then
     waiting=0
