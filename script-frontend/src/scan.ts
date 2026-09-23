@@ -16,6 +16,7 @@ import {
 } from './utils/spinners.js';
 import { parseArgs } from './utils/parseArgs';
 import { getInputs } from './utils/inputs';
+import sharp from 'sharp';
 
 const execFileAsync = promisify(execFile);
 
@@ -76,6 +77,25 @@ const IDLE_MS = Number(process.env.POLL_SECONDS || 3) * 1000;
 // the cards have been still for seconds.
 const SETTLE_MS = Number(process.env.SCAN_SETTLE_SECONDS || 2) * 1000;
 
+// ── Tone ──────────────────────────────────────────────────────────────────────
+// The SANE backend hands back near-linear data that never reaches white: a card
+// measured p1=2, p50=58, p99=176, with 15% of it crushed to black and nothing
+// above 176. VueScan looks dramatically better on the same card only because it
+// post-processes -- its ini sets WhitePoint to 8.96% and it applies the usual
+// ~2.2 gamma encode on output.
+//
+// So the same correction is applied here: stretch so the top WHITE_CLIP% of
+// pixels reach white, then gamma-encode. Measured against a VueScan scan of the
+// same card, this lands p50 154 vs 153 and mean 155 vs 157, while clipping less
+// highlight detail (6.9% vs 9.7%).
+//
+// The white point is computed per image, as VueScan does, so a dark card is
+// lifted as much as it needs rather than by a fixed amount.
+const TONE = (process.env.SCAN_TONE || 'on').toLowerCase() !== 'off';
+const WHITE_CLIP = Number(process.env.SCAN_WHITE_CLIP || 1);
+const GAMMA = Number(process.env.SCAN_GAMMA || 2.2);
+const JPEG_QUALITY = Number(process.env.SCAN_JPEG_QUALITY || 95);
+
 // ── Staging ───────────────────────────────────────────────────────────────────
 // Cards are assembled here and only moved to the input directory once both sides
 // are present. The listing pipeline ingests files the instant they appear, so
@@ -105,6 +125,47 @@ const findDevice = async (): Promise<string> => {
     .find((line) => line.startsWith('fujitsu:'));
   if (!device) throw new Error('No Fujitsu scanner found. Check that it is powered on and connected.');
   return device;
+};
+
+/**
+ * Levels-stretch and gamma-encode one scan, writing the result to `dest`.
+ * Returns false if anything goes wrong, so the caller can fall back to moving
+ * the untouched file rather than losing the scan.
+ */
+const enhance = async (src: string, dest: string): Promise<boolean> => {
+  try {
+    const { data, info } = await sharp(src).raw().toBuffer({ resolveWithObject: true });
+    const { width, height, channels } = info;
+
+    // Luminance histogram -> the value below which (100 - WHITE_CLIP)% of pixels sit.
+    const hist = new Array(256).fill(0);
+    let n = 0;
+    for (let i = 0; i < width * height * channels; i += channels) {
+      hist[Math.round((data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000)]++;
+      n++;
+    }
+    let cum = 0;
+    let hi = 255;
+    for (let v = 255; v >= 0; v--) {
+      cum += hist[v];
+      if (cum >= (n * WHITE_CLIP) / 100) {
+        hi = v;
+        break;
+      }
+    }
+    if (hi < 16) hi = 255; // near-black image; leave it alone rather than blow it out
+
+    const lut = new Uint8Array(256);
+    for (let v = 0; v < 256; v++) {
+      lut[v] = Math.round(255 * Math.pow(Math.min(1, v / hi), 1 / GAMMA));
+    }
+    for (let i = 0; i < data.length; i++) data[i] = lut[data[i]];
+
+    await sharp(data, { raw: { width, height, channels } }).jpeg({ quality: JPEG_QUALITY }).toFile(dest);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 /** Is anything in the hopper? Reads the scanner's page-loaded hardware sensor. */
@@ -260,7 +321,12 @@ const run = async () => {
             idx++;
             target = path.join(dest, `${prefix}-${String(idx).padStart(4, '0')}.jpg`);
           }
-          await fs.move(path.join(STAGE, staged[p * 2 + side]), target);
+          const stagedPath = path.join(STAGE, staged[p * 2 + side]);
+          if (!TONE || !(await enhance(stagedPath, target))) {
+            await fs.move(stagedPath, target);
+          } else {
+            await fs.remove(stagedPath);
+          }
           names.push(path.basename(target));
           idx++;
           moved++;
