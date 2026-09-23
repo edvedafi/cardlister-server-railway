@@ -104,6 +104,19 @@ const JPEG_QUALITY = Number(process.env.SCAN_JPEG_QUALITY || 95);
 // possible at all.
 const STAGE = fs.mkdtempSync(path.join(os.tmpdir(), 'cardscan-'));
 
+// Sweep up staging directories orphaned by an earlier run that was killed
+// before it could clean up. They are only ever empty or mid-batch, so there is
+// nothing here worth keeping.
+for (const entry of fs.readdirSync(os.tmpdir(), { withFileTypes: true })) {
+  if (entry.isDirectory() && entry.name.startsWith('cardscan-') && path.join(os.tmpdir(), entry.name) !== STAGE) {
+    try {
+      fs.removeSync(path.join(os.tmpdir(), entry.name));
+    } catch {
+      /* another run may own it */
+    }
+  }
+}
+
 let activeScan: ChildProcess | undefined;
 let stopping = false;
 
@@ -112,7 +125,30 @@ const cleanup = async () => {
   if (activeScan && !activeScan.killed) activeScan.kill('SIGINT');
   await fs.remove(STAGE).catch(() => {});
 };
+
+// onShutdown alone is not enough: when the process is killed outright the async
+// handler does not get to run and the staging directory is left behind. The
+// synchronous exit hook is the one that always fires.
 onShutdown(cleanup);
+process.on('exit', () => {
+  try {
+    fs.removeSync(STAGE);
+  } catch {
+    /* best effort */
+  }
+});
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(sig, () => {
+    stopping = true;
+    if (activeScan && !activeScan.killed) activeScan.kill('SIGINT');
+    try {
+      fs.removeSync(STAGE);
+    } catch {
+      /* best effort */
+    }
+    process.exit(0);
+  });
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
