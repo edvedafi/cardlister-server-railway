@@ -16,6 +16,7 @@ import type { ProductCategory } from '@medusajs/client-types';
 import { getCategory, getAllLeafCategories, startSync, getProducts } from './utils/medusa';
 import type { SetInfo } from './models/setInfo';
 import { createLogger } from './utils/logger.js';
+import { canOpenScannerPane, openScannerPane, scannerRunning } from './utils/scannerPane.js';
 
 const debug = createLogger('addCards');
 
@@ -217,7 +218,22 @@ try {
   } else {
     setData = await findSet({ allowParent: args['inventory'] || args['price'] !== undefined, parentName: 'All' });
   }
-  
+
+  // Scanned pairs land in input_directory and watch mode picks them up, so the
+  // scanner can run alongside in its own pane once we know what set this is.
+  if (args['watch'] && canOpenScannerPane()) {
+    if (await scannerRunning()) {
+      log(chalk.dim('Scanner already running'));
+    } else if (await ask('Start the scanner?', true, { isYN: true })) {
+      try {
+        await openScannerPane(input_directory);
+      } catch (e) {
+        log(chalk.yellow(`Could not open scanner pane, run it yourself: yarn scan ${input_directory}`));
+        debug(e);
+      }
+    }
+  }
+
   // Handle parent selection in price mode - iterate through all children and sync in background
   let handledParentSync = false;
   const syncPromises: Promise<void>[] = [];
