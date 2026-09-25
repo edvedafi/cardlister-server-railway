@@ -121,11 +121,32 @@ for (const entry of fs.readdirSync(os.tmpdir(), { withFileTypes: true })) {
 let activeScan: ChildProcess | undefined;
 let stopping = false;
 let running: Promise<void> = Promise.resolve();
+// Set once run() is past the input prompt. Before that it is parked where it
+// never checks `stopping`, so shutdown has nothing worth waiting for.
+let started = false;
 
 // Run summary, printed on exit.
 let processed = 0;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Resolved by shutdown(). The run loop's idle waits race against it so Ctrl-C
+// takes effect at once instead of after the rest of a multi-second wait.
+let requestStop: () => void = () => {};
+const stopRequested = new Promise<void>((resolve) => (requestStop = resolve));
+
+/**
+ * A sleep that ends early on shutdown. Only for the run loop: the waits that
+ * shut a scan down (stopScan, waitForExit) must keep their full length.
+ */
+const pause = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    stopRequested.then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 
 const isRunning = (proc: ChildProcess) => proc.exitCode === null && !proc.signalCode;
 
@@ -149,11 +170,12 @@ const cleanup = async () => {
  */
 const shutdown = async () => {
   stopping = true;
+  requestStop();
   if (activeScan && isRunning(activeScan) && (ctrlCFromKeyboard || !(await waitForExit(activeScan, 3000))))
     await stopScan(activeScan);
-  // Bounded, in case run() is parked somewhere that never notices `stopping`,
-  // like the input prompt.
-  await Promise.race([running.catch(() => {}), sleep(10000)]);
+  // Bounded, in case run() is parked somewhere else that never notices
+  // `stopping`.
+  if (started) await Promise.race([running.catch(() => {}), sleep(10000)]);
   log(chalk.green(`Processed ${processed} Cards`));
   await cleanup();
 };
@@ -377,10 +399,7 @@ const scanArgs = (device: string) => [
  */
 const stopScan = async (proc: ChildProcess) => {
   proc.kill('SIGINT');
-  for (let i = 0; i < 10; i++) {
-    if (proc.exitCode !== null || proc.signalCode) return;
-    await sleep(1000);
-  }
+  if (await waitForExit(proc, 10000)) return;
   log(chalk.yellow('Scan did not exit on SIGINT; forcing it. The scanner may need a power cycle.'));
   proc.kill('SIGTERM');
   await sleep(2000);
@@ -389,6 +408,7 @@ const stopScan = async (proc: ChildProcess) => {
 
 const run = async () => {
   const dest = await getInputs(args);
+  started = true;
   await fs.ensureDir(dest);
   const device = await findDevice();
   captureCtrlC();
@@ -486,10 +506,10 @@ const run = async () => {
     // delay keeps the double-feed sensor from reading a stack that is still
     // being loaded as a jam.
     while (!stopping && !(await paperPresent(device))) {
-      await sleep(IDLE_MS);
+      await pause(IDLE_MS);
     }
     if (stopping) break;
-    await sleep(SETTLE_MS);
+    await pause(SETTLE_MS);
     if (stopping) break;
 
     await fs.emptyDir(STAGE);
@@ -555,7 +575,7 @@ const run = async () => {
         nextCard();
       }
       if (stalledPage) await fs.remove(stalledPage).catch(() => {});
-      await sleep(IDLE_MS);
+      await pause(IDLE_MS);
     } else if (batchMoved > 0) {
       // Cards were scanned; loop straight back for the next batch.
     } else if (/out of documents/i.test(stderr)) {
@@ -576,7 +596,7 @@ const run = async () => {
         .slice(0, 3)
         .join('; ');
       log(chalk.red(`Scanner error: ${detail}`));
-      await sleep(IDLE_MS);
+      await pause(IDLE_MS);
     }
   }
 
