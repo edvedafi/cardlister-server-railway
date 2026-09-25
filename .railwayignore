@@ -1,0 +1,4 @@
+# Backend deploys only need medusajs-backend; keep the local-only packages (and their card scans) out of the upload.
+script-frontend/
+medusajs-storefront/
+.git/

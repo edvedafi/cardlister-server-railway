@@ -30,7 +30,7 @@
     "migrate": "cross-env medusa migrations run",
     "release:link": "railway link",
     "redis": "cross-env redis-stack-server",
-    "deploy": "railway up",
+    "deploy": "railway up . --path-as-root",
     "postinstall": "patch-package",
     "logs": "railway logs"
   },

@@ -2,7 +2,7 @@
 .idea
 node_modules
 
-script-frontend/input/
+script-frontend/input*/
 script-frontend/output
 *.env*
 script-frontend/venv/
