@@ -5,7 +5,15 @@ let spinners: Spinnies;
 
 const getSpinners = () => {
   if (!spinners) {
+    // Spinnies' constructor strips every SIGINT listener and installs its own
+    // immediate process.exit(0), which silently disables any graceful shutdown
+    // handler registered before the first spinner. Put them back.
+    const sigint = process.listeners('SIGINT');
     spinners = new Spinnies();
+    if (sigint.length > 0) {
+      process.removeAllListeners('SIGINT');
+      sigint.forEach((listener) => process.on('SIGINT', listener));
+    }
   }
   return spinners;
 };

@@ -17,6 +17,7 @@ import {
 import { parseArgs } from './utils/parseArgs';
 import { getInputs } from './utils/inputs';
 import sharp from 'sharp';
+import terminalImage from 'term-img';
 
 const execFileAsync = promisify(execFile);
 
@@ -119,17 +120,49 @@ for (const entry of fs.readdirSync(os.tmpdir(), { withFileTypes: true })) {
 
 let activeScan: ChildProcess | undefined;
 let stopping = false;
+let running: Promise<void> = Promise.resolve();
+
+// Run summary, printed on exit.
+let processed = 0;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRunning = (proc: ChildProcess) => proc.exitCode === null && !proc.signalCode;
+
+const waitForExit = async (proc: ChildProcess, ms: number): Promise<boolean> => {
+  for (let waited = 0; isRunning(proc) && waited < ms; waited += POLL_MS) await sleep(POLL_MS);
+  return !isRunning(proc);
+};
 
 const cleanup = async () => {
   stopping = true;
-  if (activeScan && !activeScan.killed) activeScan.kill('SIGINT');
   await fs.remove(STAGE).catch(() => {});
+};
+
+/**
+ * Ctrl-C: let the scan in progress wind down and release any complete cards,
+ * then report the run. A Ctrl-C read by captureCtrlC never reached scanimage,
+ * so it is stopped straight away. A SIGINT from anywhere else may have hit the
+ * whole process group, scanimage included, so it gets a moment to cancel on its
+ * own first -- a second SIGINT makes scanimage abort without releasing the
+ * device.
+ */
+const shutdown = async () => {
+  stopping = true;
+  if (activeScan && isRunning(activeScan) && (ctrlCFromKeyboard || !(await waitForExit(activeScan, 3000))))
+    await stopScan(activeScan);
+  // Bounded, in case run() is parked somewhere that never notices `stopping`,
+  // like the input prompt.
+  await Promise.race([running.catch(() => {}), sleep(10000)]);
+  log(chalk.green(`Processed ${processed} Cards`));
+  await cleanup();
 };
 
 // onShutdown alone is not enough: when the process is killed outright the async
 // handler does not get to run and the staging directory is left behind. The
 // synchronous exit hook is the one that always fires.
-onShutdown(cleanup);
+onShutdown(shutdown);
+process.on('SIGHUP', () => process.kill(process.pid, 'SIGTERM'));
 process.on('exit', () => {
   try {
     fs.removeSync(STAGE);
@@ -137,20 +170,6 @@ process.on('exit', () => {
     /* best effort */
   }
 });
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-  process.on(sig, () => {
-    stopping = true;
-    if (activeScan && !activeScan.killed) activeScan.kill('SIGINT');
-    try {
-      fs.removeSync(STAGE);
-    } catch {
-      /* best effort */
-    }
-    process.exit(0);
-  });
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const findDevice = async (): Promise<string> => {
   if (process.env.SCANNER_DEVICE) return process.env.SCANNER_DEVICE;
@@ -166,11 +185,16 @@ const findDevice = async (): Promise<string> => {
 /**
  * Levels-stretch and gamma-encode one scan, writing the result to `dest`.
  * Returns false if anything goes wrong, so the caller can fall back to moving
- * the untouched file rather than losing the scan.
+ * the untouched file rather than losing the scan. `partial` accepts a truncated
+ * JPEG, decoding the missing rows as grey.
  */
-const enhance = async (src: string, dest: string): Promise<boolean> => {
+const enhance = async (src: string, dest: string, partial = false): Promise<boolean> => {
   try {
-    const { data, info } = await sharp(src).raw().toBuffer({ resolveWithObject: true });
+    const { data, info } = await sharp(src, partial ? { failOn: 'none' } : {})
+      .raw()
+      .toBuffer({
+        resolveWithObject: true,
+      });
     const { width, height, channels } = info;
 
     // Luminance histogram -> the value below which (100 - WHITE_CLIP)% of pixels sit.
@@ -202,6 +226,69 @@ const enhance = async (src: string, dest: string): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+/**
+ * Render a scan inline so you can pick the card out of the output tray. Toned
+ * first, since the raw scan is too dark to recognise at thumbnail size.
+ */
+const showCard = async (src: string, partial = false) => {
+  const preview = path.join(STAGE, `preview-${path.basename(src)}.jpg`);
+  // A partial scan always goes through sharp: it is the only thing here that
+  // can make a truncated JPEG displayable.
+  const file = (TONE || partial) && (await enhance(src, preview, partial)) ? preview : src;
+  try {
+    const { resizeImageForDisplay } = await import('./image-processing/imageProcessor.js');
+    const resized = await resizeImageForDisplay(file);
+    log('  ' + (await terminalImage(resized, { height: 25 })));
+    await fs.remove(resized).catch(() => {});
+  } catch {
+    log('  📷 [Card image display failed]');
+    log(`     File: ${path.basename(src)}`);
+  }
+  await fs.remove(preview).catch(() => {});
+};
+
+/**
+ * Copy out the page scanimage is still writing. On cancel scanimage deletes its
+ * .part file, so after a stall this is the only image of the card it stalled on.
+ * Returns undefined if the scanner had not started sending that page.
+ */
+const snapshotPartial = async (): Promise<string | undefined> => {
+  const part = (await fs.readdir(STAGE).catch(() => [] as string[])).find((f) => f.endsWith('.part'));
+  if (!part) return undefined;
+  const snapshot = path.join(STAGE, 'stalled.jpg');
+  try {
+    await fs.copy(path.join(STAGE, part), snapshot);
+    // Header-only: no image data arrived, so there is nothing to show.
+    if ((await fs.stat(snapshot)).size < 4096) return undefined;
+    return snapshot;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Read Ctrl-C as a keypress instead of letting the terminal turn it into a
+ * signal. A terminal SIGINT goes to the whole foreground process group: yarn v1
+ * dies on it at once and hands back the prompt while we are still winding down,
+ * and tsx's wrapper SIGKILLs us ~60ms later because node-graceful-shutdown and
+ * spinnies strip the listener tsx relies on to see that we handle SIGINT. In
+ * raw mode no signal is generated, so only this process hears it -- the same
+ * approach reviewMenu's readSingleKey uses.
+ */
+let ctrlCFromKeyboard = false;
+const captureCtrlC = () => {
+  const stdin = process.stdin;
+  if (!stdin.isTTY) return;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.on('data', (buf: Buffer) => {
+    if (buf.includes(0x03)) {
+      ctrlCFromKeyboard = true;
+      process.kill(process.pid, 'SIGINT');
+    }
+  });
 };
 
 /** Is anything in the hopper? Reads the scanner's page-loaded hardware sensor. */
@@ -304,6 +391,7 @@ const run = async () => {
   const dest = await getInputs(args);
   await fs.ensureDir(dest);
   const device = await findDevice();
+  captureCtrlC();
 
   log(
     chalk.dim(
@@ -322,6 +410,9 @@ const run = async () => {
   let cardNum = 0;
   let cardId = `scan-card-${++cardNum}`;
   let scanningShown = false;
+  // Set by release() when it shows a single-sided card, so a stall in the same
+  // batch doesn't show that card a second time.
+  let orphanShown = false;
 
   showCardSpinner(cardId, chalk.dim('Waiting for cards'));
 
@@ -368,6 +459,7 @@ const run = async () => {
           moved++;
         }
         finishSpinner(cardId, chalk.green(names.join(' + ')));
+        processed++;
         nextCard();
       }
     }
@@ -377,8 +469,11 @@ const run = async () => {
     // the card has to go back through the feeder.
     if (final && complete % 2 === 1) {
       const orphan = staged[complete - 1];
-      await fs.remove(path.join(STAGE, orphan));
-      errorSpinner(cardId, chalk.red(`Deleting single image - put this card back in the stack (${orphan})`));
+      const orphanPath = path.join(STAGE, orphan);
+      errorSpinner(cardId, chalk.red('Only the front scanned - put this card back in the stack'));
+      await showCard(orphanPath);
+      orphanShown = true;
+      await fs.remove(orphanPath);
       nextCard();
     }
 
@@ -395,6 +490,7 @@ const run = async () => {
     }
     if (stopping) break;
     await sleep(SETTLE_MS);
+    if (stopping) break;
 
     await fs.emptyDir(STAGE);
 
@@ -408,6 +504,8 @@ const run = async () => {
     let sawPage = false;
     let lastProgress = Date.now();
     let stalled = false;
+    let stalledPage: string | undefined;
+    orphanShown = false;
     let seen = 0;
     // Cards released while the scan is still running count toward the batch too.
     let batchMoved = 0;
@@ -423,10 +521,12 @@ const run = async () => {
           scanningShown = true;
         }
         batchMoved += await release(false);
-      } else {
+      } else if (!stopping) {
+        // While stopping, shutdown() owns ending the scan.
         const limit = sawPage ? STALL_MS : FIRST_PAGE_MS;
         if (Date.now() - lastProgress > limit) {
           stalled = true;
+          stalledPage = await snapshotPartial();
           await stopScan(proc);
           break;
         }
@@ -447,6 +547,14 @@ const run = async () => {
           `Scanner stalled - ${batchMoved / 2} card(s) kept. Cards are still in the feeder; leave them to retry.`,
         ),
       );
+      // Stalled partway through a card's front: show what arrived of it. If the
+      // front had finished, release() has already shown it as a single.
+      if (stalledPage && !orphanShown) {
+        errorSpinner(cardId, chalk.red('Stalled on this card - put it back in the stack'));
+        await showCard(stalledPage, true);
+        nextCard();
+      }
+      if (stalledPage) await fs.remove(stalledPage).catch(() => {});
       await sleep(IDLE_MS);
     } else if (batchMoved > 0) {
       // Cards were scanned; loop straight back for the next batch.
@@ -471,10 +579,14 @@ const run = async () => {
       await sleep(IDLE_MS);
     }
   }
+
+  // Drop the idle "Waiting for cards" spinner so it doesn't linger above the summary.
+  finishSpinner(cardId, '');
 };
 
 try {
-  await run();
+  running = run();
+  await running;
 } catch (e) {
   log(chalk.red(e instanceof Error ? e.message : String(e)));
   await cleanup();
