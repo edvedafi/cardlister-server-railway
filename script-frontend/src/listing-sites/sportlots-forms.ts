@@ -6,13 +6,28 @@ import chalk from 'chalk';
 import { useSpinners } from '../utils/spinners';
 import { ask } from '../utils/ask';
 import { type Category, type SetInfo } from '../models/setInfo';
+import {
+  AUTOMATED_ACCESS_PATH,
+  LOGIN_PAGE,
+  SIGNIN_ACTION,
+  SPORTLOTS_BASE_URL,
+  extractJsCookies,
+  getAutomatedAccessCredentials,
+  parseAutomatedAccessResponse,
+} from './sportlots-auth';
 
 const { showSpinner, log } = useSpinners('sportlots-forms', chalk.blueBright);
 
-const BASE_URL = 'https://www.sportlots.com/';
+const BASE_URL = SPORTLOTS_BASE_URL;
+/**
+ * Cookies are injected against the apex domain so they are sent to both sportlots.com and
+ * www.sportlots.com — host-only cookies set on one would not survive a redirect to the other.
+ */
+const COOKIE_DOMAIN = 'sportlots.com';
 
 let httpClient: AxiosInstance | undefined;
 let cookieJar: CookieJar | undefined;
+let loggedIn = false;
 
 function getHttpClient(): AxiosInstance {
   if (!httpClient) {
@@ -48,26 +63,63 @@ function toAbsoluteUrl(relativeOrAbsolute: string): string {
   }
 }
 
+async function harvestJsCookies(html: string): Promise<string[]> {
+  const cookies = extractJsCookies(html);
+  for (const { name, value } of cookies) {
+    await cookieJar!.setCookie(`${name}=${value}; Path=/; Domain=${COOKIE_DOMAIN}`, BASE_URL);
+  }
+  return cookies.map((c) => c.name);
+}
+
+/**
+ * Logs in over plain HTTP — no browser required.
+ *
+ * Two wrinkles: the form is Turnstile-gated, so an automated-access authId (fetched through this
+ * same client, hence from the same IP) stands in for a solved challenge; and a successful sign-in
+ * returns 200 with no Set-Cookie headers at all — the session cookies are assigned from JavaScript
+ * in the response body's onload handler, so we scrape them out and seed the jar ourselves.
+ */
 async function login(): Promise<void> {
   const { update, finish, error } = showSpinner('login', 'Login');
   try {
     const client = getHttpClient();
     update('Opening session');
 
-    // First hit the login page to establish initial cookies
-    await client.get('cust/custbin/login.tpl?urlval=/index.tpl&qs=');
+    // Seed whatever the login page hands out (some cookies arrive via Set-Cookie, some via JS).
+    const loginPage = await client.get(LOGIN_PAGE);
+    await harvestJsCookies(String(loginPage.data ?? ''));
+
+    update('Requesting automated access');
+    const access = await client.post(AUTOMATED_ACCESS_PATH, getAutomatedAccessCredentials(), {
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      validateStatus: () => true,
+    });
+    const authId = parseAutomatedAccessResponse(access.data);
 
     update('Submitting credentials');
-    const form = new URLSearchParams();
-    form.set('email_val', process.env.SPORTLOTS_ID as string);
-    form.set('psswd', process.env.SPORTLOTS_PASS as string);
-    // Some backends expect the submit value; harmless if ignored
-    form.set('Sign-in', 'Sign-in');
-
-    await client.post('cust/custbin/login.tpl?urlval=/index.tpl&qs=', form.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    const form = new URLSearchParams({
+      urlval: '/index.tpl',
+      email_val: process.env.SPORTLOTS_ID as string,
+      psswd: process.env.SPORTLOTS_PASS as string,
+      turnstile_auth_id: authId,
+    });
+    const signIn = await client.post(SIGNIN_ACTION, form.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: `${BASE_URL}${LOGIN_PAGE}` },
     });
 
+    const harvested = await harvestJsCookies(String(signIn.data ?? ''));
+    if (!harvested.includes('session_reg')) {
+      // Bad credentials just re-render the login page, so an empty harvest is the signal.
+      throw new Error(
+        'SportLots sign-in did not return session cookies — check SPORTLOTS_ID/SPORTLOTS_PASS, SPORTLOTS_KEY_ID/SPORTLOTS_SECRET, or a changed login form',
+      );
+    }
+    const existing = await cookieJar!.getCookies(BASE_URL);
+    if (!existing.some((c) => c.key === 'xx')) {
+      await cookieJar!.setCookie(`xx=Y; Path=/; Domain=${COOKIE_DOMAIN}`, BASE_URL);
+    }
+
+    loggedIn = true;
     finish();
   } catch (e) {
     error(e);
@@ -76,13 +128,9 @@ async function login(): Promise<void> {
 }
 
 async function ensureLoggedIn(): Promise<void> {
-  if (!httpClient) {
-    await login();
-    return;
-  }
-  // Best-effort: if we do not have any cookies yet, log in
-  const cookies = await cookieJar!.getCookies(BASE_URL);
-  if (!cookies || cookies.length === 0) {
+  // The jar can't tell us anything useful: SportLots never sends Set-Cookie, so an "empty jar"
+  // heuristic would re-login on every call. Track success explicitly instead.
+  if (!loggedIn) {
     await login();
   }
 }

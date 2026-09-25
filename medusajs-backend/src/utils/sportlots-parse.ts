@@ -69,15 +69,36 @@ export function extractJsCookies(html: string): { name: string; value: string }[
 }
 
 /**
- * SportLots added a hidden `login_check` field to the sign-in form (Sept 2026) and rejects POSTs
- * without it. The value is issued by the server and has already changed from the one they emailed
- * us, so it must be read off the login page on every sign-in rather than hardcoded.
+ * SportLots briefly carried a hidden `login_check` field on the sign-in form (Sept 2026). The
+ * Turnstile rollout that followed dropped it in favour of `turnstile_auth_id`, so it is now
+ * optional: forward it when the page still renders one, and don't fail when it doesn't.
  */
 export function extractLoginCheck(html: string): string | undefined {
   const match = /<input[^>]*name\s*=\s*["']?login_check["']?[^>]*>/i.exec(html || '');
   if (!match) return undefined;
   const value = /value\s*=\s*["']([^"']*)["']/i.exec(match[0]);
   return value?.[1] || undefined;
+}
+
+/**
+ * `POST /u/node/automated-access` answers `{ success: true, authId }` — a short-lived, single-use
+ * id that stands in for a solved Turnstile challenge on the sign-in POST. Anything else is a
+ * rejected key/secret or a changed endpoint; the raw body never carries our secret, but keep the
+ * error to the server's message anyway.
+ */
+export function parseAutomatedAccessResponse(data: unknown): string {
+  const body = (typeof data === 'object' && data !== null ? data : {}) as {
+    success?: unknown;
+    authId?: unknown;
+    message?: unknown;
+  };
+  if (body.success === true && typeof body.authId === 'string' && body.authId.trim()) {
+    return body.authId.trim();
+  }
+  const reason = typeof body.message === 'string' && body.message ? body.message : 'no message';
+  throw new SportlotsAuthError(
+    `SportLots automated-access request was rejected (${reason}) — check SPORTLOTS_KEY_ID/SPORTLOTS_SECRET`,
+  );
 }
 
 /** An unauthenticated .tpl request answers with a tiny meta-refresh back to the login page. */

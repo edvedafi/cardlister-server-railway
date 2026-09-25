@@ -1,9 +1,11 @@
 import { remote } from 'webdriverio';
 import chalk from 'chalk';
+import path from 'path';
 import { useSpinners } from '../utils/spinners';
 import { ask } from '../utils/ask';
 import { type Category, type SetInfo } from '../models/setInfo';
 import { getBrowserlessConfig } from '../utils/browserless';
+import { AUTOMATED_ACCESS_PATH, getAutomatedAccessCredentials, parseAutomatedAccessResponse } from './sportlots-auth';
 
 const { showSpinner, log } = useSpinners('sportlots', chalk.blueBright);
 
@@ -32,10 +34,60 @@ async function login() {
       await _browser.url('cust/custbin/login.tpl?urlval=/index.tpl&qs=');
       await _browser.$('input[name="email_val"]').setValue(process.env.SPORTLOTS_ID as string);
       await _browser.$('input[name="psswd"]').setValue(process.env.SPORTLOTS_PASS as string);
-      await _browser.$('input[value="Sign-in"]').click();
+
+      // The automated-access call has to come from the same IP as the sign-in POST, and the
+      // browser may be a remote Browserless instance. Run it from inside the page so both
+      // requests leave from wherever the browser lives. Credentials go across as script
+      // arguments — never interpolated into script source.
+      const { keyId, secret } = getAutomatedAccessCredentials();
+      const result = await _browser.execute(
+        async (path: string, keyId: string, secret: string) => {
+          const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyId, secret }),
+          });
+          return response.json();
+        },
+        `/${AUTOMATED_ACCESS_PATH}`,
+        keyId,
+        secret,
+      );
+      const authId = parseAutomatedAccessResponse(result);
+
+      // form.submit() skips the page's submit listener, which would otherwise alert() about
+      // the unsolved Turnstile widget and hang the session. Clicking the button would trip it.
+      await _browser.execute(
+        'document.getElementById("turnstile_auth_id").value = arguments[0]; document.getElementById("loginForm").submit();',
+        authId,
+      );
+
+      // A failed sign-in silently re-renders the login form, and every later page then
+      // redirects back here. Fail loudly with a screenshot instead of letting callers die on
+      // an unrelated missing selector.
+      await _browser
+        .waitUntil(async () => !(await _browser!.$('input[name="email_val"]').isExisting()), {
+          timeout: 10000,
+          timeoutMsg: 'still on login page',
+        })
+        .catch(async () => {
+          const shot = path.resolve('sportlots-login-error.png');
+          await _browser!.saveScreenshot(shot);
+          const hasTurnstile = await _browser!
+            .$('.cf-turnstile, iframe[src*="challenges.cloudflare.com"]')
+            .isExisting();
+          throw new Error(
+            `SportLots sign-in failed: still on ${await _browser!.getUrl()}` +
+              (hasTurnstile ? ' (login form still shows the Cloudflare "Verify you are human" check)' : '') +
+              ` — check SPORTLOTS_ID/SPORTLOTS_PASS and SPORTLOTS_KEY_ID/SPORTLOTS_SECRET; screenshot saved to ${shot}`,
+          );
+        });
       finish();
     } catch (e) {
       error(e);
+      await _browser?.deleteSession().catch(() => undefined);
+      _browser = undefined;
+      throw e;
     }
   }
   return _browser;

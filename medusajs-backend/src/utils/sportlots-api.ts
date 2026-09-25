@@ -12,6 +12,7 @@ import {
   SportlotsAuthError,
   WarnFn,
 } from './sportlots-parse';
+import { fetchAutomatedAuthId } from './sportlots-automated-access';
 
 export const SPORTLOTS_BASE_URL = 'https://www.sportlots.com/';
 
@@ -83,20 +84,21 @@ export async function login(loginAxios: LoginAxios): Promise<AxiosInstance> {
   const loginHtml = String(loginPage.data ?? '');
   await harvestJsCookies(jar, loginHtml);
 
-  // The form carries a server-issued anti-bot token; signin.tpl rejects a POST without it.
-  const loginCheck = extractLoginCheck(loginHtml);
-  if (!loginCheck) {
-    throw new SportlotsAuthError(
-      'SportLots login page did not include a login_check token — the login form has changed',
-    );
-  }
+  // The form is Turnstile-gated; the automated-access authId takes the place of a solved
+  // challenge. Fetched through the same client so it comes from the same IP as the sign-in.
+  const authId = await fetchAutomatedAuthId(api);
 
   const form = new URLSearchParams({
     urlval: '/index.tpl',
     email_val: email,
     psswd: password,
-    login_check: loginCheck,
+    turnstile_auth_id: authId,
   });
+  // Older revisions of the form also carried a server-issued login_check; forward it if present.
+  const loginCheck = extractLoginCheck(loginHtml);
+  if (loginCheck) {
+    form.set('login_check', loginCheck);
+  }
   const signIn = await api.post(SIGNIN_ACTION, form.toString(), {
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
@@ -110,7 +112,7 @@ export async function login(loginAxios: LoginAxios): Promise<AxiosInstance> {
     // Bad credentials just re-render the login page, so an empty harvest is the signal. Fail loudly
     // here: a silent failure downstream is indistinguishable from "no sales".
     throw new SportlotsAuthError(
-      'SportLots sign-in did not return session cookies — check SPORTLOTS_ID/SPORTLOTS_PASS or a changed login form',
+      'SportLots sign-in did not return session cookies — check SPORTLOTS_ID/SPORTLOTS_PASS, SPORTLOTS_KEY_ID/SPORTLOTS_SECRET, or a changed login form',
     );
   }
 

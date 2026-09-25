@@ -1,0 +1,39 @@
+<html>
+<head>
+<title>SportLots Sign-in</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</head>
+<body>
+<!-- Trimmed capture of cust/custbin/login.tpl after the Sept 2026 Turnstile rollout: no login_check. -->
+				<FORM METHOD="post" action="/cust/custbin/signin.tpl" id="loginForm">
+				<input type="hidden" name="turnstile_auth_id" id="turnstile_auth_id" value="">
+           <input type="hidden" Name="urlval" Value="/index.tpl">
+          <input type="text" Name="email_val" class="bigtext" style="width:325px" maxlength="50"><br><br>
+          <input type="password" Name="psswd" class="bigtext" style="width:325px" maxlength="11">
+					<div class="cf-turnstile"
+						style="margin-top:15px;"
+						data-sitekey="0x4AAAAAAE6vPIYEpbgPp5-6"
+						data-response-field-name="turnstile_token">
+					</div>
+        <input type="submit" id="loginSubmit" Value="Sign-in" class="bigtext" style="width:447px;background-color:#E2D9D9;">
+        </form>
+				<script>
+				document.getElementById('loginForm').addEventListener('submit', async function(e) {
+						e.preventDefault();
+						const tokenField = document.querySelector('input[name="turnstile_token"]');
+						if (!tokenField || !tokenField.value) {
+								alert('Please complete the security verification.');
+								return;
+						}
+						const response = await fetch('/u/node/verify-turnstile', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ token: tokenField.value })
+						});
+						const result = await response.json();
+						document.getElementById('turnstile_auth_id').value = result.authId;
+						this.submit();
+				});
+				</script>
+</body>
+</html>

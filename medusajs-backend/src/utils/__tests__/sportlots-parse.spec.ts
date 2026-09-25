@@ -8,6 +8,7 @@ import {
   groupPullRows,
   isLoginRedirectStub,
   joinOrders,
+  parseAutomatedAccessResponse,
   parseOrdersResponse,
   parsePullSheet,
   SlOrderHeader,
@@ -99,6 +100,33 @@ describe('extractLoginCheck', () => {
   it('returns undefined when the form has no token', () => {
     expect(extractLoginCheck(fixture('signin-failure.html'))).toBeUndefined();
     expect(extractLoginCheck('')).toBeUndefined();
+  });
+
+  it('returns undefined for the Turnstile-era form, which dropped the field', () => {
+    expect(extractLoginCheck(fixture('login-page-turnstile.html'))).toBeUndefined();
+  });
+});
+
+describe('parseAutomatedAccessResponse', () => {
+  it('returns the authId on success', () => {
+    expect(parseAutomatedAccessResponse({ success: true, authId: 'abc123' })).toBe('abc123');
+  });
+
+  it('throws an auth error when the key/secret is rejected', () => {
+    expect(() => parseAutomatedAccessResponse({ success: false, message: 'invalid secret' })).toThrow(
+      SportlotsAuthError,
+    );
+    expect(() => parseAutomatedAccessResponse({ success: false, message: 'invalid secret' })).toThrow(/invalid secret/);
+  });
+
+  it('throws when success is reported without an authId', () => {
+    expect(() => parseAutomatedAccessResponse({ success: true })).toThrow(SportlotsAuthError);
+    expect(() => parseAutomatedAccessResponse({ success: true, authId: '' })).toThrow(SportlotsAuthError);
+  });
+
+  it('throws on a non-JSON body such as an HTML error page', () => {
+    expect(() => parseAutomatedAccessResponse('<html>Not Found</html>')).toThrow(SportlotsAuthError);
+    expect(() => parseAutomatedAccessResponse(undefined)).toThrow(SportlotsAuthError);
   });
 });
 
