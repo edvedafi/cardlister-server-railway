@@ -962,32 +962,32 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
       variations?: Variation[];
     }
 
-    const cards: TempCard[] = await Promise.all(
-      inputCards.bscBase.map(async (card): Promise<TempCard> => {
-        let slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === card.cardNo);
-        const rtn: TempCard = { ...card };
-        if (
-          !slCard &&
-          category.metadata?.card_number_prefix &&
-          card.cardNo.startsWith(category.metadata.card_number_prefix)
-        ) {
-          const searchNumber = card.cardNo.slice(category.metadata.card_number_prefix.length);
-          slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === searchNumber);
-        }
-        if (slCard) {
-          rtn.sportlots = slCard.title;
-        } else if (slCardOptions.length > 0) {
-          rtn.sportlots = await ask(
-            `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${
-              card.cardNo
-            } ${card.players.join(' ')}?`,
-            card.players[0],
-            { selectOptions: slCardOptions },
-          );
-        }
-        return rtn;
-      }),
-    );
+    // Prompts must run one at a time; concurrent asks render together and a single Enter answers them all.
+    const cards: TempCard[] = [];
+    for (const card of inputCards.bscBase) {
+      let slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === card.cardNo);
+      const rtn: TempCard = { ...card };
+      if (
+        !slCard &&
+        category.metadata?.card_number_prefix &&
+        card.cardNo.startsWith(category.metadata.card_number_prefix)
+      ) {
+        const searchNumber = card.cardNo.slice(category.metadata.card_number_prefix.length);
+        slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === searchNumber);
+      }
+      if (slCard) {
+        rtn.sportlots = slCard.title;
+      } else if (slCardOptions.length > 0) {
+        rtn.sportlots = await ask(
+          `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${
+            card.cardNo
+          } ${card.players.join(' ')}?`,
+          card.players[0],
+          { selectOptions: slCardOptions },
+        );
+      }
+      cards.push(rtn);
+    }
 
     const existing = await getProductCardNumbers(category.id);
     const queue = new Queue({ concurrency: 1, results: products, autostart: true });
