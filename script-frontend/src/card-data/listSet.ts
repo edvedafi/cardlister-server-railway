@@ -289,14 +289,10 @@ const buildCardState = async (
       ?? autoResult.product?.metadata?.thickness
       ?? '20pt';
 
-    let existingQuantity = 0;
-    if (autoResult.productVariant) {
-      try {
-        existingQuantity = await getInventoryQuantity(autoResult.productVariant);
-      } catch {
-        // best-effort — default to 0
-      }
-    }
+    // No inventory lookup here (NEO-316): reviewCard always reads the quantity
+    // fresh from Medusa right before showing it, which overwrote this value
+    // anyway — fetching it here too was a redundant round-trip per card.
+    const existingQuantity = 0;
 
     const menuState: ReviewMenuState = {
       cardTitle: autoResult.productVariant?.title
@@ -335,13 +331,14 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
 
   menuState.queuedCount = cardProcessorQueue.length;
 
-  // Re-fetch quantity from Medusa so we have the latest value (Phase 1 fetch may be stale)
+  // Fetch quantity from Medusa right before review so it is current (other
+  // cards or other CLI processes may have written this SKU while it was queued)
   if (menuState.matchedVariant) {
     try {
       menuState.quantity = await getInventoryQuantity(menuState.matchedVariant);
       menuState.quantityFromBackend = menuState.quantity > 0;
     } catch {
-      // best-effort — keep Phase 1 value
+      // best-effort — fall through to the new-listing default below
     }
   }
   if (menuState.quantity === 0) {
@@ -460,22 +457,24 @@ const finalizeCard = async (reviewed: ReviewMenuState, setData: SetInfo): Promis
   productVariant.metadata.features = reviewed.details.features;
 
   // Prepare and upload images
+  // Front and back write to distinct output files (imageNumber 1 / 2), so they
+  // prepare concurrently; the images array keeps front-then-back order.
   const images: ProductImage[] = [];
-  const frontImage = await prepareImageFile(reviewed.frontPath, productVariant, setData, 1, true);
+  const [frontImage, backImage] = await Promise.all([
+    prepareImageFile(reviewed.frontPath, productVariant, setData, 1, true),
+    reviewed.backPath ? prepareImageFile(reviewed.backPath, productVariant, setData, 2, true) : Promise.resolve(undefined),
+  ]);
   if (frontImage) {
     images.push({
       file: frontImage,
       url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product!.handle}1.jpg}?alt=media`,
     });
   }
-  if (reviewed.backPath) {
-    const backImage = await prepareImageFile(reviewed.backPath, productVariant, setData, 2, true);
-    if (backImage) {
-      images.push({
-        file: backImage,
-        url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product!.handle}2.jpg}?alt=media`,
-      });
-    }
+  if (backImage) {
+    images.push({
+      file: backImage,
+      url: `https://firebasestorage.googleapis.com/v0/b/hofdb-2038e.appspot.com/o/${productVariant.product!.handle}2.jpg}?alt=media`,
+    });
   }
 
   await processUploads(productVariant, images, String(reviewed.quantity));
@@ -1451,7 +1450,7 @@ export async function processSet(setData: SetInfo, files: string[] = [], args: P
             team: match.front.team ?? match.back.team,
             cardNumber: match.back.cardNumber ?? match.front.cardNumber,
           };
-          debug(`Pool priors for pair: player=${priors.player ?? 'null'} team=${priors.team ?? 'null'} cardNumber=${priors.cardNumber ?? 'null'}`);
+          debug(`Pool priors for pair${match.front.entryIndex !== undefined || match.back.entryIndex !== undefined ? ` f=${match.front.entryIndex ?? '-'} b=${match.back.entryIndex ?? '-'}` : ''}: player=${priors.player ?? 'null'} team=${priors.team ?? 'null'} cardNumber=${priors.cardNumber ?? 'null'}`);
 
           const pendingEntry: PendingReviewEntry = {
             id: ++nextPendingReviewId,

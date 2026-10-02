@@ -16,6 +16,45 @@ const debug = createLogger('crop');
 const output_directory = 'output/';
 const MAX_IMAGE_SIZE = 10 * 1000 * 1000; // slightly under 10MB
 
+// Upper bound on the bytes per pixel of sharp's default JPEG re-encode
+// (quality 80, 4:2:0, metadata stripped) — the buffer whose length the size
+// gate below compares to MAX_IMAGE_SIZE. Random noise, the worst case for JPEG,
+// measures ~0.64 B/px; 1.5 leaves >2x headroom. Below this bound the re-encode
+// provably fits under the cap, so the decision can be made from the header
+// alone without decoding the image.
+const MAX_REENCODE_BYTES_PER_PIXEL = 1.5;
+
+/**
+ * Same decision as `(await sharp(file).toBuffer()).length > MAX_IMAGE_SIZE`,
+ * but only pays for the full decode + re-encode when the header can't rule it
+ * out. Returns the re-encoded buffer when it had to build one (the caller
+ * compresses from it), otherwise null = "fits, move the file as-is".
+ */
+async function oversizeBuffer(file) {
+  try {
+    const meta = await sharp(file).metadata();
+    const pixels = (meta.width || 0) * (meta.height || 0);
+    if (meta.format === 'jpeg' && pixels > 0 && pixels * MAX_REENCODE_BYTES_PER_PIXEL <= MAX_IMAGE_SIZE) {
+      return null;
+    }
+  } catch {
+    // fall through to the exact check
+  }
+  const buffer = await sharp(file).toBuffer();
+  return buffer.length > MAX_IMAGE_SIZE ? buffer : null;
+}
+
+/** `mv` without the shell: rename, falling back to copy+unlink across devices. */
+async function moveFile(src, dest) {
+  try {
+    await fs.promises.rename(src, dest);
+  } catch (e) {
+    if (e?.code !== 'EXDEV') throw e;
+    await fs.promises.copyFile(src, dest);
+    await fs.promises.unlink(src);
+  }
+}
+
 const slugifyFilenamePart = (value) =>
   String(value ?? '')
     .toLowerCase()
@@ -96,7 +135,7 @@ export const cropImage = async (
   if (fs.existsSync(outputFile)) {
     // Already cropped — skip silently
   } else {
-    await $`mkdir -p ${outputLocation}`;
+    await fs.promises.mkdir(outputLocation, { recursive: true });
 
     if (fs.existsSync(outputFile)) {
       fs.removeSync(outputFile);
@@ -113,12 +152,15 @@ export const cropImage = async (
       input = `${tempDirectory}/temp.rotated.jpg`;
     }
 
+    // Only the non-interactive aspect/area gate reads this.
     let sourceArea = 0;
-    try {
-      const srcMeta = await sharp(input).metadata();
-      sourceArea = (srcMeta.width || 0) * (srcMeta.height || 0);
-    } catch (e) {
-      debug(`could not read source metadata for area-fraction gate: ${e?.message || e}`);
+    if (nonInteractive) {
+      try {
+        const srcMeta = await sharp(input).metadata();
+        sourceArea = (srcMeta.width || 0) * (srcMeta.height || 0);
+      } catch (e) {
+        debug(`could not read source metadata for area-fraction gate: ${e?.message || e}`);
+      }
     }
 
     // ── Remote /crop alternatives (lazy, single API call shared by all strategies) ──
@@ -199,7 +241,8 @@ export const cropImage = async (
         fn: async () => {
           tempImage = `${tempDirectory}/passthrough.jpg`;
           log(`  ⚠ all crop attempts failed aspect gate; falling back to uncropped ${path.basename(image)}`);
-          return $`cp ${input} ${tempImage}`;
+          await fs.promises.copyFile(input, tempImage);
+          return true;
         },
       },
     ];
@@ -212,7 +255,8 @@ export const cropImage = async (
         name: 'copy',
         fn: async () => {
           tempImage = `${tempDirectory}/copy.jpg`;
-          return $`cp ${input} ${tempImage}`;
+          await fs.promises.copyFile(input, tempImage);
+          return true;
         },
       });
     }
@@ -292,14 +336,16 @@ export const cropImage = async (
     }
 
     if (found) {
-      const buffer = await sharp(tempImage).toBuffer();
-      if (useMaxSize && buffer.length > MAX_IMAGE_SIZE) {
+      // The size gate only matters when useMaxSize is on; it never ran
+      // usefully otherwise, so skip the decode entirely in that case.
+      const buffer = useMaxSize ? await oversizeBuffer(tempImage) : null;
+      if (buffer) {
         const compressionRatio = MAX_IMAGE_SIZE / buffer.length;
         const outputQuality = Math.floor(compressionRatio * 100);
         await sharp(buffer).jpeg({ quality: outputQuality }).toFile(outputFile);
-        await $`rm ${tempImage}`;
+        await fs.promises.unlink(tempImage);
       } else {
-        await $`mv ${tempImage} ${outputFile}`;
+        await moveFile(tempImage, outputFile);
       }
       await fs.remove(tempDirectory);
     } else {

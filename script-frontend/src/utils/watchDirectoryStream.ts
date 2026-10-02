@@ -312,6 +312,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
       entry.row = row;
       if (row.status === entry.lastStatus) continue;
       entry.lastStatus = row.status;
+      if (row.status === 'done' || row.status === 'failed') debug(`status ${row.entryIndex} → ${row.status}`);
       if (row.status === 'processing') {
         entry.spinner.update('Processing remotely');
       } else if (row.status === 'done') {
@@ -361,22 +362,59 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
       // so a download hiccup degrades to "review the uncropped image" (the
       // menu's re-crop action still works from the original) instead of
       // stalling the pair.
-      const materialize = async (entryIndex: number, dest: string, local?: TrackedEntry): Promise<string> => {
-        try {
-          await client.downloadTo(entryIndex, dest);
+      const downloadStart = Date.now();
+      // A side the operator already previewed from the waiting pool is the same
+      // server crop on disk — copy it instead of fetching it again.
+      const cachedPreview = (entryIndex: number): string | undefined => {
+        const file = previewCache.get(entryIndex);
+        return file && fs.existsSync(file) ? file : undefined;
+      };
+      const frontCached = cachedPreview(pair.frontIndex);
+      const backCached = cachedPreview(pair.backIndex);
+      const fromCache = (src: string, dest: string): Promise<PromiseSettledResult<void>> =>
+        fs.promises.copyFile(src, dest).then(
+          (): PromiseSettledResult<void> => ({ status: 'fulfilled', value: undefined }),
+          (reason): PromiseSettledResult<void> => ({ status: 'rejected', reason }),
+        );
+      const fromServer = (entryIndex: number, dest: string): Promise<PromiseSettledResult<void>> =>
+        client.downloadTo(entryIndex, dest).then(
+          (): PromiseSettledResult<void> => ({ status: 'fulfilled', value: undefined }),
+          (reason): PromiseSettledResult<void> => ({ status: 'rejected', reason }),
+        );
+      let results: [PromiseSettledResult<void>, PromiseSettledResult<void>];
+      if (!frontCached && !backCached) {
+        // Both from the server: one URL call for the pair (see getPairDownloadUrls).
+        results = await client.downloadPairTo(
+          { entryIndex: pair.frontIndex, dest: frontPath },
+          { entryIndex: pair.backIndex, dest: backPath },
+        );
+      } else {
+        results = await Promise.all([
+          frontCached ? fromCache(frontCached, frontPath) : fromServer(pair.frontIndex, frontPath),
+          backCached ? fromCache(backCached, backPath) : fromServer(pair.backIndex, backPath),
+        ]);
+      }
+      const settle = (
+        result: PromiseSettledResult<void>,
+        entryIndex: number,
+        dest: string,
+        local?: TrackedEntry,
+      ): string => {
+        if (result.status === 'fulfilled') {
           if (local) registerOriginalName(path.basename(dest), local.basename);
           return dest;
-        } catch (err) {
-          debug(`Crop download failed for entry ${entryIndex}: ${String(err)}`);
-          if (!local) throw err;
-          log(chalk.yellow(`Using local scan for ${local.basename} (crop download failed)`));
-          return local.localPath;
         }
+        debug(`Crop download failed for entry ${entryIndex}: ${String(result.reason)}`);
+        if (!local) throw result.reason;
+        log(chalk.yellow(`Using local scan for ${local.basename} (crop download failed)`));
+        return local.localPath;
       };
-      const [frontFile, backFile] = await Promise.all([
-        materialize(pair.frontIndex, frontPath, frontEntry),
-        materialize(pair.backIndex, backPath, backEntry),
-      ]);
+      const frontFile = settle(results[0], pair.frontIndex, frontPath, frontEntry);
+      const backFile = settle(results[1], pair.backIndex, backPath, backEntry);
+      debug(
+        `download done f=${pair.frontIndex} b=${pair.backIndex} ${Date.now() - downloadStart}ms` +
+          (frontCached || backCached ? ` (preview cache: ${[frontCached && 'f', backCached && 'b'].filter(Boolean).join('+')})` : ''),
+      );
 
       const rowFor = (entryIndex: number): StreamImageRow | undefined =>
         entries.get(entryIndex)?.row ?? latestImages.find((r) => r.entryIndex === entryIndex);
@@ -397,6 +435,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
           timestamp: Date.now(),
           originalFilename: local?.basename,
           originalPath: local?.localPath,
+          entryIndex,
         };
       };
 
@@ -429,6 +468,7 @@ export function watchWithServerMatching(opts: StreamWatcherOptions): DirectoryWa
       }
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
+      debug(`pair ready f=${pair.frontIndex} b=${pair.backIndex}`);
       pairQueue.push(() => handlePair(pair));
     }
     maybeRefreshIdle();

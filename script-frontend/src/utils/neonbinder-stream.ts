@@ -126,6 +126,10 @@ const fnCreateImageUploadUrl = makeFunctionReference<'action'>(
 const fnCreateImageDownloadUrl = makeFunctionReference<'action'>(
   'adapters/placeholderUploads:createPlaceholderImageDownloadUrl',
 );
+// NEO-316: both sides of a pair in one action call. Newer than the per-image
+// action above, so it may not be deployed yet — see getPairDownloadUrls.
+const PAIR_DOWNLOAD_FN = 'adapters/placeholderUploads:createPlaceholderPairDownloadUrls';
+const fnCreatePairDownloadUrls = makeFunctionReference<'action'>(PAIR_DOWNLOAD_FN);
 // Public, auth-required, fire-and-forget warm-up. Kicks the scale-to-zero
 // preprocess service's (multi-minute) model load early so the cold start
 // overlaps set selection and app setup instead of stalling the first upload.
@@ -169,6 +173,50 @@ export class MissingBackendFunctionError extends Error {
 const isMissingFunctionError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err);
   return /could not find\b.*\bfunction/is.test(msg);
+};
+
+// ── Pair download URLs (NEO-316) ───────────────────────────────────────────
+// Feature-detected per process: null = not tried yet, true = the deployment has
+// the pair action, false = it doesn't (or answered in a shape we can't read),
+// so every later pair goes straight to two single-image calls.
+let pairDownloadSupported: boolean | null = null;
+
+/** Test hook: forget the feature-detection result. */
+export const resetPairDownloadSupport = (): void => {
+  pairDownloadSupported = null;
+};
+
+export class PairDownloadShapeError extends Error {
+  constructor(detail: string) {
+    super(`unexpected createPlaceholderPairDownloadUrls response: ${detail}`);
+    this.name = 'PairDownloadShapeError';
+  }
+}
+
+/**
+ * The ONE place that reads the pair action's response. Assumed shape: each
+ * side mirrors the single-image action's return —
+ *   { front: { url, entryIndex, expiresAt }, back: { url, entryIndex, expiresAt } }
+ * (`index` is accepted as an alias for `entryIndex`). When the side carries an
+ * index it must match the one requested, so a swapped response can never put a
+ * back crop in the front slot. Throws PairDownloadShapeError on anything else.
+ */
+export const parsePairDownloadUrls = (
+  raw: unknown,
+  frontIndex: number,
+  backIndex: number,
+): { front: string; back: string } => {
+  const side = (name: 'front' | 'back', expected: number): string => {
+    const v = (raw as Record<string, unknown> | null | undefined)?.[name] as Record<string, unknown> | undefined;
+    if (!v || typeof v !== 'object') throw new PairDownloadShapeError(`missing ${name}`);
+    if (typeof v.url !== 'string' || v.url === '') throw new PairDownloadShapeError(`${name}.url is not a string`);
+    const idx = v.entryIndex ?? v.index;
+    if (idx !== undefined && idx !== expected) {
+      throw new PairDownloadShapeError(`${name} index ${String(idx)} != requested ${expected}`);
+    }
+    return v.url;
+  };
+  return { front: side('front', frontIndex), back: side('back', backIndex) };
 };
 
 // ── Wire shapes (mirrors of the server's `returns:` validators) ────────────
@@ -281,6 +329,10 @@ class MachineTokenSource {
   private siteUrl: string;
   private key: string;
   private sessionId: string | null = null;
+  // The token minted by probe(), handed to ConvexClient's FIRST (non-forced)
+  // fetch so startup costs one exchange instead of two. One-shot: consumed on
+  // first use, and a forced refresh always goes to the endpoint. Never logged.
+  private primedToken: string | null = null;
 
   constructor(siteUrl: string, key: string) {
     this.siteUrl = siteUrl;
@@ -293,7 +345,13 @@ class MachineTokenSource {
    * Status-only diagnostics on every failure path — the key and the token
    * never reach the (disk-persistent) debug log.
    */
-  async fetchToken(): Promise<string | null> {
+  async fetchToken(args?: { forceRefreshToken?: boolean }): Promise<string | null> {
+    if (this.primedToken && !args?.forceRefreshToken) {
+      const token = this.primedToken;
+      this.primedToken = null;
+      return token;
+    }
+    this.primedToken = null;
     try {
       const res = await fetch(`${this.siteUrl}/machine/token`, {
         method: 'POST',
@@ -396,8 +454,10 @@ class MachineTokenSource {
         throw new Error(`Machine-token exchange failed (HTTP ${res.status}).`);
       }
 
-      const body = (await res.json()) as { sessionId?: string };
+      const body = (await res.json()) as { token?: string; sessionId?: string };
       if (body.sessionId) this.sessionId = body.sessionId;
+      // Keep the minted token for ConvexClient's initial fetch (see fetchToken).
+      this.primedToken = body.token ?? null;
       debug(
         attempt > 1
           ? `machine key verified against the deployment (after ${attempt - 1} retr${attempt === 2 ? 'y' : 'ies'})`
@@ -437,7 +497,7 @@ export class NeonBinderStreamClient {
     const convex = new ConvexClient(convexUrl, {
       ...(webSocketConstructor ? { webSocketConstructor } : {}),
     });
-    convex.setAuth(() => source.fetchToken());
+    convex.setAuth((args) => source.fetchToken(args));
 
     debug(`Connected to ${convexUrl}`);
     return new NeonBinderStreamClient(convex);
@@ -618,11 +678,80 @@ export class NeonBinderStreamClient {
     return result.url;
   }
 
-  async downloadTo(entryIndex: number, destPath: string): Promise<void> {
-    const url = await this.getDownloadUrl(entryIndex);
+  /**
+   * Signed GET URLs for both sides of a pair, each settling independently (so
+   * one missing crop doesn't take down its partner — same as two single calls).
+   *
+   * One action call when the deployment has createPlaceholderPairDownloadUrls;
+   * if it doesn't ("Could not find public function") or its answer can't be
+   * parsed, the fallback is remembered for the process and every pair from then
+   * on uses two single-image calls. Any other failure of the pair call (e.g.
+   * one side has no output yet) retries just this pair per side, so each side
+   * gets its own result.
+   */
+  async getPairDownloadUrls(
+    frontIndex: number,
+    backIndex: number,
+  ): Promise<[PromiseSettledResult<string>, PromiseSettledResult<string>]> {
+    if (pairDownloadSupported !== false) {
+      try {
+        const raw = await this.convex.action(fnCreatePairDownloadUrls, {
+          jobId: this.requireJob(),
+          frontIndex,
+          backIndex,
+        });
+        const { front, back } = parsePairDownloadUrls(raw, frontIndex, backIndex);
+        if (pairDownloadSupported === null) debug('pair download action available — one call per pair');
+        pairDownloadSupported = true;
+        return [
+          { status: 'fulfilled', value: front },
+          { status: 'fulfilled', value: back },
+        ];
+      } catch (err) {
+        if (isMissingFunctionError(err) || err instanceof PairDownloadShapeError) {
+          pairDownloadSupported = false;
+          debug(
+            `${PAIR_DOWNLOAD_FN} unusable on this deployment (${
+              err instanceof PairDownloadShapeError ? err.message : 'not deployed'
+            }) — using two single-image calls per pair for this session`,
+          );
+        } else {
+          debug(`pair download URL call failed for ${frontIndex}/${backIndex}, retrying per side: ${String(err)}`);
+        }
+      }
+    }
+    return Promise.allSettled([this.getDownloadUrl(frontIndex), this.getDownloadUrl(backIndex)]) as Promise<
+      [PromiseSettledResult<string>, PromiseSettledResult<string>]
+    >;
+  }
+
+  /** GET a signed URL to a local file. */
+  async downloadUrlTo(url: string, destPath: string): Promise<void> {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`crop download failed (HTTP ${res.status})`);
     await fs.promises.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+  }
+
+  async downloadTo(entryIndex: number, destPath: string): Promise<void> {
+    await this.downloadUrlTo(await this.getDownloadUrl(entryIndex), destPath);
+  }
+
+  /**
+   * Download both crops of a pair (URLs via getPairDownloadUrls). Each side
+   * settles independently so the caller can fall back per side.
+   */
+  async downloadPairTo(
+    front: { entryIndex: number; dest: string },
+    back: { entryIndex: number; dest: string },
+  ): Promise<[PromiseSettledResult<void>, PromiseSettledResult<void>]> {
+    const [frontUrl, backUrl] = await this.getPairDownloadUrls(front.entryIndex, back.entryIndex);
+    const fetchSide = async (url: PromiseSettledResult<string>, dest: string): Promise<void> => {
+      if (url.status === 'rejected') throw url.reason;
+      await this.downloadUrlTo(url.value, dest);
+    };
+    return Promise.allSettled([fetchSide(frontUrl, front.dest), fetchSide(backUrl, back.dest)]) as Promise<
+      [PromiseSettledResult<void>, PromiseSettledResult<void>]
+    >;
   }
 
   // ── Manual overrides + one-shot listing (NEO-170) ────────────────────────

@@ -33,6 +33,7 @@ export interface UnmatchedCard {
   originalFilename?: string; // original input filename before cropping
   originalPath?: string; // pre-crop source absolute path, if autoCrop produced a cropped copy
   imageHash?: bigint; // cached perceptual dHash, lazily computed on a same-side collision
+  entryIndex?: number; // NeonBinder stream entry this card was uploaded as (streaming mode only)
 }
 
 /**

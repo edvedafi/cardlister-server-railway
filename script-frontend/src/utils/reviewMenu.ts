@@ -1,5 +1,6 @@
 import type { MoneyAmount, Product, ProductVariant } from '@medusajs/client-types';
 import chalk from 'chalk';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -110,6 +111,18 @@ function previewHeightRows(state: ReviewMenuState): number {
   return Math.max(6, Math.min(18, available));
 }
 
+// The last composite built, keyed by both sides' path + mtime + size. Every
+// menu redraw (each keystroke action) re-renders the images, and rebuilding the
+// composite means decoding both full-resolution crops; most actions (price,
+// quantity, details, variant) don't touch the images at all. Rotate and re-crop
+// rewrite a file or change a path, which changes the key and forces a rebuild.
+let compositeCache: { key: string; file: string } | null = null;
+
+const sideKey = async (p: string): Promise<string> => {
+  const st = await fs.promises.stat(p);
+  return `${p}:${st.mtimeMs}:${st.size}`;
+};
+
 /**
  * Compose the front and back scans into one side-by-side PNG so they render
  * on the same line. Both sides are scaled to a common height; a small gap
@@ -117,6 +130,11 @@ function previewHeightRows(state: ReviewMenuState): number {
  */
 async function composeSideBySide(frontPath: string, backPath: string): Promise<string | null> {
   try {
+    const key = `${await sideKey(frontPath)}|${await sideKey(backPath)}`;
+    if (compositeCache && compositeCache.key === key && fs.existsSync(compositeCache.file)) {
+      return compositeCache.file;
+    }
+    compositeCache = null;
     const TARGET_H = 600;
     const GAP = 24;
     // Border is 2 source px so it still reads as a hairline after the terminal
@@ -146,6 +164,7 @@ async function composeSideBySide(frontPath: string, backPath: string): Promise<s
       ])
       .png()
       .toFile(out);
+    compositeCache = { key, file: out };
     return out;
   } catch {
     return null;
