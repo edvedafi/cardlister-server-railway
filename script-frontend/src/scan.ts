@@ -212,7 +212,16 @@ const findDevice = async (): Promise<string> => {
  */
 const enhance = async (src: string, dest: string, partial = false): Promise<boolean> => {
   try {
-    const { data, info } = await sharp(src, partial ? { failOn: 'none' } : {})
+    const input = sharp(src, partial ? { failOn: 'none' } : {});
+    // The raw buffer below carries no metadata, so the scan's DPI would be lost
+    // and the JPEG would read 72 dpi. Downstream (the NeonBinder preprocess
+    // scanner-metadata identity) needs the real resolution, so carry it over:
+    // the source's own density, else the resolution we asked the scanner for.
+    // libvips reports 72 when a file records no resolution, so 72 or less
+    // counts as "none" (no scanner here runs that low).
+    const srcDensity = await input.metadata().then((m) => m.density, () => undefined);
+    const density = srcDensity && srcDensity > 72 ? srcDensity : Number(SETTINGS.resolution) || undefined;
+    const { data, info } = await input
       .raw()
       .toBuffer({
         resolveWithObject: true,
@@ -243,7 +252,13 @@ const enhance = async (src: string, dest: string, partial = false): Promise<bool
     }
     for (let i = 0; i < data.length; i++) data[i] = lut[data[i]];
 
-    await sharp(data, { raw: { width, height, channels } }).jpeg({ quality: JPEG_QUALITY }).toFile(dest);
+    let out = sharp(data, { raw: { width, height, channels } });
+    // withMetadata() is sharp's only density writer. libvips 8.17 records it in
+    // an EXIF XResolution/YResolution block (no JFIF APP0), which is what
+    // Pillow's info["dpi"] reads. It also embeds a ~480-byte sRGB ICC profile;
+    // the pixels are already sRGB, so the decoded image is unchanged.
+    if (density) out = out.withMetadata({ density });
+    await out.jpeg({ quality: JPEG_QUALITY }).toFile(dest);
     return true;
   } catch {
     return false;

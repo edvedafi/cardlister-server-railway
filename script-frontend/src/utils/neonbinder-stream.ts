@@ -33,6 +33,36 @@ const debug = createLogger('neonbinder');
 
 export const isStreamingEnabled = (): boolean => !!process.env.NEONBINDER_CONVEX_URL;
 
+// ── Preprocess warm-up (once per process) ──────────────────────────────────
+// The single warm-up request this process has made, resolving true once the
+// backend accepted it. Shared by prewarmPreprocess() (startup) and
+// NeonBinderStreamClient.warm() (after set selection) so the service is kicked
+// once, and a later caller re-fires only if the earlier attempt failed.
+let warmRequest: Promise<boolean> | null = null;
+
+/**
+ * Kick the preprocess cold start at CLI startup, before the operator picks a
+ * set, so the multi-minute model load overlaps set selection. No-op unless
+ * streaming is enabled. Fire-and-forget: opens its own short-lived client,
+ * requests the warm-up, disconnects, and never throws or blocks the caller;
+ * failures are debug-logged status-only.
+ */
+export const prewarmPreprocess = (): void => {
+  if (!isStreamingEnabled() || warmRequest) return;
+  warmRequest = (async () => {
+    let client: NeonBinderStreamClient | null = null;
+    try {
+      client = await NeonBinderStreamClient.connect();
+      return await client.requestWarm();
+    } catch (err) {
+      debug(`early preprocess warm-up skipped (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`);
+      return false;
+    } finally {
+      await client?.disconnect();
+    }
+  })();
+};
+
 // ── Pixel-cap downscale ────────────────────────────────────────────────────
 // The preprocess service rejects any entry whose pixel count exceeds
 // MAX_UPLOAD_PIXELS with HTTP 413 ENTRY_TOO_MANY_PIXELS (a decode-memory
@@ -99,6 +129,9 @@ const fnCreateImageDownloadUrl = makeFunctionReference<'action'>(
 // Public, auth-required, fire-and-forget warm-up. Kicks the scale-to-zero
 // preprocess service's (multi-minute) model load early so the cold start
 // overlaps set selection and app setup instead of stalling the first upload.
+// That overlap only happens because addCards calls prewarmPreprocess() at
+// startup, before findSet; the warm() in listSet runs after the set is chosen
+// and is a fallback for when the early request did not go through.
 // The authoritative definition lives in the monorepo alongside the internal
 // `placeholderBatch:warmupPreprocess` fan-out; the exact `module:name` here is
 // a coordination point with the NeonBinder side — keep them in lock-step.
@@ -426,27 +459,36 @@ export class NeonBinderStreamClient {
 
   /**
    * Fire-and-forget preprocess warm-up. Triggers the server's scale-to-zero
-   * model load NOW, so its multi-minute cold start overlaps the user's set
-   * selection and app setup rather than stalling the first upload. Needs no
-   * open stream job — safe to call the instant connect() returns and before
-   * startStream(). Best-effort: dispatches the action and returns immediately,
-   * awaiting nothing and never throwing. Failures are logged status-only (the
-   * key and minted token are never touched here).
+   * model load without needing an open stream job. Deduped per process: if
+   * prewarmPreprocess() already requested one at startup this waits on it and
+   * re-fires only if that attempt failed. Best-effort: returns immediately,
+   * never throws. Failures are logged status-only (the key and minted token
+   * are never touched here).
    */
   warm(): void {
+    const prior = warmRequest;
+    if (!prior) {
+      warmRequest = this.requestWarm();
+      return;
+    }
+    void prior.then((ok) => {
+      if (ok) {
+        debug('preprocess warm-up already requested this session; not re-sending');
+      } else if (warmRequest === prior) {
+        warmRequest = this.requestWarm();
+      }
+    });
+  }
+
+  /** Send one warm-up request. Resolves true if accepted; never rejects. */
+  async requestWarm(): Promise<boolean> {
     try {
-      void this.convex
-        .action(fnWarmPreprocess, {})
-        .then(() => debug('preprocess warm-up requested'))
-        .catch((err) =>
-          debug(
-            `preprocess warm-up request failed (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`,
-          ),
-        );
+      await this.convex.action(fnWarmPreprocess, {});
+      debug('preprocess warm-up requested');
+      return true;
     } catch (err) {
-      // Guard the synchronous dispatch path too (e.g. a closed socket); a
-      // warm-up must never be able to disturb the caller's flow.
-      debug(`preprocess warm-up could not be dispatched (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`);
+      debug(`preprocess warm-up request failed (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`);
+      return false;
     }
   }
 

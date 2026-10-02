@@ -127,6 +127,16 @@ try {
     args['watch'] = false;
   }
 
+  // Start the NeonBinder preprocess cold start (~3 min) now, so it overlaps the
+  // input-directory prompt and set selection instead of the first upload. Only
+  // watch mode streams; prewarmPreprocess() itself no-ops unless streaming is
+  // enabled. Fire-and-forget: never blocks startup and never throws.
+  if (args['watch']) {
+    import('./utils/neonbinder-stream.js')
+      .then(({ prewarmPreprocess }) => prewarmPreprocess())
+      .catch((err) => debug(`preprocess pre-warm unavailable: ${err instanceof Error ? err.message : String(err)}`));
+  }
+
   const input_directory = args['bulk'] || args['countCardsFirst'] ? 'input/bulk' : await getInputs(args);
 
   //gather the list of files that we will process
