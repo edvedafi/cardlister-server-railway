@@ -15,6 +15,7 @@ import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import {
   createCategory,
   createCategoryActive,
+  addVariantsToProduct,
   createProduct,
   getCategories,
   getCategory,
@@ -891,8 +892,26 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
     }
   });
 
+  // Parallels often list every image variation as VAR ("287a".."287e") with no base card; promote the
+  // first one to be the base so the card gets built and the rest attach to it.
+  Object.entries(cards.bscVariations).forEach(([baseCardNumber, variations]) => {
+    if (cards.bscBase.some((card) => card.cardNo.replace(/[a-z]$/, '') === baseCardNumber)) return;
+    variations.sort((a, b) => a.cardNo.localeCompare(b.cardNo));
+    const base = variations.shift()!;
+    // Match the base set's convention ("BASE: Looking left") so the promoted card isn't titled as a variation
+    base.playerAttribute = _.castArray(base.playerAttribute).filter((attribute) => attribute !== 'VAR');
+    base.playerAttributeDesc = base.playerAttributeDesc?.replace(/^\s*VAR\s*:/i, 'BASE:');
+    cards.bscBase.push(base);
+    if (variations.length === 0) delete cards.bscVariations[baseCardNumber];
+  });
+
   slCards.forEach((card) => {
-    if (card.title.indexOf('VAR') > -1) {
+    // Some sets list image variations as "#243 Name [ Pose ]" without a VAR tag; treat bracketed
+    // titles as variations when an unbracketed card with the same number exists.
+    const isBracketVariation =
+      /\[.*?\]/.test(card.title) &&
+      slCards.some((other) => other.cardNumber === card.cardNumber && !/\[.*?\]/.test(other.title));
+    if (card.title.indexOf('VAR') > -1 || isBracketVariation) {
       const baseCardNumber = card.cardNumber.match(/[a-z]$/) ? card.cardNumber.slice(0, -1) : card.cardNumber;
       if (!cards.slVariations[baseCardNumber]) {
         cards.slVariations[baseCardNumber] = [];
@@ -942,7 +961,114 @@ type SiteCards = {
   slVariations: { [key: string]: SLCard[] };
 };
 
-async function buildProducts(category: Category, inputCards: SiteCards): Promise<CardProduct[]> {
+type VariationPlan = { cardNumber: string; bsc?: Card; sl?: SLCard };
+
+// BSC: "VAR: Ball over shoulder; mouth open"; SportLots: "#287 Name [ Ball above shoulder/mouth open ]"
+const bscVariationDesc = (card: Card): string =>
+  (card.playerAttributeDesc || '').replace(/^\s*(VAR|BASE)\s*:\s*/i, '').trim();
+const slVariationDesc = (card: SLCard): string => card.title.match(/\[(.*?)\]/)?.[1]?.trim() || '';
+
+const VARIATION_STOP_WORDS = ['a', 'at', 'in', 'on', 'of', 'the', 'with', 'w', 'and'];
+function descriptionSimilarity(a: string, b: string): number {
+  const words = (text: string) =>
+    new Set(
+      text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((word) => word && !VARIATION_STOP_WORDS.includes(word)),
+    );
+  const wordsA = words(a);
+  const wordsB = words(b);
+  const shared = [...wordsA].filter((word) => wordsB.has(word)).length;
+  const total = new Set([...wordsA, ...wordsB]).size;
+  return total === 0 ? 0 : shared / total;
+}
+
+function variationName(plan: VariationPlan): string {
+  return (plan.bsc && bscVariationDesc(plan.bsc)) || (plan.sl && slVariationDesc(plan.sl)) || 'Variation';
+}
+
+// Pairs each BSC variation with its SportLots listing by description, asking when there's no clear match.
+// SportLots-only variations are kept so they still get a SKU.
+async function planVariations(base: Card, bscVariations: Card[], slVariations: SLCard[]): Promise<VariationPlan[]> {
+  const bscPool = _.sortBy(bscVariations, 'cardNo');
+  const slPool = [...slVariations];
+  const plan: VariationPlan[] = bscPool.map((bsc) => ({ cardNumber: bsc.cardNo, bsc }));
+
+  const scored = plan
+    .flatMap((entry) =>
+      slPool.map((sl) => ({ entry, sl, score: descriptionSimilarity(variationName(entry), slVariationDesc(sl)) })),
+    )
+    .sort((a, b) => b.score - a.score);
+  for (const { entry, sl, score } of scored) {
+    if (score < 0.5) break;
+    if (entry.sl || !slPool.includes(sl)) continue;
+    entry.sl = sl;
+    slPool.splice(slPool.indexOf(sl), 1);
+  }
+
+  for (const entry of plan) {
+    if (entry.sl || slPool.length === 0) continue;
+    // Best guess first so Enter takes it; no default, since the prompt would use it as a filter and hide the rest
+    const candidates = _.sortBy(slPool, (sl) => -descriptionSimilarity(variationName(entry), slVariationDesc(sl)));
+    const toOption = (sl: SLCard): AskSelectOption => ({ name: slVariationDesc(sl) || sl.title, value: sl.title });
+    const hasGuess = descriptionSimilarity(variationName(entry), slVariationDesc(candidates[0])) > 0;
+    const answer = await ask(
+      `Which SportLots variation is ${[base.setName, base.variantName].filter(Boolean).join(' ')} #${entry.cardNumber} ${base.players.join(' ')} [ ${variationName(entry)} ]?`,
+      undefined,
+      {
+        selectOptions: hasGuess
+          ? [toOption(candidates[0]), { name: 'None', value: 'None' }, ...candidates.slice(1).map(toOption)]
+          : [{ name: 'None', value: 'None' }, ...candidates.map(toOption)],
+      },
+    );
+    const sl = slPool.find((sl) => sl.title === answer);
+    if (sl) {
+      entry.sl = sl;
+      slPool.splice(slPool.indexOf(sl), 1);
+    }
+  }
+
+  const baseNumber = base.cardNo.replace(/[a-z]$/, '');
+  const used = new Set([base.cardNo, ...plan.map((entry) => entry.cardNumber)]);
+  for (const sl of slPool) {
+    const letter = 'abcdefghijklmnopqrstuvwxyz'.split('').find((l) => !used.has(`${baseNumber}${l}`));
+    const cardNumber = `${baseNumber}${letter}`;
+    used.add(cardNumber);
+    plan.push({ cardNumber, sl });
+  }
+  return plan;
+}
+
+// Variation descriptions are long ("Ball at chest; looking left, mouth closed"), so trim the name to whatever
+// fits in the 80 character title rather than prompting for every variation. The long title keeps the full name.
+async function getVariationTitles(metadata: Metadata, categoryMetadata: Metadata = {}) {
+  const fullName = metadata.variationName as string;
+  const withoutName = await getTitles({ ...metadata, variationName: undefined, ...categoryMetadata });
+  // getTitles drops the team before the variation, so measure against the title without a team
+  const compact = await getTitles({ ...metadata, variationName: undefined, teams: undefined, ...categoryMetadata });
+  const room = 80 - compact.title.length - 1;
+  let shortName = fullName;
+  while (shortName.length > room && shortName.includes(' ')) {
+    shortName = shortName.slice(0, shortName.lastIndexOf(' ')).replace(/[\s;,/-]+$/, '');
+  }
+  if (shortName.length > room) shortName = shortName.slice(0, Math.max(room, 0)).trim();
+  if (!shortName) return withoutName;
+  const titles = await getTitles({ ...metadata, variationName: shortName, ...categoryMetadata });
+  if (shortName !== fullName) titles.longTitle = titles.longTitle.replace(` ${shortName}`, ` ${fullName}`);
+  return titles;
+}
+
+function logDryRun(action: string, variations: Variation[]) {
+  log(chalk.yellow(`DRY_RUN ${action}`));
+  variations.forEach((v) =>
+    log(
+      `    ${v.sku} | ${v.title} | bsc=${v.metadata?.bsc} | sl=${v.metadata?.sportlots ?? '-'} | ${v.metadata?.features?.join(', ')}`,
+    ),
+  );
+}
+
+export async function buildProducts(category: Category, inputCards: SiteCards): Promise<CardProduct[]> {
   const { update, finish, error } = showSpinner('buildProducts', 'Building Products');
   const products: CardProduct[] = [];
   try {
@@ -959,13 +1085,18 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
 
     interface TempCard extends Card {
       sportlots?: string;
-      variations?: Variation[];
+      variationPlan?: VariationPlan[];
     }
 
+    const existing = await getProductCardNumbers(category.id);
     // Prompts must run one at a time; concurrent asks render together and a single Enter answers them all.
     const cards: TempCard[] = [];
     for (const card of inputCards.bscBase) {
       let slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === card.cardNo);
+      if (!slCard && /[a-z]$/.test(card.cardNo)) {
+        // BSC sometimes numbers the base card "243a" while SportLots uses "243"
+        slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === card.cardNo.slice(0, -1));
+      }
       const rtn: TempCard = { ...card };
       if (
         !slCard &&
@@ -979,17 +1110,28 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
         rtn.sportlots = slCard.title;
       } else if (slCardOptions.length > 0) {
         rtn.sportlots = await ask(
-          `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${
-            card.cardNo
-          } ${card.players.join(' ')}?`,
+          `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${card.cardNo} ${card.players.join(' ')}?`,
           card.players[0],
           { selectOptions: slCardOptions },
         );
       }
+      // Variations are keyed by the unsuffixed number, so a "243a" base owns the "243" variations
+      const baseNumber = card.cardNo.replace(/[a-z]$/, '');
+      const variationsBuilt =
+        existing.includes(card.cardNo) &&
+        existing.some(
+          (cardNumber) => cardNumber && cardNumber !== card.cardNo && cardNumber.replace(/[a-z]$/, '') === baseNumber,
+        );
+      rtn.variationPlan = variationsBuilt
+        ? []
+        : await planVariations(
+            card,
+            inputCards.bscVariations[card.cardNo] ?? inputCards.bscVariations[baseNumber] ?? [],
+            inputCards.slVariations[card.cardNo] ?? inputCards.slVariations[baseNumber] ?? [],
+          );
       cards.push(rtn);
     }
 
-    const existing = await getProductCardNumbers(category.id);
     const queue = new Queue({ concurrency: 1, results: products, autostart: true });
     let hasQueueError: boolean | Error = false;
 
@@ -1002,14 +1144,18 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
 
     let count = 0;
 
+    const dryRun = process.env.DRY_RUN === 'true';
+    if (dryRun) log(chalk.yellow('DRY_RUN: nothing will be written to Medusa'));
+
     cards
-      .filter((card: TempCard) => !existing.includes(card.cardNo))
+      .filter(
+        (card: TempCard) =>
+          !existing.includes(card.cardNo) || card.variationPlan?.some((plan) => !existing.includes(plan.cardNumber)),
+      )
       .forEach((card) =>
         queue.push(async () => {
           try {
             const product = await buildProductFromBSCCard(card, category);
-            const variationsBSC = inputCards.bscVariations[card.cardNo];
-            const variationsSL = inputCards.slVariations[card.cardNo];
             const variations: Variation[] = [
               {
                 title: product.title,
@@ -1022,68 +1168,48 @@ async function buildProducts(category: Category, inputCards: SiteCards): Promise
                 },
               },
             ];
-            if (variationsBSC) {
-              const counter: string = 'a';
-              for (const variation of variationsBSC) {
-                const slVariation = variationsSL?.shift();
-                const metadata = { ...product.metadata };
+            const baseAttributes = [card.playerAttributeDesc].filter(Boolean);
+            for (const plan of card.variationPlan || []) {
+              const metadata = { ...product.metadata };
+              metadata.cardNumber = plan.cardNumber;
+              metadata.sku = `${category.metadata?.bin}|${metadata.cardNumber}`;
+              metadata.variationName = variationName(plan);
+              metadata.cardName = truncateCardName(`${metadata.cardName} ${metadata.variationName}`);
+              // Don't inherit the base card's listings: SportLots sales match variants by title and BSC-only /
+              // SportLots-only variations would otherwise be confused with the base card
+              metadata.bsc = plan.bsc?.id;
+              metadata.sportlots = plan.sl?.title;
+              // Swap the base card's description for the variation's own attributes (SP, VAR, ...)
+              metadata.features = _.uniq([
+                ...(metadata.features || []).filter((feature: string) => !baseAttributes.includes(feature)),
+                // buildProductFromBSCCard maps VAR to "Variation", which is added below
+                ...(plan.bsc ? _.castArray(plan.bsc.playerAttribute).filter((attribute) => attribute !== 'VAR') : []),
+                'Variation',
+              ]).filter((feature) => feature);
 
-                metadata.variationName = slVariation?.title.match(/\[(.*?)\]/)?.[1] || 'Variation';
-                metadata.cardNumber = variations.find((v) => v.sku === `${category.metadata?.bin}|${variation.cardNo}`)
-                  ? `${variation.cardNo}${counter}`
-                  : variation.cardNo;
-                metadata.cardName = truncateCardName(`${metadata.cardName} ${metadata.variationName}`);
-                metadata.bsc = card.id;
-                metadata.sku = `${category.metadata?.bin}|${variation.cardNo}`;
-                if (metadata.features) {
-                  metadata.features = [...metadata.features, 'Variation'];
-                } else {
-                  metadata.features = ['Variation'];
-                }
-                if (slVariation) {
-                  metadata.sportlots = slVariation.title;
-                }
-
-                metadata.features = _.uniq(metadata.features || []).filter((feature) => feature);
-                const titles = await getTitles({ ...metadata, ...category.metadata });
-                metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature}</li>`).join('')}</ul>`;
-
-                variations.push({
-                  title: titles.title,
-                  sku: `${category.metadata?.bin}|${variation.cardNo}`,
-                  metadata: metadata,
-                });
-              }
+              const titles = await getVariationTitles(metadata, category.metadata ?? undefined);
+              metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature.trim()}</li>`).join('')}</ul>`;
+              variations.push({ title: titles.title, sku: metadata.sku, metadata });
             }
-            if (variationsSL) {
-              for (const slVariation of variationsSL) {
-                const metadata = { ...product.metadata };
 
-                metadata.variationName = slVariation.title.match(/\[(.*?)\]/)?.[1];
-
-                metadata.cardNumber = slVariation.cardNumber + ['a', 'b', 'c', 'd', 'e', 'f', 'g'][variations.length];
-                metadata.cardName = truncateCardName(`${metadata.cardName} ${metadata.variationName}`);
-                metadata.sku = `${category.metadata?.bin}|${metadata.cardNumber}`;
-                if (metadata.features) {
-                  metadata.features = [...metadata.features, 'Variation'];
-                } else {
-                  metadata.features = ['Variation'];
-                }
-                metadata.sportlots = slVariation.title;
-
-                //remove duplicates from metadata.features
-                metadata.features = _.uniq(metadata.features || []).filter((feature) => feature);
-
-                const titles = await getTitles({ ...metadata, ...category.metadata });
-                metadata.description = `${titles.longTitle} <br><br><ul>${metadata.features.map((feature: string) => `<li>${feature.trim()}</li>`).join('')}</ul>`;
-                variations.push({
-                  title: titles.title,
-                  sku: `${category.metadata?.bin}|${metadata.cardNumber}`,
-                  metadata: metadata,
-                });
+            let result;
+            if (existing.includes(card.cardNo)) {
+              const missing = variations.filter(
+                (v) => !v.metadata?.isBase && !existing.includes(v.metadata?.cardNumber as string),
+              );
+              if (dryRun) {
+                logDryRun(`Add to existing ${product.metadata?.sku}`, missing);
+              } else {
+                const created = await addVariantsToProduct(category.id, product.metadata?.sku, missing);
+                log(`Added variations ${created.join(', ')} to ${product.metadata?.sku}`);
               }
+              result = product;
+            } else if (dryRun) {
+              logDryRun(`Create ${product.title}`, variations);
+              result = product;
+            } else {
+              result = await createProduct(product, variations);
             }
-            const result = await createProduct(product, variations);
             update(`Saving Product ${++count}/${cards.length}`);
             return result;
           } catch (e) {

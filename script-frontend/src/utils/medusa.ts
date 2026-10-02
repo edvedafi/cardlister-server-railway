@@ -341,6 +341,31 @@ export async function createProduct(product: Product, variations: Variation[] = 
   return response.product;
 }
 
+// Adds variants to the product in `categoryId` that owns `baseSku`. Only creates SKUs the product
+// doesn't already have — existing variants (and their prices) are left untouched.
+export async function addVariantsToProduct(categoryId: string, baseSku: string, variations: Variation[]): Promise<string[]> {
+  const response = await medusa.admin.products.list({ category_id: [categoryId], expand: 'variants', limit: 1000 });
+  const product = response.products.find((p: Product) => p.variants?.some((v: ProductVariant) => v.sku === baseSku));
+  if (!product) throw new Error(`No product with SKU ${baseSku} found in category ${categoryId}`);
+
+  const created: string[] = [];
+  for (const variation of variations) {
+    if (product.variants?.some((v: ProductVariant) => v.sku === variation.sku)) continue;
+    const variantResponse = await medusa.admin.products.createVariant(product.id, {
+      title: variation.title,
+      sku: variation.sku,
+      prices: [{ currency_code: 'usd', amount: 99 }],
+      manage_inventory: true,
+    });
+    const variantId = variantResponse.product.variants?.find((v: ProductVariant) => v.sku === variation.sku)?.id;
+    if (variantId && variation.metadata) {
+      await medusa.admin.products.updateVariant(product.id, variantId, { metadata: variation.metadata });
+    }
+    created.push(variation.sku);
+  }
+  return created;
+}
+
 export async function updateProductImages(product: { id: string; images: string[] }): Promise<Product> {
   const response = await medusa.admin.products.update(product.id, {
     images: product.images.map(
