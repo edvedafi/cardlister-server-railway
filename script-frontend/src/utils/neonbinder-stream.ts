@@ -43,22 +43,21 @@ let warmRequest: Promise<boolean> | null = null;
 /**
  * Kick the preprocess cold start at CLI startup, before the operator picks a
  * set, so the multi-minute model load overlaps set selection. No-op unless
- * streaming is enabled. Fire-and-forget: opens its own short-lived client,
- * requests the warm-up, disconnects, and never throws or blocks the caller;
- * failures are debug-logged status-only.
+ * streaming is enabled. Fire-and-forget: it opens the process's shared
+ * connection (see NeonBinderStreamClient.connect) and leaves it open for the
+ * scan session to reuse, so a run authenticates once. Never throws or blocks
+ * the caller; failures are debug-logged status-only, and a failed connect here
+ * leaves nothing behind, so the scan session's own connect starts fresh.
  */
 export const prewarmPreprocess = (): void => {
   if (!isStreamingEnabled() || warmRequest) return;
   warmRequest = (async () => {
-    let client: NeonBinderStreamClient | null = null;
     try {
-      client = await NeonBinderStreamClient.connect();
+      const client = await NeonBinderStreamClient.connect();
       return await client.requestWarm();
     } catch (err) {
       debug(`early preprocess warm-up skipped (non-fatal: ${err instanceof Error ? err.constructor.name : 'unknown'})`);
       return false;
-    } finally {
-      await client?.disconnect();
     }
   })();
 };
@@ -470,6 +469,18 @@ class MachineTokenSource {
 
 // ── The client ─────────────────────────────────────────────────────────────
 
+// One authenticated connection per process. The startup warm-up and the scan
+// session share it, so a run performs one key exchange and holds one backend
+// session instead of one per caller.
+//   sharedSource — the verified token source; it carries the session id, so a
+//     reconnect after disconnect() refreshes that session rather than opening
+//     a new one. Only set once probe() succeeds.
+//   sharedClient — the in-flight or open connection. Cleared when the connect
+//     fails or the client is disconnected, so the next connect() starts fresh.
+let sharedSource: { id: string; source: MachineTokenSource } | null = null;
+let sharedClient: Promise<NeonBinderStreamClient> | null = null;
+let sharedOpen: NeonBinderStreamClient | null = null; // sharedClient, once resolved
+
 export class NeonBinderStreamClient {
   private convex: ConvexClient;
   jobId: string | null = null;
@@ -479,16 +490,55 @@ export class NeonBinderStreamClient {
     this.convex = convex;
   }
 
-  /** Connect, authenticate, and verify the key round-trip. */
+  /**
+   * The process's shared, authenticated connection — opened on first use and
+   * reused by every later caller until disconnect(). Joining an attempt that
+   * then fails (e.g. the startup warm-up's) retries once with a fresh connect,
+   * so an earlier failure never poisons a later caller.
+   */
   static async connect(): Promise<NeonBinderStreamClient> {
+    const joined = sharedClient;
+    if (joined) {
+      try {
+        return await joined;
+      } catch {
+        // That attempt failed and has already cleared itself — fall through.
+      }
+    }
+    if (!sharedClient || sharedClient === joined) {
+      const attempt: Promise<NeonBinderStreamClient> = NeonBinderStreamClient.open().then(
+        (client) => {
+          if (sharedClient === attempt) sharedOpen = client;
+          return client;
+        },
+        (err) => {
+          if (sharedClient === attempt) sharedClient = null;
+          throw err;
+        },
+      );
+      sharedClient = attempt;
+    }
+    return sharedClient;
+  }
+
+  /** Authenticate (once per process) and open a new websocket client. */
+  private static async open(): Promise<NeonBinderStreamClient> {
     const convexUrl = requireEnv('NEONBINDER_CONVEX_URL', 'the Convex deployment to stream into');
     const machineKey = requireEnv(
       'NEONBINDER_MACHINE_KEY',
       'your NeonBinder API key — create one in the web app under Settings → API Keys',
     );
 
-    const source = new MachineTokenSource(deriveSiteUrl(convexUrl), machineKey);
-    await source.probe();
+    const siteUrl = deriveSiteUrl(convexUrl);
+    const sourceId = `${siteUrl}\n${machineKey}`;
+    let source: MachineTokenSource;
+    if (sharedSource && sharedSource.id === sourceId) {
+      source = sharedSource.source;
+    } else {
+      source = new MachineTokenSource(siteUrl, machineKey);
+      await source.probe();
+      sharedSource = { id: sourceId, source };
+    }
 
     const webSocketConstructor =
       typeof WebSocket !== 'undefined'
@@ -504,6 +554,8 @@ export class NeonBinderStreamClient {
   }
 
   async startStream(): Promise<string> {
+    // The connection is shared and may have served an earlier scan session.
+    this.closed = false;
     const result = (await this.convex.mutation(fnStartStream, {})) as {
       started: boolean;
       jobId?: string;
@@ -843,7 +895,16 @@ export class NeonBinderStreamClient {
     }
   }
 
+  /**
+   * Close this connection. It is the process's shared one, so the next
+   * connect() opens a new websocket (reusing the verified token source and its
+   * session — no second sign-in).
+   */
   async disconnect(): Promise<void> {
+    if (sharedOpen === this) {
+      sharedOpen = null;
+      sharedClient = null;
+    }
     try {
       await this.convex.close();
     } catch {
