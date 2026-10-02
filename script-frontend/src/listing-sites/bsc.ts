@@ -35,6 +35,7 @@ async function performLogin(): Promise<AxiosInstance> {
 
     const api = axios.create({
       baseURL: 'https://api-prod.buysportscards.com/',
+      timeout: 30000,
       headers: {
         accept: 'application/json, text/plain, */*',
         'accept-language': 'en-US,en;q=0.9',
@@ -105,8 +106,15 @@ export async function getBSCCards(setInfo: Category): Promise<Card[]> {
   let page = 0;
   const pageSize = 100;
   let cards: Card[] = [];
+  const bscFilter = setInfo.metadata?.bsc;
+  if (!bscFilter || Array.isArray(bscFilter) || typeof bscFilter !== 'object' || !('filters' in bscFilter)) {
+    const message = `BSC filter for ${setInfo.handle} is malformed (${JSON.stringify(bscFilter)}); run "Update BSC Filters" on this set`;
+    finish(message);
+    throw new Error(message);
+  }
 
   while (page * pageSize < total) {
+    update(`Getting Listings (page ${page + 1}, ${cards.length}/${total === 1 && page === 0 ? '?' : total})`);
     const body = {
       condition: 'all',
       myInventory: 'false',
@@ -114,7 +122,7 @@ export async function getBSCCards(setInfo: Category): Promise<Card[]> {
       sellerId: 'cf987f7871',
       size: pageSize,
       sort: 'default',
-      ...setInfo.metadata?.bsc,
+      ...bscFilter,
     };
     const response = await api.post(`search/seller/results`, body);
     cards = cards.concat(response.data.results);
@@ -138,6 +146,16 @@ const getNextFilter = async (
 ): Promise<BSCFilterResponse> => {
   const { finish, error, update } = showSpinner('setFilter', `Getting BSC Variant Name Filter`);
   let rtn: BSCFilterResponse = { name: filterType, filter: filters };
+  // Base and variant names are stored as a full filter object (they're what getBSCCards
+  // searches with); everything else is stored as a slug list for buildBSCFilters.
+  const toFilterResponse = (option: Filter): BSCFilterResponse =>
+    ({
+      name: option.label,
+      filter:
+        option.label === 'Base' || filterType === 'variantName'
+          ? { filters: { ...filters.filters, [filterType]: [option.slug] } }
+          : [option.slug],
+    }) as BSCFilterResponse;
   try {
     update('Logging in to BSC...');
     const api = await login();
@@ -154,21 +172,10 @@ const getNextFilter = async (
           .sort((a, b) => a.name.localeCompare(b.name)),
       });
       finish();
-      rtn = {
-        name: response.label,
-        filter:
-          response.label === 'Base' || filterType === 'variantName'
-            ? {
-                filters: {
-                  ...filters.filters,
-                  [filterType]: [response.slug],
-                },
-              }
-            : [response.slug],
-      };
+      rtn = toFilterResponse(response);
     } else if (filteredFilterOptions.length === 1) {
       finish();
-      rtn = { name: filteredFilterOptions[0].label, filter: [filteredFilterOptions[0].slug] };
+      rtn = toFilterResponse(filteredFilterOptions[0]);
     } else {
       throw `Failed to find BSC Filter option for ${filterType}`;
     }

@@ -618,6 +618,15 @@ export async function updateBSCFilters(setInfo: SetInfo): Promise<void> {
       });
     }
 
+    // Callers keep using this setInfo (e.g. sync -b then builds the set), so reload the
+    // categories we just changed rather than leaving them on the stale metadata.
+    for (const key of ['sport', 'year', 'brand', 'set', 'variantType', 'variantName', 'category'] as const) {
+      const category = setInfo[key];
+      if (category?.id) {
+        setInfo[key] = await getCategory(category.id);
+      }
+    }
+
     finish('BSC Filters Updated');
   } catch (e) {
     error(e);
