@@ -898,6 +898,7 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
     if (cards.bscBase.some((card) => card.cardNo.replace(/[a-z]$/, '') === baseCardNumber)) return;
     variations.sort((a, b) => a.cardNo.localeCompare(b.cardNo));
     const base = variations.shift()!;
+    cards.promotedBase = [...(cards.promotedBase || []), base.cardNo];
     // Match the base set's convention ("BASE: Looking left") so the promoted card isn't titled as a variation
     base.playerAttribute = _.castArray(base.playerAttribute).filter((attribute) => attribute !== 'VAR');
     base.playerAttributeDesc = base.playerAttributeDesc?.replace(/^\s*VAR\s*:/i, 'BASE:');
@@ -959,6 +960,8 @@ type SiteCards = {
   bscVariations: { [key: string]: Card[] };
   slBase: SLCard[];
   slVariations: { [key: string]: SLCard[] };
+  // Base cards promoted from a BSC VAR card (see findVariations)
+  promotedBase?: string[];
 };
 
 type VariationPlan = { cardNumber: string; bsc?: Card; sl?: SLCard };
@@ -1063,7 +1066,7 @@ function logDryRun(action: string, variations: Variation[]) {
   log(chalk.yellow(`DRY_RUN ${action}`));
   variations.forEach((v) =>
     log(
-      `    ${v.sku} | ${v.title} | bsc=${v.metadata?.bsc} | sl=${v.metadata?.sportlots ?? '-'} | ${v.metadata?.features?.join(', ')}`,
+      `    ${v.sku} | #${v.metadata?.cardNumber}${v.metadata?.isBase ? ' (base)' : ''} | ${v.title} | bsc=${v.metadata?.bsc} | sl=${v.metadata?.sportlots ?? '-'} | ${v.metadata?.features?.join(', ')}`,
     ),
   );
 }
@@ -1192,6 +1195,13 @@ export async function buildProducts(category: Category, inputCards: SiteCards): 
               variations.push({ title: titles.title, sku: metadata.sku, metadata });
             }
 
+            // The product is card "287" with "287a" as its base variant. BSC lists the promoted base as a VAR, so
+            // its listing matches the variant's cardNumber, while SportLots finds the product by "287".
+            // Non-VAR suffixed bases (e.g. base Prizm "287a" RC) still need the product to be "287a" for BSC.
+            if (inputCards.promotedBase?.includes(card.cardNo)) {
+              product.metadata!.cardNumber = card.cardNo.replace(/[a-z]$/, '');
+            }
+
             let result;
             if (existing.includes(card.cardNo)) {
               const missing = variations.filter(
@@ -1205,7 +1215,7 @@ export async function buildProducts(category: Category, inputCards: SiteCards): 
               }
               result = product;
             } else if (dryRun) {
-              logDryRun(`Create ${product.title}`, variations);
+              logDryRun(`Create ${product.title} (product cardNumber ${product.metadata?.cardNumber})`, variations);
               result = product;
             } else {
               result = await createProduct(product, variations);
