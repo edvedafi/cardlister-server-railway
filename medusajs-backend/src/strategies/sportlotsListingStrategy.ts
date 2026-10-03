@@ -14,10 +14,9 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
 
   async removeAllInventory(pup: PuppeteerHelper, category: ProductCategory): Promise<void> {
     if (category.metadata.sportlots) {
-      await pup.goto(`inven/dealbin/setdetail.tpl?Set_id=${category.metadata.sportlots}`);
-      const waitForAlert = pup.acceptAlert();
-      await pup.locator('input[value="Delete All Set Inventory"').click();
-      await waitForAlert;
+      // The "Delete All Set Inventory" button just confirms and then navigates here. Clicking it and moving on
+      // let the next navigation cancel the delete, so syncs stacked duplicate inventory. Load it and wait instead.
+      await pup.page.goto(`https://www.sportlots.com/inven/dealbin/delset.tpl?Set_id=${category.metadata.sportlots}`);
     }
   }
 

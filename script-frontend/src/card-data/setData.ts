@@ -907,11 +907,12 @@ export function findVariations(bscCards: Card[], slCards: SLCard[]): SiteCards {
   });
 
   slCards.forEach((card) => {
-    // Some sets list image variations as "#243 Name [ Pose ]" without a VAR tag; treat bracketed
-    // titles as variations when an unbracketed card with the same number exists.
+    // Some sets list image variations as "#243 Name [ Pose ]" without a VAR tag; treat bracketed titles as
+    // variations when another card shares the number. Some list every image bracketed with no plain card
+    // ("#293 [ Ball at head ]", "#293 [ Ball at chest ... ]"); the base is then picked from them in planVariations.
     const isBracketVariation =
       /\[.*?\]/.test(card.title) &&
-      slCards.some((other) => other.cardNumber === card.cardNumber && !/\[.*?\]/.test(other.title));
+      slCards.some((other) => other !== card && other.cardNumber === card.cardNumber);
     if (card.title.indexOf('VAR') > -1 || isBracketVariation) {
       const baseCardNumber = card.cardNumber.match(/[a-z]$/) ? card.cardNumber.slice(0, -1) : card.cardNumber;
       if (!cards.slVariations[baseCardNumber]) {
@@ -964,7 +965,7 @@ type SiteCards = {
   promotedBase?: string[];
 };
 
-type VariationPlan = { cardNumber: string; bsc?: Card; sl?: SLCard };
+type VariationPlan = { cardNumber: string; bsc?: Card; sl?: SLCard; isBase?: boolean };
 
 // BSC: "VAR: Ball over shoulder; mouth open"; SportLots: "#287 Name [ Ball above shoulder/mouth open ]"
 const bscVariationDesc = (card: Card): string =>
@@ -992,11 +993,20 @@ function variationName(plan: VariationPlan): string {
 }
 
 // Pairs each BSC variation with its SportLots listing by description, asking when there's no clear match.
-// SportLots-only variations are kept so they still get a SKU.
-async function planVariations(base: Card, bscVariations: Card[], slVariations: SLCard[]): Promise<VariationPlan[]> {
+// SportLots-only variations are kept so they still get a SKU. With matchBase the base card is paired from the
+// same pool (SportLots has no plain card for it) and returned as baseSl rather than in the plan.
+async function planVariations(
+  base: Card,
+  bscVariations: Card[],
+  slVariations: SLCard[],
+  matchBase = false,
+): Promise<{ plan: VariationPlan[]; baseSl?: SLCard }> {
   const bscPool = _.sortBy(bscVariations, 'cardNo');
   const slPool = [...slVariations];
-  const plan: VariationPlan[] = bscPool.map((bsc) => ({ cardNumber: bsc.cardNo, bsc }));
+  const plan: VariationPlan[] = [
+    ...(matchBase ? [{ cardNumber: base.cardNo, bsc: base, isBase: true }] : []),
+    ...bscPool.map((bsc) => ({ cardNumber: bsc.cardNo, bsc })),
+  ];
 
   const scored = plan
     .flatMap((entry) =>
@@ -1015,9 +1025,11 @@ async function planVariations(base: Card, bscVariations: Card[], slVariations: S
     // Best guess first so Enter takes it; no default, since the prompt would use it as a filter and hide the rest
     const candidates = _.sortBy(slPool, (sl) => -descriptionSimilarity(variationName(entry), slVariationDesc(sl)));
     const toOption = (sl: SLCard): AskSelectOption => ({ name: slVariationDesc(sl) || sl.title, value: sl.title });
-    const hasGuess = descriptionSimilarity(variationName(entry), slVariationDesc(candidates[0])) > 0;
+    // The last unmatched card and the last SportLots listing almost always belong together
+    const lastPair = slPool.length === 1 && plan.filter((other) => !other.sl).length === 1;
+    const hasGuess = lastPair || descriptionSimilarity(variationName(entry), slVariationDesc(candidates[0])) > 0;
     const answer = await ask(
-      `Which SportLots variation is ${[base.setName, base.variantName].filter(Boolean).join(' ')} #${entry.cardNumber} ${base.players.join(' ')} [ ${variationName(entry)} ]?`,
+      `Which SportLots ${entry.isBase ? 'card' : 'variation'} is ${[base.setName, base.variantName].filter(Boolean).join(' ')} #${entry.cardNumber} ${base.players.join(' ')} [ ${variationName(entry)} ]?`,
       undefined,
       {
         selectOptions: hasGuess
@@ -1040,7 +1052,7 @@ async function planVariations(base: Card, bscVariations: Card[], slVariations: S
     used.add(cardNumber);
     plan.push({ cardNumber, sl });
   }
-  return plan;
+  return { plan: plan.filter((entry) => !entry.isBase), baseSl: plan.find((entry) => entry.isBase)?.sl };
 }
 
 // Variation descriptions are long ("Ball at chest; looking left, mouth closed"), so trim the name to whatever
@@ -1109,29 +1121,37 @@ export async function buildProducts(category: Category, inputCards: SiteCards): 
         const searchNumber = card.cardNo.slice(category.metadata.card_number_prefix.length);
         slCard = inputCards.slBase.find((slCard) => slCard.cardNumber === searchNumber);
       }
+      // Variations are keyed by the unsuffixed number, so a "243a" base owns the "243" variations
+      const baseNumber = card.cardNo.replace(/[a-z]$/, '');
+      const slVariations = inputCards.slVariations[card.cardNo] ?? inputCards.slVariations[baseNumber] ?? [];
+      // No plain SportLots card but bracketed ones share the number: planVariations picks the base from those
+      const matchBase = !slCard && slVariations.length > 0;
       if (slCard) {
         rtn.sportlots = slCard.title;
-      } else if (slCardOptions.length > 0) {
+      } else if (!matchBase && slCardOptions.length > 0) {
         rtn.sportlots = await ask(
           `Which Sportlots Card maps to ${card.setName} ${card.variantName} #${card.cardNo} ${card.players.join(' ')}?`,
           card.players[0],
           { selectOptions: slCardOptions },
         );
       }
-      // Variations are keyed by the unsuffixed number, so a "243a" base owns the "243" variations
-      const baseNumber = card.cardNo.replace(/[a-z]$/, '');
       const variationsBuilt =
         existing.includes(card.cardNo) &&
         existing.some(
           (cardNumber) => cardNumber && cardNumber !== card.cardNo && cardNumber.replace(/[a-z]$/, '') === baseNumber,
         );
-      rtn.variationPlan = variationsBuilt
-        ? []
-        : await planVariations(
-            card,
-            inputCards.bscVariations[card.cardNo] ?? inputCards.bscVariations[baseNumber] ?? [],
-            inputCards.slVariations[card.cardNo] ?? inputCards.slVariations[baseNumber] ?? [],
-          );
+      if (variationsBuilt) {
+        rtn.variationPlan = [];
+      } else {
+        const { plan, baseSl } = await planVariations(
+          card,
+          inputCards.bscVariations[card.cardNo] ?? inputCards.bscVariations[baseNumber] ?? [],
+          slVariations,
+          matchBase,
+        );
+        rtn.variationPlan = plan;
+        if (matchBase) rtn.sportlots = baseSl?.title;
+      }
       cards.push(rtn);
     }
 
