@@ -95,12 +95,16 @@ class SportlotsListingStrategy extends AbstractListingStrategy<PuppeteerHelper> 
           const isVariation = await pup.hasClass(row, 'variation');
           const title = await pup.getText(row.$('td:nth-child(3)'));
           let variant: ProductVariant | undefined;
-          if (isVariation || title.match(/\[.+\]/)) {
-            variant = product?.variants.find((v) => v.metadata.sportlots === title);
-          } else if (product?.variants.length == 1) {
-            variant = product?.variants[0];
+          if (!product) {
+            // SportLots numbers some cards differently (BSC "287a" is SportLots "287"); fall back to the
+            // SportLots title stamped on the variant
+            products.find((p) => (variant = p.variants.find((v) => v.metadata.sportlots === title)));
+          } else if (isVariation || title.match(/\[.+\]/)) {
+            variant = product.variants.find((v) => v.metadata.sportlots === title);
+          } else if (product.variants.length == 1) {
+            variant = product.variants[0];
           } else {
-            variant = product?.variants.find((v) => v.metadata.isBase);
+            variant = product.variants.find((v) => v.metadata.isBase);
           }
           if (variant) {
             const quantity = await this.getQuantity({ variant });
