@@ -1201,6 +1201,18 @@ export async function buildProducts(category: Category, inputCards: SiteCards): 
             if (inputCards.promotedBase?.includes(card.cardNo)) {
               product.metadata!.cardNumber = card.cardNo.replace(/[a-z]$/, '');
             }
+            // The product is the card (#293); only its base variant is #293a with the base description
+            if (card.variationPlan?.length && /[a-z]$/.test(card.cardNo)) {
+              const cardTitles = await getTitles({
+                ...product,
+                ...category.metadata,
+                ...product.metadata,
+                cardNumber: card.cardNo.replace(/[a-z]$/, ''),
+                features: product.metadata?.features.filter((feature: string) => !baseAttributes.includes(feature)),
+              });
+              product.title = cardTitles.title;
+              product.description = cardTitles.longTitle;
+            }
 
             let result;
             if (existing.includes(card.cardNo)) {
