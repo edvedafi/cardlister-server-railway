@@ -47,7 +47,7 @@ Prioritized by memory reduction to fix OOM-triggered SIGSEGV crashes.
 ### Key files
 - Replace: `src/image-processing/card_extractor.py`
 - Modify: `src/image-processing/card-extractor.ts` (inline the logic, remove subprocess management)
-- Reference: `src/image-processing/chatgpt-processor.ts` (existing pattern for vision API calls from TS)
+- Done already: the Claude path is native TypeScript in `card-extractor.ts` (`--extractor=haiku`); only the Ollama path still uses this worker
 
 ---
 

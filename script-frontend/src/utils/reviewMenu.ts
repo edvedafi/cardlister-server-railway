@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import terminalImage from 'term-img';
 import { ask } from './ask.js';
 import { pauseSpinners, resumeSpinners } from './spinners.js';
+import { productLabel, type MatchConflict } from '../card-data/cardData.js';
 
 export type CropResult = { file: string | null; method: string };
 
@@ -29,6 +30,9 @@ export type ReviewMenuState = {
   matchedProduct: Product | null;
   matchedVariant: ProductVariant | null;
   matchConfidence: number; // scoring from matchCard
+  // Set when the card number and the extracted player disagree, or the number
+  // matches several cards. matchedProduct is null; (M) offers the candidates.
+  matchConflict?: MatchConflict;
   // All variants of the matched product — drives the inline variations block
   // and the (V) hotkey. Empty or single-entry means no variant switching UI.
   availableVariants: ProductVariant[];
@@ -98,7 +102,24 @@ function menuRowCount(state: ReviewMenuState): number {
   const variantRows = state.availableVariants && state.availableVariants.length > 1
     ? state.availableVariants.length + 3 // header + rows + blank + hotkey row
     : 0;
-  return 17 + variantRows;
+  return 17 + variantRows + conflictLines(state).length;
+}
+
+/** Lines that spell out a number/player conflict under the title. Empty when there is none. */
+function conflictLines(state: ReviewMenuState): string[] {
+  const c = state.matchConflict;
+  if (!c || state.matchedProduct) return [];
+  const MAX_SHOWN = 5;
+  const list = (products: Product[]) => {
+    if (products.length === 0) return chalk.dim('no card in this set');
+    const shown = products.slice(0, MAX_SHOWN).map(productLabel).join(chalk.dim(' | '));
+    return products.length > MAX_SHOWN ? shown + chalk.dim(` +${products.length - MAX_SHOWN} more`) : shown;
+  };
+  const lines = ['    Number ' + chalk.bold(`#${c.cardNumber}`) + ' → ' + list(c.numberCandidates)];
+  if (c.kind === 'number-player') {
+    lines.push('    Player ' + chalk.bold(c.player ?? '?') + ' → ' + list(c.playerCandidates));
+  }
+  return lines;
 }
 
 /**
@@ -218,11 +239,16 @@ function cropLabel(crop: CropResult | null): string {
 function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null, errorMsg: string | null = null): number {
   const k = (letter: string) => chalk.yellow.bold(`(${letter})`);
 
+  const conflict = state.matchedProduct ? undefined : state.matchConflict;
   const titleLine = state.matchedProduct
     ? confidenceColor(state.matchConfidence)(
         `${state.cardTitle} (score: ${state.matchConfidence})`,
       )
-    : chalk.red(`${state.cardTitle || 'Unknown card'} — no match`);
+    : conflict
+      ? chalk.red.bold(conflict.kind === 'number-player'
+        ? `⚠ Card number and player disagree: #${conflict.cardNumber} vs ${conflict.player}`
+        : `⚠ Card number #${conflict.cardNumber} matches ${conflict.numberCandidates.length} cards`)
+      : chalk.red(`${state.cardTitle || 'Unknown card'} — no match`);
 
   const qtyDisplay = quantityBuffer !== null
     ? chalk.bgGreen.black(` ${quantityBuffer || ' '} `) + chalk.dim(' (typing…)')
@@ -262,6 +288,7 @@ function printMenu(state: ReviewMenuState, quantityBuffer: string | null = null,
     '',
     ...variationLines,
     '  ' + titleLine,
+    ...conflictLines(state),
     '',
     '  ' + k('Q') + 'uantity: ' + qtyDisplay,
     '  ' + k('P') + 'rice: ' +
@@ -417,7 +444,9 @@ export async function showReviewMenu(
       if (key.name === 'return' || key.name === 'enter') {
         commitQuantity();
         if (!state.matchedProduct) {
-          console.log(chalk.red('  No card match — press M to select manually.'));
+          console.log(chalk.red(state.matchConflict
+            ? '  The card match needs your decision — press M to choose the card.'
+            : '  No card match — press M to select manually.'));
           continue;
         }
         if (!state.frontCrop.file) {
@@ -498,6 +527,7 @@ export async function showReviewMenu(
               state.availableVariants = result.product.variants ?? [result.variant];
               state.cardTitle = result.variant.title || result.product.title || state.cardTitle;
               state.matchConfidence = 10000; // User-confirmed
+              state.matchConflict = undefined;
               state.quantity = result.quantity;
               state.quantityFromBackend = result.quantityFromBackend;
               state.priceMoneyAmounts = result.prices;

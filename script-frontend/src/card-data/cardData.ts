@@ -296,6 +296,7 @@ export async function autoSelectCard(setData: SetInfo, imageDefaults: Metadata):
   productVariant: ProductVariant | null;
   availableVariants: ProductVariant[];
   confidence: number;
+  conflict?: MatchConflict;
 }> {
   if (!setData.products || setData.products.length === 0) {
     return { product: null, productVariant: null, availableVariants: [], confidence: 0 };
@@ -303,7 +304,13 @@ export async function autoSelectCard(setData: SetInfo, imageDefaults: Metadata):
 
   const result = autoMatchCard(setData, imageDefaults);
   if (!result.product) {
-    return { product: null, productVariant: null, availableVariants: [], confidence: result.confidence };
+    return {
+      product: null,
+      productVariant: null,
+      availableVariants: [],
+      confidence: result.confidence,
+      conflict: result.conflict,
+    };
   }
 
   const product = result.product;
@@ -336,10 +343,28 @@ export async function autoSelectCard(setData: SetInfo, imageDefaults: Metadata):
 }
 
 /**
+ * The printed card number and the extracted player point at different cards
+ * (`number-player`), or several cards carry the number and nothing narrows
+ * them to one (`number-ambiguous`). The review menu shows both sides and the
+ * reviewer picks; nothing is auto-selected.
+ */
+export type MatchConflict = {
+  kind: 'number-player' | 'number-ambiguous';
+  cardNumber: string;
+  player: string | null;
+  // The card(s) the number points to.
+  numberCandidates: Product[];
+  // The extracted player's card(s) in this set (number-player only).
+  playerCandidates: Product[];
+};
+
+export type AutoMatchResult = { product: Product | null; confidence: number; conflict?: MatchConflict };
+
+/**
  * Non-interactive card matching. Returns the best match and a confidence score
  * without ever prompting the user.
  */
-function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): { product: Product | null; confidence: number } {
+export function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): AutoMatchResult {
   const matchesPlayerLocal = (productPlayer: unknown, searchPlayer: unknown): boolean => {
     if (!productPlayer || !searchPlayer) return false;
     const productPlayers: string[] = Array.isArray(productPlayer)
@@ -439,30 +464,89 @@ function autoMatchCard(setInfo: SetInfo, imageDefaults: Metadata): { product: Pr
     }
   }
 
-  // Tier 4: Best available match
-  let defaultCard: Product | undefined;
-  if (imageDefaults.cardNumber && bestMatchPlayer) {
-    defaultCard = setInfo.products?.find(
-      (product) =>
-        matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber) &&
-        matchesPlayerLocal(product.metadata?.player, bestMatchPlayer),
-    );
+  // Tier 4: Best available match.
+  // The card number is the strongest key: within a set it is almost always
+  // unique, while a player often has several cards. But it is never trusted
+  // without an exactly-one-match guard, and a number whose card belongs to a
+  // different player than the one read off the card is a likely misread. Both
+  // cases come back as a conflict for the reviewer to settle; neither is
+  // picked silently. The extracted player is used here, not _bestMatchPlayer:
+  // the latter is derived from the catalog row the number already pointed at,
+  // so it would always agree with the number. Player comparison here is
+  // case-insensitive so "LUKE KUECHLY" off a card back is not a false conflict.
+  const extractedPlayer = hasPlayer(imageDefaults.player) ? imageDefaults.player : undefined;
+  const numberCandidates = imageDefaults.cardNumber
+    ? (setInfo.products ?? []).filter((product) =>
+        matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber))
+    : [];
+
+  if (numberCandidates.length > 0) {
+    const playerCandidates = extractedPlayer
+      ? (setInfo.products ?? []).filter((product) => exactMatchesPlayerLocal(product.metadata?.player, extractedPlayer))
+      : [];
+    if (extractedPlayer && !numberCandidates.some((p) => exactMatchesPlayerLocal(p.metadata?.player, extractedPlayer))) {
+      return {
+        product: null,
+        confidence: 0,
+        conflict: {
+          kind: 'number-player',
+          cardNumber: String(imageDefaults.cardNumber),
+          player: playerLabel(extractedPlayer),
+          numberCandidates,
+          playerCandidates,
+        },
+      };
+    }
+    if (numberCandidates.length === 1) {
+      return { product: numberCandidates[0], confidence: 500 };
+    }
+    // Several cards carry this number: the number alone does not identify one.
+    const agreeing = extractedPlayer
+      ? numberCandidates.filter((p) => exactMatchesPlayerLocal(p.metadata?.player, extractedPlayer))
+      : [];
+    if (agreeing.length === 1) {
+      return { product: agreeing[0], confidence: 500 };
+    }
+    return {
+      product: null,
+      confidence: 0,
+      conflict: {
+        kind: 'number-ambiguous',
+        cardNumber: String(imageDefaults.cardNumber),
+        player: extractedPlayer ? playerLabel(extractedPlayer) : null,
+        numberCandidates: agreeing.length > 1 ? agreeing : numberCandidates,
+        playerCandidates: [],
+      },
+    };
   }
-  if (!defaultCard && imageDefaults.cardNumber) {
-    defaultCard = setInfo.products?.find(
-      (product) => matchesCardNumberLocal(product.metadata?.cardNumber, imageDefaults.cardNumber),
-    );
-  }
-  if (!defaultCard && bestMatchPlayer) {
-    defaultCard = setInfo.products?.find(
+
+  // No card carries the number (none read, or it matches nothing in the set):
+  // fall back to the player.
+  if (bestMatchPlayer) {
+    const defaultCard = setInfo.products?.find(
       (product) => matchesPlayerLocal(product.metadata?.player, bestMatchPlayer),
     );
-  }
-  if (defaultCard) {
-    return { product: defaultCard, confidence: 500 };
+    if (defaultCard) {
+      return { product: defaultCard, confidence: 500 };
+    }
   }
 
   return { product: null, confidence: 0 };
+}
+
+function hasPlayer(player: unknown): player is string | string[] {
+  if (Array.isArray(player)) return player.some((p) => String(p ?? '').trim() !== '');
+  return typeof player === 'string' && player.trim() !== '';
+}
+
+function playerLabel(player: unknown): string {
+  if (Array.isArray(player)) return player.map((p) => String(p)).join(', ');
+  return String(player ?? '');
+}
+
+/** Short "#316 Tim Jennings" label for a product, used by the conflict picker and review menu. */
+export function productLabel(product: Product): string {
+  return `#${product.metadata?.cardNumber ?? '?'} ${playerLabel(product.metadata?.player)}`.trim();
 }
 
 function variantPickerLabel(variant: ProductVariant): string {

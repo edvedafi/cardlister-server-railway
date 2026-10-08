@@ -7,7 +7,7 @@ Extracts player name, team, and card number from card images without a catalog.
 
 Backend selection (auto-detected at runtime):
   OLLAMA_HOST env var set → use local Ollama model (free, fast on Apple Silicon/GPU)
-  else                    → use Claude Haiku 4.5 API (~$0.001/card pair)
+  else                    → use Claude Haiku 5.5 API
 
 Protocol (newline-delimited JSON over stdin/stdout):
   Pair request:   {"front": "/path/to/front.jpg", "back": "/path/to/back.jpg", "id": "optional-id"}
@@ -222,8 +222,29 @@ _EXTRACT_SINGLE_TOOL = {
 
 # ── Claude Haiku backend ─────────────────────────────────────────────────────
 
+CLAUDE_MODEL = "claude-haiku-5-5"
+# Haiku 5.5 thinks by default and thinking counts toward max_tokens; effort is
+# set explicitly because the model default is medium.
+CLAUDE_MAX_TOKENS = 4000
+CLAUDE_EFFORT = "low"
+
+
+def _claude_tool_input(response, tool_name: str) -> dict:
+    """Return the forced tool call's input, matching blocks by type, never position.
+
+    A response may lead with thinking blocks. A refusal or a response cut off
+    before the tool call raises, which the worker reports as an error.
+    """
+    if response.stop_reason == "refusal":
+        raise RuntimeError("Claude declined to extract this card (stop_reason: refusal)")
+    for block in response.content:
+        if block.type == "tool_use" and block.name == tool_name:
+            return block.input
+    raise RuntimeError(f"No {tool_name} tool_use block in Claude response (stop_reason: {response.stop_reason})")
+
+
 def extract_with_claude(front_path: str, back_path: str) -> dict:
-    """Extract card info using Claude Haiku 4.5 with forced tool use."""
+    """Extract card info using Claude Haiku 5.5 with forced tool use."""
     try:
         import anthropic
     except ImportError:
@@ -241,8 +262,10 @@ def extract_with_claude(front_path: str, back_path: str) -> dict:
     back_b64, back_mt = encode_image(back_path)
 
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=256,
+        model=CLAUDE_MODEL,
+        max_tokens=CLAUDE_MAX_TOKENS,
+        # Sent via extra_body so it works whatever anthropic SDK version the venv has.
+        extra_body={"output_config": {"effort": CLAUDE_EFFORT}},
         system=SYSTEM_PROMPT,
         tools=[_EXTRACT_TOOL],
         tool_choice={"type": "tool", "name": "extract_card_info"},
@@ -270,24 +293,20 @@ def extract_with_claude(front_path: str, back_path: str) -> dict:
         }],
     )
 
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "extract_card_info":
-            inp = block.input
-            front_ori = inp.get("front_orientation", 0)
-            back_ori = inp.get("back_orientation", 0)
-            return {
-                "player": inp.get("player") or None,
-                "team": inp.get("team") or None,
-                "card_number": inp.get("card_number") or None,
-                "front_orientation": front_ori if front_ori in (0, 90, 180, 270) else 0,
-                "back_orientation": back_ori if back_ori in (0, 90, 180, 270) else 0,
-            }
-
-    raise RuntimeError("No tool_use block in Claude response")
+    inp = _claude_tool_input(response, "extract_card_info")
+    front_ori = inp.get("front_orientation", 0)
+    back_ori = inp.get("back_orientation", 0)
+    return {
+        "player": inp.get("player") or None,
+        "team": inp.get("team") or None,
+        "card_number": inp.get("card_number") or None,
+        "front_orientation": front_ori if front_ori in (0, 90, 180, 270) else 0,
+        "back_orientation": back_ori if back_ori in (0, 90, 180, 270) else 0,
+    }
 
 
 def extract_single_with_claude(image_path: str) -> dict:
-    """Extract card info + side from a single image using Claude Haiku 4.5."""
+    """Extract card info + side from a single image using Claude Haiku 5.5."""
     try:
         import anthropic
     except ImportError:
@@ -301,8 +320,10 @@ def extract_single_with_claude(image_path: str) -> dict:
     img_b64, img_mt = encode_image(image_path)
 
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=256,
+        model=CLAUDE_MODEL,
+        max_tokens=CLAUDE_MAX_TOKENS,
+        # Sent via extra_body so it works whatever anthropic SDK version the venv has.
+        extra_body={"output_config": {"effort": CLAUDE_EFFORT}},
         system=SYSTEM_PROMPT,
         tools=[_EXTRACT_SINGLE_TOOL],
         tool_choice={"type": "tool", "name": "extract_single_card_info"},
@@ -318,21 +339,17 @@ def extract_single_with_claude(image_path: str) -> dict:
         }],
     )
 
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "extract_single_card_info":
-            inp = block.input
-            side = inp.get("side", "front")
-            ori = inp.get("orientation", 0)
-            return {
-                "player": inp.get("player") or None,
-                "team": inp.get("team") or None,
-                # Card numbers are only on the back; ignore any value from fronts
-                "card_number": (inp.get("card_number") or None) if side == "back" else None,
-                "side": side,
-                "orientation": ori if ori in (0, 90, 180, 270) else 0,
-            }
-
-    raise RuntimeError("No tool_use block in Claude response")
+    inp = _claude_tool_input(response, "extract_single_card_info")
+    side = inp.get("side", "front")
+    ori = inp.get("orientation", 0)
+    return {
+        "player": inp.get("player") or None,
+        "team": inp.get("team") or None,
+        # Card numbers are only on the back; ignore any value from fronts
+        "card_number": (inp.get("card_number") or None) if side == "back" else None,
+        "side": side,
+        "orientation": ori if ori in (0, 90, 180, 270) else 0,
+    }
 
 
 # ── Ollama backend ───────────────────────────────────────────────────────────

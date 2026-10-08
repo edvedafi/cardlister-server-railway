@@ -5,7 +5,7 @@ import { useSpinners } from '../utils/spinners';
 import { createLogger } from '../utils/logger';
 import chalk from 'chalk';
 import Queue from 'queue';
-import { selectCard, getCardDetails, autoSelectCard, pickVariant, saveBulk, saveListing } from './cardData';
+import { selectCard, getCardDetails, autoSelectCard, pickVariant, productLabel, saveBulk, saveListing } from './cardData';
 import terminalImage from 'term-img';
 import { prepareImageFile } from '../image-processing/imageProcessor.js';
 import { getProducts, startSync, updatePrices, updateInventory, getInventory, getInventoryQuantity, getRegion, getInventoryQuantitiesBatch } from '../utils/medusa';
@@ -309,6 +309,7 @@ const buildCardState = async (
       matchedVariant: autoResult.productVariant,
       availableVariants: autoResult.availableVariants,
       matchConfidence: autoResult.confidence,
+      matchConflict: autoResult.conflict,
       frontPath: front,
       backPath: back,
       originalFrontPath: originalFront,
@@ -400,8 +401,38 @@ const reviewCard = async (state: CardProcessedState): Promise<ReviewMenuState> =
       // Paths get swapped in the review menu handler
     },
     onManualSelect: async () => {
-      // Force interactive selection — override _perfectMatch so matchCard always prompts
-      const { product, productVariant } = await selectCard(setData, { ...imageDefaults, _perfectMatch: false });
+      // A number/player conflict offers its candidates first (the card the
+      // number points to and the extracted player's cards); the full search
+      // stays one choice away.
+      let chosen: Product | null = null;
+      const conflict = menuState.matchedProduct ? undefined : menuState.matchConflict;
+      if (conflict) {
+        const SEARCH_ALL = Symbol('search-all');
+        const seen = new Set<string>();
+        const options: AskSelectOption<Product | typeof SEARCH_ALL>[] = [];
+        const addOptions = (products: Product[], source: string) => {
+          for (const product of products) {
+            if (seen.has(product.id)) continue;
+            seen.add(product.id);
+            options.push({ name: `${productLabel(product)}  (${source})`, value: product });
+          }
+        };
+        addOptions(conflict.numberCandidates, `printed number #${conflict.cardNumber}`);
+        addOptions(conflict.playerCandidates, `player ${conflict.player}`);
+        options.push({ name: 'Search all cards in the set…', value: SEARCH_ALL });
+        const pick = await ask('Number and player disagree. Which card is this?', undefined, { selectOptions: options });
+        if (pick && pick !== SEARCH_ALL) chosen = pick as Product;
+      }
+      let product: Product;
+      let productVariant: ProductVariant;
+      if (chosen) {
+        product = chosen;
+        if (!product.variants) product.variants = [];
+        productVariant = await pickVariant(product);
+      } else {
+        // Force interactive selection — override _perfectMatch so matchCard always prompts
+        ({ product, productVariant } = await selectCard(setData, { ...imageDefaults, _perfectMatch: false }));
+      }
       let quantity = 0;
       try {
         quantity = await getInventoryQuantity(productVariant);

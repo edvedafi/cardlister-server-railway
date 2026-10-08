@@ -1,6 +1,5 @@
 import { getFiles, getInputs } from './src/utils/inputs';
 import 'zx/globals';
-import { ChatGPTProcessor } from './src/image-processing/chatgpt-processor';
 import { cropCardsWithPython, orientAndClassifyCards, orderFrontBack } from './src/image-processing/card-cropper-wrapper';
 import { cropImage } from './src/image-processing/imageProcessor.js';
 import { parseArgs } from './src/utils/parseArgs';
@@ -12,7 +11,7 @@ import type { ParsedArgs } from 'minimist';
 
 dotenv.config();
 
-const { showSpinner, log } = useSpinners('chatGPT', chalk.cyan);
+const { showSpinner, log } = useSpinners('test', chalk.cyan);
 
 async function testOrient() {
   const args = parseArgs(
@@ -102,15 +101,10 @@ async function testCrop(args: ParsedArgs) {
 
 async function main() {
 
-  const { update, finish, error } = showSpinner('chatGPT', 'Processing Cards');
+  const { update, finish, error } = showSpinner('test', 'Processing Cards');
   try {
     update('Initializing');
     initializeFirebase();
-
-    // Check for OpenAI API key
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('Please set OPENAI_API_KEY in your .env file');
-    }
 
     // Set up full run information
     update('Gathering Inputs');
@@ -182,13 +176,6 @@ async function main() {
     log('Cropping cards using Python');
     log('files: ', files);
     const croppedFiles = await cropCardsWithPython(files);
-
-    // Initialize ChatGPT processor
-    const chatGPTProcessor = new ChatGPTProcessor(process.env.OPENAI_API_KEY);
-
-    // Process each cropped file with ChatGPT
-    log('Processing images with ChatGPT');
-    // const results = await chatGPTProcessor.processImages(croppedFiles);
 
     // Log results
     finish('Processing complete');

@@ -235,7 +235,11 @@ function sendRequest(payload: object): Promise<string> {
 // ── Native Claude Haiku extraction (no Python) ─────────────────────────────
 
 const MAX_IMAGE_SIDE = 1500;
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+const CLAUDE_MODEL = 'claude-haiku-5-5';
+// Haiku 5.5 thinks by default and thinking counts toward max_tokens, so the cap
+// leaves room for it. Effort is set explicitly because the model default is medium.
+const CLAUDE_MAX_TOKENS = 4000;
+const CLAUDE_EFFORT = 'low' as const;
 
 const SYSTEM_PROMPT =
   'You are a trading card expert. Extract information exactly as printed on the card.';
@@ -360,6 +364,30 @@ async function encodeImage(imagePath: string): Promise<{ base64: string; mediaTy
   return { base64: buf.toString('base64'), mediaType: 'image/jpeg' };
 }
 
+/** A Claude response that cannot carry an answer; retrying the same request will not help. */
+export class ClaudeExtractUnusableError extends Error {}
+
+/**
+ * Pull the forced tool call's input out of a response. Blocks are matched by
+ * type and name, never by position: a response may lead with `thinking` blocks.
+ * A refusal, or a response cut off before the tool call, throws so the caller's
+ * existing error path handles it.
+ */
+export function readToolInput(
+  response: Pick<Anthropic.Message, 'content' | 'stop_reason'>,
+  toolName: string,
+): Record<string, unknown> {
+  if (response.stop_reason === 'refusal') {
+    throw new ClaudeExtractUnusableError('Claude declined to extract this card (stop_reason: refusal)');
+  }
+  for (const block of response.content) {
+    if (block.type === 'tool_use' && block.name === toolName) {
+      return block.input as Record<string, unknown>;
+    }
+  }
+  throw new Error(`No ${toolName} tool_use block in Claude response (stop_reason: ${response.stop_reason})`);
+}
+
 async function extractWithClaude(
   frontPath: string,
   backPath: string,
@@ -369,7 +397,8 @@ async function extractWithClaude(
 
   const response = await client.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 256,
+    max_tokens: CLAUDE_MAX_TOKENS,
+    output_config: { effort: CLAUDE_EFFORT },
     system: SYSTEM_PROMPT,
     tools: [EXTRACT_TOOL],
     tool_choice: { type: 'tool', name: 'extract_card_info' },
@@ -383,22 +412,16 @@ async function extractWithClaude(
     }],
   });
 
-  for (const block of response.content) {
-    if (block.type === 'tool_use' && block.name === 'extract_card_info') {
-      const inp = block.input as Record<string, unknown>;
-      const frontOri = inp.front_orientation as number;
-      const backOri = inp.back_orientation as number;
-      return {
-        player: (inp.player as string) || null,
-        team: (inp.team as string) || null,
-        card_number: (inp.card_number as string) || null,
-        front_orientation: ([0, 90, 180, 270].includes(frontOri) ? frontOri : 0) as Orientation,
-        back_orientation: ([0, 90, 180, 270].includes(backOri) ? backOri : 0) as Orientation,
-      };
-    }
-  }
-
-  throw new Error('No tool_use block in Claude response');
+  const inp = readToolInput(response, 'extract_card_info');
+  const frontOri = inp.front_orientation as number;
+  const backOri = inp.back_orientation as number;
+  return {
+    player: (inp.player as string) || null,
+    team: (inp.team as string) || null,
+    card_number: (inp.card_number as string) || null,
+    front_orientation: ([0, 90, 180, 270].includes(frontOri) ? frontOri : 0) as Orientation,
+    back_orientation: ([0, 90, 180, 270].includes(backOri) ? backOri : 0) as Orientation,
+  };
 }
 
 async function extractSingleWithClaude(
@@ -409,7 +432,8 @@ async function extractSingleWithClaude(
 
   const response = await client.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 256,
+    max_tokens: CLAUDE_MAX_TOKENS,
+    output_config: { effort: CLAUDE_EFFORT },
     system: SYSTEM_PROMPT,
     tools: [EXTRACT_SINGLE_TOOL],
     tool_choice: { type: 'tool', name: 'extract_single_card_info' },
@@ -422,24 +446,18 @@ async function extractSingleWithClaude(
     }],
   });
 
-  for (const block of response.content) {
-    if (block.type === 'tool_use' && block.name === 'extract_single_card_info') {
-      const inp = block.input as Record<string, unknown>;
-      const side = inp.side as string;
-      const validSide = side === 'front' || side === 'back' ? side : null;
-      const ori = inp.orientation as number;
-      return {
-        player: (inp.player as string) || null,
-        team: (inp.team as string) || null,
-        // Card numbers are only on the back; ignore any value from fronts
-        card_number: validSide === 'back' ? ((inp.card_number as string) || null) : null,
-        side: validSide,
-        orientation: ([0, 90, 180, 270].includes(ori) ? ori : 0) as Orientation,
-      };
-    }
-  }
-
-  throw new Error('No tool_use block in Claude response');
+  const inp = readToolInput(response, 'extract_single_card_info');
+  const side = inp.side as string;
+  const validSide = side === 'front' || side === 'back' ? side : null;
+  const ori = inp.orientation as number;
+  return {
+    player: (inp.player as string) || null,
+    team: (inp.team as string) || null,
+    // Card numbers are only on the back; ignore any value from fronts
+    card_number: validSide === 'back' ? ((inp.card_number as string) || null) : null,
+    side: validSide,
+    orientation: ([0, 90, 180, 270].includes(ori) ? ori : 0) as Orientation,
+  };
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -469,6 +487,7 @@ export async function extractCardInfo(
         return result;
       } catch (err) {
         lastError = err as Error;
+        if (lastError instanceof ClaudeExtractUnusableError) throw lastError;
         if (lastError.message.includes('API_KEY') || lastError.message.includes('not set')) throw lastError;
         if (attempt < MAX_RETRIES) {
           await new Promise((r) => setTimeout(r, RESTART_DELAY_MS * (attempt + 1)));
@@ -531,6 +550,7 @@ export async function extractSingleCardInfo(
         return result;
       } catch (err) {
         lastError = err as Error;
+        if (lastError instanceof ClaudeExtractUnusableError) throw lastError;
         if (lastError.message.includes('API_KEY') || lastError.message.includes('not set')) throw lastError;
         if (attempt < MAX_RETRIES) {
           await new Promise((r) => setTimeout(r, RESTART_DELAY_MS * (attempt + 1)));
