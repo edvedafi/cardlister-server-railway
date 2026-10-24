@@ -5,7 +5,13 @@ import { useSpinners } from '../utils/spinners';
 import { ask } from '../utils/ask';
 import { type Category, type SetInfo } from '../models/setInfo';
 import { getBrowserlessConfig } from '../utils/browserless';
-import { AUTOMATED_ACCESS_PATH, getAutomatedAccessCredentials, parseAutomatedAccessResponse } from './sportlots-auth';
+import {
+  AUTOMATED_ACCESS_PATH,
+  getAutomatedAccessCredentials,
+  isSecurityVerificationFailure,
+  parseAutomatedAccessResponse,
+  SECURITY_VERIFICATION_FAILED_MESSAGE,
+} from './sportlots-auth';
 
 const { showSpinner, log } = useSpinners('sportlots', chalk.blueBright);
 
@@ -82,6 +88,11 @@ async function login() {
               ` — check SPORTLOTS_ID/SPORTLOTS_PASS and SPORTLOTS_KEY_ID/SPORTLOTS_SECRET; screenshot saved to ${shot}`,
           );
         });
+      // A rejected authId leaves the login form behind too, so the check above passes; the
+      // signin.tpl body is the only signal.
+      if (isSecurityVerificationFailure(await _browser.getPageSource())) {
+        throw new Error(SECURITY_VERIFICATION_FAILED_MESSAGE);
+      }
       finish();
     } catch (e) {
       error(e);

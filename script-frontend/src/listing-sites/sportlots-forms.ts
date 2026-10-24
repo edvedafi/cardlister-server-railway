@@ -10,6 +10,8 @@ import {
   AUTOMATED_ACCESS_PATH,
   LOGIN_PAGE,
   SIGNIN_ACTION,
+  isSecurityVerificationFailure,
+  SECURITY_VERIFICATION_FAILED_MESSAGE,
   SPORTLOTS_BASE_URL,
   extractJsCookies,
   getAutomatedAccessCredentials,
@@ -107,6 +109,9 @@ async function login(): Promise<void> {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: `${BASE_URL}${LOGIN_PAGE}` },
     });
 
+    if (isSecurityVerificationFailure(String(signIn.data ?? ''))) {
+      throw new Error(SECURITY_VERIFICATION_FAILED_MESSAGE);
+    }
     const harvested = await harvestJsCookies(String(signIn.data ?? ''));
     if (!harvested.includes('session_reg')) {
       // Bad credentials just re-render the login page, so an empty harvest is the signal.

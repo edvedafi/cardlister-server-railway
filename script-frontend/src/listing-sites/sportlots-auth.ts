@@ -38,6 +38,19 @@ export function parseAutomatedAccessResponse(data: unknown): string {
 }
 
 /**
+ * signin.tpl answers a rejected `turnstile_auth_id` with a bare "Security verification failed"
+ * page. Detect it so callers can report that instead of a generic credentials failure.
+ */
+export function isSecurityVerificationFailure(html: string): boolean {
+  return /security verification failed/i.test(html || '');
+}
+
+export const SECURITY_VERIFICATION_FAILED_MESSAGE =
+  'SportLots rejected the automated-access sign-in ("Security verification failed") — the ' +
+  'automated-access key was accepted but signin.tpl refused its authId; this is on the SportLots ' +
+  'side, so contact SportLots support (SPORTLOTS_ID/SPORTLOTS_PASS are not the problem)';
+
+/**
  * SportLots sets its session cookies from JavaScript in an onload handler rather than via
  * Set-Cookie headers, so a cookie jar sees nothing after a successful login. Pull the
  * assignments out of the response body so the caller can inject them into the jar.
