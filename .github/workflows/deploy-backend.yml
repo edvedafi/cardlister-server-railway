@@ -1,0 +1,29 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'medusajs-backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push replaces a deploy that's still waiting to start.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g @railway/cli@5.71.0
+      # --ci waits for the build, so a failed build fails this run.
+      - run: railway up medusajs-backend --path-as-root --service medusajs-backend --ci
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

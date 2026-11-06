@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Railway IaC SDK, needed only for `railway config plan` and `apply`",
+  "dependencies": {
+    "railway": "^3.16.0"
+  }
+}
