@@ -2,7 +2,18 @@ import dotenv from 'dotenv';
 import 'zx/globals';
 import { useSpinners } from './utils/spinners';
 import initializeFirebase from './utils/firebase';
-import { completeOrder, getOrders, getProduct, getProductVariant, getSales, startSync } from './utils/medusa';
+import {
+  cancelSportlotsImport,
+  completeOrder,
+  confirmSportlotsImport,
+  getOrders,
+  getProduct,
+  getProductVariant,
+  getSales,
+  previewSportlotsImport,
+  startSync,
+} from './utils/medusa';
+import { ask } from './utils/ask';
 import type { Order } from '@medusajs/client-types';
 import { parseArgs } from './utils/parseArgs';
 // @ts-expect-error - no types
@@ -16,13 +27,14 @@ dotenv.config();
 
 const args = parseArgs(
   {
-    string: ['d', 's'],
+    string: ['d', 's', 'i'],
     boolean: ['o', 'n', 'r', 'y'],
     alias: {
       n: 'new-sales',
       d: 'days',
       s: 'sku',
       y: 'sync',
+      i: 'sl-import',
     },
   },
   {
@@ -32,12 +44,88 @@ const args = parseArgs(
     d: 'Get all of the orders from the last n days',
     s: 'Display all sales of a SKU',
     y: 'Print pending orders and sync their categories to listing platforms',
+    i: 'Create SportLots orders from saved pull report HTML files first: -i shipped.html boxed.html',
   },
 );
 
 const { showSpinner } = useSpinners('Sync', chalk.cyanBright);
 
 initializeFirebase();
+
+async function importSportlotsReports(files: string[]): Promise<void> {
+  if (files.length === 0) throw new Error('--sl-import needs at least one pull report file');
+  const reports = files.map((file) => fs.readFileSync(file, 'utf8'));
+
+  console.log('Reading the pull reports...');
+  const { jobId, orders: preview } = await previewSportlotsImport(reports);
+
+  const rows = preview.flatMap((order) =>
+    order.items.map((item) => ({
+      order: order.username,
+      quantity: item.quantity,
+      sku: item.sku,
+      title: item.title,
+      price: `$${(item.unit_price / 100).toFixed(2)}`,
+      status: order.alreadyImported ? 'already imported' : item.matched ? 'ok' : chalk.red('NO MATCH'),
+    })),
+  );
+  console.log(
+    chalkTable(
+      {
+        leftPad: 2,
+        columns: [
+          { field: 'order', name: 'Buyer' },
+          { field: 'quantity', name: 'Qty' },
+          { field: 'sku', name: 'SKU' },
+          { field: 'title', name: 'Title' },
+          { field: 'price', name: 'Each' },
+          { field: 'status', name: 'Status' },
+        ],
+      },
+      rows,
+    ),
+  );
+
+  const unmatched = preview.filter((o) => !o.alreadyImported).flatMap((o) => o.items.filter((i) => !i.matched));
+  if (unmatched.length > 0) {
+    console.log(chalk.red(`${unmatched.length} line(s) match no card: they'll be recorded, but nothing gets taken down.`));
+  }
+
+  const newOrders = preview.filter((order) => !order.alreadyImported);
+  if (newOrders.length === 0) {
+    console.log('Every order was already imported.');
+    await cancelSportlotsImport(jobId);
+    return;
+  }
+
+  if (!(await ask(`Create ${newOrders.length} SportLots order(s) and take these cards down?`, false))) {
+    await cancelSportlotsImport(jobId);
+    console.log('Import cancelled; nothing was created.');
+    process.exit(0);
+  }
+
+  console.log('Creating the orders...');
+  await confirmSportlotsImport(jobId);
+
+  // The sales job logs a per-order failure and still completes, so check the orders really exist.
+  const pending = await getOrders({});
+  const missing = newOrders.filter(
+    (order) => !pending.some((o) => o.metadata?.platform === `SportLots - ${order.username}`),
+  );
+  if (missing.length > 0) {
+    throw new Error(`No pending order found for ${missing.map((o) => o.id).join(', ')}; check the backend logs`);
+  }
+}
+
+if (args['sl-import'] !== undefined) {
+  try {
+    await importSportlotsReports([args['sl-import'], ...args._].flat().filter(Boolean));
+  } catch (e) {
+    console.error(chalk.red(`SportLots import failed: ${(e as Error).message}`));
+    process.exit(1);
+  }
+}
+
 const { update, error, finish } = showSpinner('top-level', 'Running sales processing');
 
 try {

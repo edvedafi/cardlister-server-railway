@@ -16,7 +16,8 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<AxiosInstance> {
     return await slLogin(this.loginAxios.bind(this));
   }
 
-  async getOrders(api: AxiosInstance): Promise<SystemOrder[]> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async getOrders(api: AxiosInstance, _batchJobId?: string): Promise<SystemOrder[]> {
     const raw: SystemOrder[] = [];
 
     // 'box' ships to the SportLots box, 'paid' ships direct to the buyer. We treat them
@@ -41,7 +42,7 @@ abstract class SportlotsSalesStrategy extends SaleStrategy<AxiosInstance> {
    * number; the SKU lookup usually hits, and the bin -> category -> product walk covers legacy bins
    * whose SKUs were never normalized.
    */
-  private async resolveLineItems(rawOrders: SystemOrder[]): Promise<SystemOrder[]> {
+  protected async resolveLineItems(rawOrders: SystemOrder[]): Promise<SystemOrder[]> {
     const orders: SystemOrder[] = [];
     const categories: CategoryMap = await this.binService.getAllBins();
 

@@ -305,3 +305,24 @@ export function joinOrders(
 
   return orders;
 }
+
+/**
+ * Builds orders from saved copies of the pull report, for when the site can't be reached directly.
+ * There are no order headers here, so buyers come from the order key. The key itself is the real
+ * one, which is what stops an automated run from creating these orders again later.
+ *
+ * The same file passed twice is ignored. An order found in two different reports is an error:
+ * merging them would double its quantities.
+ */
+export function ordersFromPullSheets(reports: string[]): SystemOrder[] {
+  const rowsByOrder = new Map<string, SlPullRow[]>();
+  for (const report of new Set(reports.map((r) => r.trim()))) {
+    for (const [orderId, rows] of groupPullRows(parsePullSheet(report))) {
+      if (rowsByOrder.has(orderId)) {
+        throw new SportlotsParseError(`Order ${orderId} appears in more than one pull report`);
+      }
+      rowsByOrder.set(orderId, rows);
+    }
+  }
+  return joinOrders([], rowsByOrder);
+}

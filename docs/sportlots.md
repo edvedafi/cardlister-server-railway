@@ -48,3 +48,19 @@ Shared pieces: `medusajs-backend/src/utils/sportlots-automated-access.ts` and
   missing from the harvest means the credentials (or the form) are wrong.
 - The older hidden `login_check` field was removed in the Turnstile rollout. `extractLoginCheck`
   still forwards it if a page happens to render one, but its absence is not an error.
+
+## Importing sales by hand
+
+When the site can't be reached, save the pull reports from Firefox (one for Box orders, one for
+Buyer orders; either can be omitted) and pass them to the sales script:
+
+```
+yarn sales -i "Dealer Pull Cards Report.html" "Dealer Pull Cards Report2.html"
+```
+
+It previews the orders and resolved SKUs, then asks before creating anything. Confirmed orders go
+through the normal sales flow, so the cards come down on the other sites and appear in the pull
+table. Each order keeps its real order key, so an automated sales run won't create it again.
+
+`DISABLED_SITES=sportlots` must stay set while SportLots is blocked. SportLots quantities aren't
+reduced during that time, so those listings need a sync when access returns.

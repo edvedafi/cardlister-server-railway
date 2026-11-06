@@ -9,6 +9,7 @@ import {
   isLoginRedirectStub,
   joinOrders,
   parseAutomatedAccessResponse,
+  ordersFromPullSheets,
   parseOrdersResponse,
   parsePullSheet,
   SlOrderHeader,
@@ -265,5 +266,48 @@ describe('joinOrders', () => {
     const warn = jest.fn();
     joinOrders(headers(), rows(), warn);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('ordersFromPullSheets', () => {
+  const report = (...rows: [string, string, string, string, string, string][]) =>
+    `<html><body><table><tr><th>Card</th></tr>${rows
+      .map(
+        ([card, title, qty, amt, bin, order]) =>
+          `<tr><td>${card}</td><td>${title}</td><td>NM</td><td>${qty}</td><td>${amt}</td><td>${bin} </td><td>${order}</td></tr>`,
+      )
+      .join('')}</table></body></html>`;
+
+  const box = report(
+    ['79', '2019 Leaf Draft #79 Nick Bosa FB', '1', '$0.18', '1213', 'jb4415442026110521238'],
+    ['7', '2025 Score Sack Attack #7 Andrew Van Ginkel FB', '8', '$1.44', '767', 'jb4415442026110521238'],
+  );
+  const shipped = report(['201', '2015 Panini Prizm #201 Amari Cooper FB', '2', '$1.98', '1826', 'backer812026110217489']);
+
+  it('combines reports into orders keyed by the real order key', () => {
+    const orders = ordersFromPullSheets([box, shipped]);
+    expect(orders.map((o) => o.id)).toEqual(['jb4415442026110521238', 'backer812026110217489']);
+    expect(orders[0].customer).toEqual({ name: 'jb441544', username: 'jb441544', email: 'jb441544@sportlots.com' });
+    expect(orders[0].lineItems[1]).toMatchObject({ sku: '767|7', quantity: 8, unit_price: 18 });
+    expect(orders[1].lineItems[0]).toMatchObject({ sku: '1826|201', quantity: 2, unit_price: 99 });
+  });
+
+  it('ignores the same report passed twice instead of doubling quantities', () => {
+    const orders = ordersFromPullSheets([box, box]);
+    expect(orders).toHaveLength(1);
+    expect(orders[0].lineItems).toHaveLength(2);
+  });
+
+  it('rejects an order that appears in two different reports', () => {
+    const overlap = report(['1', 'Other', '1', '$0.18', '5', 'jb4415442026110521238']);
+    expect(() => ordersFromPullSheets([box, overlap])).toThrow(SportlotsParseError);
+  });
+
+  it('allows an empty report alongside a full one', () => {
+    expect(ordersFromPullSheets([box, report()])).toHaveLength(1);
+  });
+
+  it('rejects a page that is not a pull report', () => {
+    expect(() => ordersFromPullSheets(['<html><body>nope</body></html>'])).toThrow(SportlotsParseError);
   });
 });

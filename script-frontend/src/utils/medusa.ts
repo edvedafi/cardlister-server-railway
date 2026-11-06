@@ -486,6 +486,49 @@ export async function getSales(only: string[] = []) {
   return runBatches('sales', only);
 }
 
+export type SportlotsImportOrder = {
+  id: string;
+  username: string;
+  alreadyImported: boolean;
+  items: { sku: string; title: string; quantity: number; unit_price: number; matched: boolean }[];
+};
+
+async function waitForBatch(id: string, until: string[]): Promise<BatchJob> {
+  for (;;) {
+    const job = (await medusa.admin.batchJobs.retrieve(id)).batch_job as unknown as BatchJob;
+    if (job.status === 'failed') {
+      // @ts-expect-error Medusa types in the library don't match the exported types for use by clients
+      const errors = (job.result?.errors ?? []).map((e) => e.message ?? e.err).join('\n');
+      throw new Error(`Batch job ${id} failed: ${errors}`);
+    }
+    if (until.includes(job.status)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
+/** Starts a dry-run import of saved SportLots pull reports and waits for its preview. */
+export async function previewSportlotsImport(reports: string[]): Promise<{ jobId: string; orders: SportlotsImportOrder[] }> {
+  let batch_job: BatchJob;
+  try {
+    ({ batch_job } = await medusa.admin.custom.post('sales/import', { reports }));
+  } catch (e) {
+    const message = (e as AxiosError<{ message?: string }>).response?.data?.message;
+    throw new Error(message || (e as Error).message);
+  }
+  const job = await waitForBatch(batch_job.id, ['pre_processed']);
+  // @ts-expect-error preview is our own addition to the job result
+  return { jobId: job.id, orders: job.result.preview };
+}
+
+export async function confirmSportlotsImport(jobId: string): Promise<void> {
+  await medusa.admin.batchJobs.confirm(jobId);
+  await waitForBatch(jobId, ['completed']);
+}
+
+export async function cancelSportlotsImport(jobId: string): Promise<void> {
+  await medusa.admin.batchJobs.cancel(jobId);
+}
+
 export async function fixVariants(categoryId: string) {
   return runBatches('fix', [], { category: categoryId });
 }

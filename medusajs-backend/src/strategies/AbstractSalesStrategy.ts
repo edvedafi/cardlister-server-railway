@@ -65,7 +65,7 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
   static identifier = 'sales-strategy';
   static batchType = 'sales-sync';
   static listingSite = 'sync-site';
-  private readonly draftOrderService: DraftOrderService;
+  protected readonly draftOrderService: DraftOrderService;
   private readonly customerService: CustomerService;
   private readonly cartService: CartService;
   private readonly orderService: OrderService;
@@ -138,7 +138,7 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
       this.progress('Getting Orders');
       let systemOrders: SystemOrder[];
       try {
-        systemOrders = (await this.getOrders(api))
+        systemOrders = (await this.getOrders(api, batchJobId))
           .map((order) => ({
             ...order,
             lineItems: order.lineItems.filter((li) => li.sku),
@@ -156,9 +156,8 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
       for (const systemOrder of systemOrders) {
         await this.atomicPhase_(async () => {
           const items: Item[] = [];
-          const hasDraft = (await this.draftOrderService.list({})).find(
-            (draft) => draft.idempotency_key === systemOrder.id,
-          );
+          // list() defaults to the newest 50 drafts, so this must filter rather than search that page.
+          const [hasDraft] = await this.draftOrderService.list({ idempotency_key: systemOrder.id });
 
           let draftOrder: DraftOrder;
           if (hasDraft) {
@@ -365,7 +364,7 @@ abstract class SaleStrategy<T extends AxiosInstance | eBayApi | PuppeteerHelper>
     }
   }
 
-  abstract getOrders(api: T): Promise<SystemOrder[]>;
+  abstract getOrders(api: T, batchJobId: string): Promise<SystemOrder[]>;
 
   private async getShippingOption(): Promise<string> {
     if (!this.shippingOption) {
