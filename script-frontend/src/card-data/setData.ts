@@ -9,7 +9,15 @@ import {
   getBSCVariantTypeFilter,
   getBSCYearFilter,
 } from '../listing-sites/bsc.js';
-import { getSLBrand, getSLCards, getSLSet, getSLSport, getSLYear, shutdownSportLots } from '../listing-sites/sportlots-adapter';
+import {
+  getSLBrand,
+  getSLCards,
+  getSLSet,
+  getSLSport,
+  getSLYear,
+  isSportlotsSkipped,
+  shutdownSportLots,
+} from '../listing-sites/sportlots-adapter';
 import { ask, type AskOptions, type AskSelectOption } from '../utils/ask';
 import type { Category, Metadata, SetInfo } from '../models/setInfo';
 import {
@@ -89,6 +97,12 @@ export async function findSet(
     if (setInfo.sport) {
       setInfo.handle = setInfo.sport.handle;
     }
+    while (!setInfo.sport && isSportlotsSkipped()) {
+      update('New Sport');
+      const sportName = await ask('New Sport');
+      setInfo.handle = sportName;
+      setInfo.sport = await createCategory(sportName, root, sportName, {});
+    }
     while (!setInfo.sport) {
       update('New Sport');
       const sportlots = await getSLSport();
@@ -98,7 +112,7 @@ export async function findSet(
         sportlots: sportlots.key,
       });
     }
-    if (!setInfo.sport.metadata?.sportlots) {
+    if (!setInfo.sport.metadata?.sportlots && !isSportlotsSkipped()) {
       update('Add SportLots to Sport');
       const slSport = await getSLSport(setInfo.sport.name);
       if (slSport.key !== 'N/A') {
@@ -136,7 +150,7 @@ export async function findSet(
       const newYear = await ask('New Year');
       setInfo.handle = `${setInfo.sport.handle}-${newYear}`;
       setInfo.year = await createCategory(newYear, setInfo.sport.id, setInfo.handle, {
-        sportlots: (await getSLYear(newYear)).key,
+        sportlots: isSportlotsSkipped() ? undefined : (await getSLYear(newYear)).key,
         bsc: getBSCYearFilter(newYear),
       });
     }
@@ -156,6 +170,12 @@ export async function findSet(
         setInfo.handle = setInfo.brand.handle;
       }
     }
+    while (!setInfo.brand && isSportlotsSkipped()) {
+      update('New brand');
+      const brandName = await ask('New brand');
+      setInfo.handle = `${setInfo.year?.handle}-${brandName}`;
+      setInfo.brand = await createCategory(brandName, setInfo.year?.id, setInfo.handle, {});
+    }
     while (!setInfo.brand) {
       update('New brand');
       const slBrand = await getSLBrand();
@@ -163,7 +183,7 @@ export async function findSet(
       setInfo.brand = await createCategory(slBrand.name, setInfo.year?.id, setInfo.handle, { sportlots: slBrand.key });
     }
 
-    if (!setInfo.brand.metadata?.sportlots) {
+    if (!setInfo.brand.metadata?.sportlots && !isSportlotsSkipped()) {
       update('Add SportLots to brand');
       const slBrand = await getSLBrand(setInfo.brand.name);
       const updatedBrand: Category = await updateCategory(setInfo.brand.id, {
@@ -226,7 +246,7 @@ export async function findSet(
           setInfo.handle = `${setInfo.set.handle}-${variantTypeName}-base`;
           const description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name}`);
           const metadata: Metadata = {
-            sportlots: await getSLSet(setInfo as SetInfo),
+            sportlots: isSportlotsSkipped() ? undefined : await getSLSet(setInfo as SetInfo),
             bin: await getNextBin(),
             isInsert: false,
             isParallel: false,
@@ -255,7 +275,7 @@ export async function findSet(
           const description = await ask('Set Title', `${setInfo.year.name} ${setInfo.set.name}`);
           const metadata: Metadata = {
             bsc: bscVariantType.filter,
-            sportlots: await getSLSet(setInfo as SetInfo),
+            sportlots: isSportlotsSkipped() ? undefined : await getSLSet(setInfo as SetInfo),
             bin: await getNextBin(),
             isInsert: false,
             isParallel: false,
@@ -375,7 +395,7 @@ export async function findSet(
       }
       if (!setInfo.variantName) throw new Error('Variant Name not found');
       const updates: Metadata = {};
-      if (!setInfo.variantName?.metadata?.sportlots) {
+      if (!setInfo.variantName?.metadata?.sportlots && !isSportlotsSkipped()) {
         const updateset = await getSLSet(setInfo as SetInfo);
         if (updateset) {
           updates.sportlots = updateset;
@@ -698,7 +718,7 @@ export async function buildSet(setInfo: SetInfo) {
       slBase: [],
       slVariations: {},
     };
-    if (category.metadata?.sportlots) {
+    if (category.metadata?.sportlots && !isSportlotsSkipped()) {
       // Retry loop for SportLots set selection
       let setSelectionComplete = false;
       let allSlCards: { cardNumber: string; title: string }[] = [];

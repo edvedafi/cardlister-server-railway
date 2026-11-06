@@ -13,6 +13,25 @@ export function setSportlotsImplementation(impl: Implementation): void {
   implementation = impl;
 }
 
+// For SportLots outages: set building skips every SL lookup and builds from BSC cards only. Turned on
+// by --skip-sl, or by "sportlots" in DISABLED_SITES (the same switch the backend sync honors).
+let skipped = false;
+
+export function setSportlotsSkipped(skip: boolean): void {
+  skipped = skip;
+}
+
+export function isSportlotsSkipped(): boolean {
+  // Read the env lazily: the CLIs load .env after their imports run.
+  return (
+    skipped ||
+    (process.env.DISABLED_SITES || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .includes('sportlots')
+  );
+}
+
 async function loadModule(): Promise<any> {
   if (implementation === 'forms') {
     return await import('./sportlots-forms');

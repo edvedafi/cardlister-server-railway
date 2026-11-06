@@ -1,7 +1,7 @@
 import { configDotenv } from 'dotenv';
 import 'zx/globals';
 import initializeFirebase from './utils/firebase.js';
-import { shutdownSportLots, setSportlotsImplementation } from './listing-sites/sportlots-adapter.js';
+import { shutdownSportLots, setSportlotsImplementation, setSportlotsSkipped } from './listing-sites/sportlots-adapter.js';
 import { setExtractorMode, type ExtractorMode } from './card-data/imageRecognition.js';
 import chalk from 'chalk';
 import { useSpinners } from './utils/spinners.js';
@@ -56,7 +56,7 @@ try {
   debug('Gathering Inputs');
   const args = parseArgs(
     {
-      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x', 'w'],
+      boolean: ['s', 'b', 'u', 'z', 'c', 'a', 'i', 'v', 'o', 'x', 'w', 'l'],
       default: { w: true },
       string: ['n', 'sl', 'p', 'e'],
       alias: {
@@ -75,6 +75,7 @@ try {
         x: 'include-zero-images',
         e: 'extractor',
         w: 'watch',
+        l: 'skip-sl',
       },
     },
     {
@@ -93,6 +94,7 @@ try {
       x: 'Include cards with 0 inventory if they have stored images (only works with -p flag)',
       e: 'Card extractor: ocr (free EasyOCR), ollama (local LLM), or haiku (default, Claude API). Example: --extractor=ocr',
       w: 'Watch mode (default on): keep running and watch for new card images in the input directory. Use --no-w to disable.',
+      l: 'Skip SportLots (e.g. during an outage): build sets from BSC cards only, with no SportLots lookups',
     },
   );
 
@@ -120,6 +122,9 @@ try {
     setSportlotsImplementation('forms');
   } else {
     setSportlotsImplementation('webdriver');
+  }
+  if (args['skip-sl']) {
+    setSportlotsSkipped(true);
   }
 
   if (args['numbers'] || args['select-bulk-cards'] || args['inventory'] || args['price'] !== undefined) {

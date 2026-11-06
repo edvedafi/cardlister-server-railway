@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import 'zx/globals';
-import { shutdownSportLots } from './listing-sites/sportlots-adapter';
+import { setSportlotsSkipped, shutdownSportLots } from './listing-sites/sportlots-adapter';
 import { useSpinners } from './utils/spinners';
 import { buildSet, findSet, updateSetDefaults, updateAllSetMetadata, updateBSCFilters } from './card-data/setData';
 import initializeFirebase from './utils/firebase';
@@ -13,7 +13,7 @@ import { retryWithExponentialBackoff } from './utils/retry';
 
 const args = parseArgs(
   {
-    boolean: ['d', 's', 'u', 'b'],
+    boolean: ['d', 's', 'u', 'b', 'l'],
     string: ['o', 'c'],
     alias: {
       d: 'delete',
@@ -22,6 +22,7 @@ const args = parseArgs(
       c: 'category',
       u: 'update-metadata',
       b: 'update-bsc',
+      l: 'skip-sl',
     },
   },
   {
@@ -31,10 +32,15 @@ const args = parseArgs(
     c: 'Category to sync',
     u: 'Update all metadata fields for the selected set',
     b: 'Update BSC filters for the selected set',
+    l: 'Skip SportLots (e.g. during an outage): build sets from BSC cards only, with no SportLots lookups',
   },
 );
 
 $.verbose = false;
+
+if (args['skip-sl']) {
+  setSportlotsSkipped(true);
+}
 
 dotenv.config();
 
