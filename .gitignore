@@ -13,3 +13,4 @@ script-frontend/debug/
 *.pt
 script-frontend/log/
 .railway/.cac-migration.json
+script-frontend/.ebay*
